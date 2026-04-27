@@ -64,7 +64,7 @@ class SongInfo:
         "folder", "song_id", "display_name",
         "song_name", "sub_name", "author",
         "mapper", "bpm", "cover_path", "created_at",
-        "diff_labels",
+        "diff_labels", "song_hash",
     )
 
     def __init__(self, folder: Path):
@@ -78,6 +78,7 @@ class SongInfo:
         self.bpm = 0.0
         self.cover_path: Path | None = None
         self.diff_labels: dict[int, str] = {}
+        self.song_hash: str = ""
         # Use st_birthtime (Windows/macOS) with st_ctime as fallback
         stat = folder.stat()
         self.created_at: float = getattr(stat, "st_birthtime", stat.st_ctime)
@@ -153,6 +154,22 @@ class SongInfo:
         if self.mapper:
             parts.append(f"mapped by {self.mapper}")
         return "  •  ".join(parts)
+
+
+def load_song_hashes(custom_levels: Path) -> dict[str, str]:
+    """Return {folder_name: songHash} by reading SongCore's SongHashData.dat."""
+    hash_file = custom_levels.parent.parent / "UserData" / "SongCore" / "SongHashData.dat"
+    result: dict[str, str] = {}
+    try:
+        data = json.loads(hash_file.read_text(encoding="utf-8", errors="replace"))
+        for key, val in data.items():
+            folder_name = Path(key.replace("\\", "/")).name
+            song_hash = val.get("songHash", "")
+            if folder_name and song_hash:
+                result[folder_name] = song_hash.upper()
+    except Exception:
+        pass
+    return result
 
 
 def load_songs(custom_levels: Path) -> list[SongInfo]:
@@ -284,21 +301,38 @@ def song_level_ids(song: "SongInfo") -> list[str]:
       • "custom_level_{folder_name}"  — for community maps (short hex or SHA1)
       • levelId == folder name        — for built-in / OST maps
     """
-    ids = [
-        f"custom_level_{song.folder.name}",  # primary: matches the save exactly
-        song.folder.name,                     # fallback for OST / built-in
-    ]
+    ids = []
+    if song.song_hash:
+        ids.append(f"custom_level_{song.song_hash}")   # most accurate: matches PlayerData
+    ids.append(f"custom_level_{song.folder.name}")     # fallback: old folder-name form
+    ids.append(song.folder.name)                       # fallback for OST / built-in
     return ids
 
 
 def get_song_stats(song: "SongInfo",
                    all_stats: dict[str, dict[int, DiffStat]]
                    ) -> dict[int, DiffStat] | None:
-    """Find the stats dict for a song, trying all known levelId forms."""
+    """Merge stats across all known levelId forms for this song.
+
+    Vanilla Beat Saber writes custom_level_{folder_name}; SongCore writes
+    custom_level_{hash}. Both may exist if the player switched between them,
+    so we collect all matches and combine them per-difficulty.
+    """
+    merged: dict[int, DiffStat] = {}
     for lid in song_level_ids(song):
-        if lid in all_stats:
-            return all_stats[lid]
-    return None
+        entry = all_stats.get(lid)
+        if not entry:
+            continue
+        for diff_int, stat in entry.items():
+            if diff_int not in merged:
+                merged[diff_int] = DiffStat(stat.score, stat.rank, stat.plays)
+            else:
+                existing = merged[diff_int]
+                if stat.score > existing.score:
+                    merged[diff_int] = DiffStat(stat.score, stat.rank, existing.plays + stat.plays)
+                else:
+                    merged[diff_int] = DiffStat(existing.score, existing.rank, existing.plays + stat.plays)
+    return merged if merged else None
 
 
 def format_diff_stats(diff_stats: dict[int, DiffStat],
@@ -443,6 +477,9 @@ class SongBrowser(tk.Tk):
     def _load_async(self):
         def worker():
             songs = load_songs(self.custom_levels)
+            hashes = load_song_hashes(self.custom_levels)
+            for song in songs:
+                song.song_hash = hashes.get(song.folder.name, "")
             self.after(0, lambda: self._on_loaded(songs))
 
         threading.Thread(target=worker, daemon=True).start()
