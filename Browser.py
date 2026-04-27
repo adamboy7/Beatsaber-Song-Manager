@@ -1090,6 +1090,7 @@ class SongBrowser(tk.Tk):
                         pass
 
     def _select(self, idx: int):
+        self.canvas.focus_set()
         # Deselect previous
         if self.selected_index is not None and self.selected_index < len(self._row_frames):
             self._recolor_row(self._row_frames[self.selected_index], ITEM_BG)
