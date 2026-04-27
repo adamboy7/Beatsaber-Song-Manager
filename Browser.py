@@ -1263,6 +1263,7 @@ class SongBrowser(tk.Tk):
     def _on_install_timeout(self, song_id: str, gen: int):
         if gen != self._install_gen:
             return
+        self._install_gen += 1  # stop any late-firing pulse from overwriting the message
         self.status_bar.config(
             text=f"No install detected for {song_id} — check that Mod Assistant is running and one-click installs are enabled."
         )
