@@ -64,6 +64,7 @@ class SongInfo:
         "folder", "song_id", "display_name",
         "song_name", "sub_name", "author",
         "mapper", "bpm", "cover_path", "created_at",
+        "diff_labels",
     )
 
     def __init__(self, folder: Path):
@@ -76,6 +77,7 @@ class SongInfo:
         self.mapper = ""
         self.bpm = 0.0
         self.cover_path: Path | None = None
+        self.diff_labels: dict[int, str] = {}
         # Use st_birthtime (Windows/macOS) with st_ctime as fallback
         stat = folder.stat()
         self.created_at: float = getattr(stat, "st_birthtime", stat.st_ctime)
@@ -108,6 +110,26 @@ class SongInfo:
                     cp = self.folder / cover_filename
                     if cp.exists():
                         self.cover_path = cp
+
+                _DIFF_STR_TO_INT = {"Easy": 0, "Normal": 1, "Hard": 2, "Expert": 3, "ExpertPlus": 4}
+                standard_labels: dict[int, str] = {}
+                other_labels:    dict[int, str] = {}
+                for bms in data.get("_difficultyBeatmapSets", []):
+                    char = bms.get("_beatmapCharacteristicName", "")
+                    for bm in bms.get("_difficultyBeatmaps", []):
+                        diff_int = _DIFF_STR_TO_INT.get(bm.get("_difficulty", ""))
+                        if diff_int is None:
+                            continue
+                        # V2 uses _customData, V3/V4 uses customData
+                        custom = bm.get("_customData", bm.get("customData", {}))
+                        label = custom.get("_difficultyLabel", custom.get("difficultyLabel", "")).strip()
+                        if not label:
+                            continue
+                        if char == "Standard":
+                            standard_labels[diff_int] = label
+                        else:
+                            other_labels.setdefault(diff_int, label)
+                self.diff_labels = {**other_labels, **standard_labels}
             except Exception:
                 pass
 
@@ -279,15 +301,16 @@ def get_song_stats(song: "SongInfo",
     return None
 
 
-def format_diff_stats(diff_stats: dict[int, DiffStat]) -> tuple[str, str]:
+def format_diff_stats(diff_stats: dict[int, DiffStat],
+                      custom_labels: dict[int, str] | None = None) -> tuple[str, str]:
     """Return (scores_line, plays_line) for display in the row."""
     # Only include difficulties that are actually tracked in the save file
     ordered = sorted(diff_stats.items())   # sort by difficulty int
     parts = []
     total_plays = 0
     for diff_int, stat in ordered:
-        label = DIFF_LABELS.get(diff_int, f"D{diff_int}")
-        # Abbreviate ExpertPlus → E+
+        label = (custom_labels or {}).get(diff_int) or DIFF_LABELS.get(diff_int, f"D{diff_int}")
+        # Only abbreviate standard names; custom labels are shown as-is
         short = {"Easy": "Easy", "Normal": "Norm", "Hard": "Hard",
                  "Expert": "Expert", "ExpertPlus": "E+"}.get(label, label)
         score_str = f"{stat.score:,}" if stat.score else "0"
@@ -537,7 +560,7 @@ class SongBrowser(tk.Tk):
         diff_stats = get_song_stats(song, self.player_stats)
         is_fav = self._is_favorite(song)
         if diff_stats:
-            scores_line, plays_line = format_diff_stats(diff_stats)
+            scores_line, plays_line = format_diff_stats(diff_stats, song.diff_labels)
             if scores_line:
                 scores_lbl = tk.Label(
                     text_frame,
