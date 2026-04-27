@@ -398,6 +398,7 @@ class SongBrowser(tk.Tk):
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
         self._audio_proc: subprocess.Popen | None = None
+        self._audio_paused: bool = False
 
         self.player_stats: dict = {}
         self.favorite_ids: set[str] = set()
@@ -460,6 +461,7 @@ class SongBrowser(tk.Tk):
             bd=6,
         )
         search_entry.pack(side="left", fill="x", expand=True, ipady=4)
+        self.search_entry = search_entry
 
         # Path label
         path_label = tk.Label(
@@ -493,6 +495,7 @@ class SongBrowser(tk.Tk):
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.bind("<F5>", self._refresh)
+        self.bind("<space>", self._on_space)
 
         # Status / selection bar
         self.status_bar = tk.Label(
@@ -757,6 +760,30 @@ class SongBrowser(tk.Tk):
     def _on_close(self):
         self._stop_audio()
         self.destroy()
+
+    def _on_space(self, *_):
+        if self.focus_get() is self.search_entry:
+            return
+        self._toggle_pause_audio()
+
+    def _toggle_pause_audio(self):
+        if not self._audio_proc or self._audio_proc.poll() is not None:
+            self._audio_paused = False
+            return
+        try:
+            import ctypes
+            ntdll   = ctypes.WinDLL("ntdll")
+            kernel32 = ctypes.WinDLL("kernel32")
+            handle = kernel32.OpenProcess(0x1F0FFF, False, self._audio_proc.pid)
+            if self._audio_paused:
+                ntdll.NtResumeProcess(handle)
+                self._audio_paused = False
+            else:
+                ntdll.NtSuspendProcess(handle)
+                self._audio_paused = True
+            kernel32.CloseHandle(handle)
+        except Exception as exc:
+            messagebox.showerror("Pause Failed", str(exc))
 
     def _stop_audio(self):
         if self._audio_proc and self._audio_proc.poll() is None:
