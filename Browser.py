@@ -374,8 +374,10 @@ class SongBrowser(tk.Tk):
 
         self.player_stats: dict = {}
         self.favorite_ids: set[str] = set()
+        self.player_dat_path: Path | None = None
         player_dat, pd_debug = find_player_data()
         if player_dat:
+            self.player_dat_path = player_dat
             self.player_stats = load_player_stats(player_dat)
             self.favorite_ids = load_favorites(player_dat)
             self.player_data_status = f"PlayerData: {len(self.player_stats)} entries  |  {player_dat.name}"
@@ -462,6 +464,7 @@ class SongBrowser(tk.Tk):
         self.list_frame.bind("<Configure>", self._on_frame_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.bind("<F5>", self._refresh)
 
         # Status / selection bar
         self.status_bar = tk.Label(
@@ -475,6 +478,13 @@ class SongBrowser(tk.Tk):
         self.status_bar.pack(fill="x", padx=16, pady=(0, 6))
 
     # ── Song loading ──────────────────────────────────────────────────────────
+
+    def _refresh(self, *_):
+        if self.player_dat_path:
+            self.player_stats  = load_player_stats(self.player_dat_path)
+            self.favorite_ids  = load_favorites(self.player_dat_path)
+        self.status_bar.config(text="Refreshing…")
+        self._load_async()
 
     def _load_async(self):
         def worker():
@@ -655,11 +665,81 @@ class SongBrowser(tk.Tk):
             w.bind("<Leave>",       lambda e, r=row, s=sep: self._hover(r, s, False))
             w.bind("<MouseWheel>",  self._on_mousewheel)
 
+    def _favorite_level_id(self, song: SongInfo) -> str:
+        if song.song_hash:
+            return f"custom_level_{song.song_hash}"
+        return f"custom_level_{song.folder.name}"
+
+    def _add_to_favorites(self, song: SongInfo):
+        if not self.player_dat_path:
+            return
+        try:
+            raw = self.player_dat_path.read_text(encoding="utf-8", errors="replace")
+            self._backup_player_data(raw)
+            data = json.loads(raw)
+            players = data.get("localPlayers", [])
+            if not players:
+                return
+            level_id = self._favorite_level_id(song)
+            favs: list = players[0].setdefault("favoritesLevelIds", [])
+            if level_id not in favs:
+                favs.append(level_id)
+            self.player_dat_path.write_text(
+                json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            self.favorite_ids.add(level_id)
+            self._render_list()
+        except Exception as exc:
+            messagebox.showerror("Favorites Error", str(exc))
+
+    def _backup_player_data(self, raw: str):
+        """Write a timestamped backup to backups/ and a plain .bak alongside PlayerData."""
+        bak_dir = Path(__file__).parent / "backups"
+        bak_dir.mkdir(exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        (bak_dir / f"PlayerData_{stamp}.dat.bak").write_text(raw, encoding="utf-8")
+        self.player_dat_path.with_suffix(".dat.bak").write_text(raw, encoding="utf-8")
+
+    def _remove_from_favorites(self, song: SongInfo):
+        if not self.player_dat_path:
+            return
+        try:
+            raw = self.player_dat_path.read_text(encoding="utf-8", errors="replace")
+            self._backup_player_data(raw)
+            data = json.loads(raw)
+            players = data.get("localPlayers", [])
+            if not players:
+                return
+            # Scrub every known levelId form for this song
+            to_remove = {f"custom_level_{song.folder.name}"}
+            if song.song_hash:
+                to_remove.add(f"custom_level_{song.song_hash}")
+            favs: list = players[0].get("favoritesLevelIds", [])
+            players[0]["favoritesLevelIds"] = [f for f in favs if f not in to_remove]
+            self.player_dat_path.write_text(
+                json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            self.favorite_ids -= to_remove
+            self._render_list()
+        except Exception as exc:
+            messagebox.showerror("Favorites Error", str(exc))
+
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
         is_fav = self._is_favorite(song)
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
+        if is_fav:
+            menu.add_command(label="Remove from Favorites",
+                             command=lambda: self._remove_from_favorites(song),
+                             state="normal" if self.player_dat_path else "disabled")
+        else:
+            menu.add_command(label="Add to Favorites",
+                             command=lambda: self._add_to_favorites(song),
+                             state="normal" if self.player_dat_path else "disabled")
+        menu.add_separator()
         menu.add_command(label="Copy Link",
                          command=lambda: self._copy(f"https://beatsaver.com/maps/{song.song_id}"),
                          state="normal" if song.song_id else "disabled")
