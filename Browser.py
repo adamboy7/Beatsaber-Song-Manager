@@ -7,6 +7,7 @@ with cover art and metadata. Click art or title to select a song.
 import os
 import re
 import json
+import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
@@ -647,10 +648,26 @@ class SongBrowser(tk.Tk):
                 widgets.append(grandchild)
 
         for w in widgets:
-            w.bind("<Button-1>",    lambda e, i=idx: self._select(i))
+            w.bind("<Button-1>",         lambda e, i=idx: self._select(i))
+            w.bind("<Control-Button-1>",   lambda _, s=song: webbrowser.open(f"https://beatsaver.com/maps/{s.song_id}") if s.song_id else None)
+            w.bind("<Button-3>",         lambda e, s=song: self._show_context_menu(e, s))
             w.bind("<Enter>",       lambda e, r=row, s=sep: self._hover(r, s, True))
             w.bind("<Leave>",       lambda e, r=row, s=sep: self._hover(r, s, False))
             w.bind("<MouseWheel>",  self._on_mousewheel)
+
+    def _show_context_menu(self, event: tk.Event, song: SongInfo):
+        menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
+                       activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+                       bd=0)
+        menu.add_command(label="Copy Link",
+                         command=lambda: self._copy(f"https://beatsaver.com/maps/{song.song_id}"),
+                         state="normal" if song.song_id else "disabled")
+        menu.add_command(label="Copy Name", command=lambda: self._copy(song.display_name))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _copy(self, text: str):
+        self.clipboard_clear()
+        self.clipboard_append(text)
 
     def _hover(self, row: tk.Frame, sep: tk.Frame, entering: bool):
         if self._row_is_selected(row):
