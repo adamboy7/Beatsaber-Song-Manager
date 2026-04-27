@@ -1039,9 +1039,11 @@ class SongBrowser(tk.Tk):
             menu.add_command(label="Clear Score",
                              command=lambda: self._clear_score(song),
                              state="normal" if self.player_dat_path else "disabled")
+        is_deletable = not is_fav or shift_held
         menu.add_command(label="Delete",
                          command=lambda: self._delete_song(song),
-                         state="normal" if (not is_fav or shift_held) else "disabled")
+                         state="normal" if is_deletable else "disabled",
+                         foreground="#ff5555" if is_deletable else SUBTEXT_COLOR)
         menu.tk_popup(event.x_root, event.y_root)
 
     def _copy(self, text: str):
