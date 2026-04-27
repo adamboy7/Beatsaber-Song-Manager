@@ -665,9 +665,10 @@ class SongBrowser(tk.Tk):
                          state="normal" if song.song_id else "disabled")
         menu.add_command(label="Copy Name", command=lambda: self._copy(song.display_name))
         menu.add_separator()
+        shift_held = bool(event.state & 0x1)
         menu.add_command(label="Delete",
                          command=lambda: self._delete_song(song),
-                         state="disabled" if is_fav else "normal")
+                         state="normal" if (not is_fav or shift_held) else "disabled")
         menu.tk_popup(event.x_root, event.y_root)
 
     def _copy(self, text: str):
@@ -676,8 +677,6 @@ class SongBrowser(tk.Tk):
 
     def _delete_song(self, song: SongInfo):
         msg = f'Delete "{song.display_name}"?\n\nThe folder will be removed from CustomLevels. Your scores will not be affected.'
-        if self._is_favorite(song):
-            return
         if not messagebox.askyesno("Delete Song", msg, icon="warning", default="no"):
             return
         try:
