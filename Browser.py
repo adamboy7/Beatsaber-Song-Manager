@@ -1035,6 +1035,10 @@ class SongBrowser(tk.Tk):
                          command=lambda: os.startfile(song.folder))
         menu.add_separator()
         shift_held = bool(event.state & 0x1)
+        if shift_held:
+            menu.add_command(label="Clear Score",
+                             command=lambda: self._clear_score(song),
+                             state="normal" if self.player_dat_path else "disabled")
         menu.add_command(label="Delete",
                          command=lambda: self._delete_song(song),
                          state="normal" if (not is_fav or shift_held) else "disabled")
@@ -1043,6 +1047,35 @@ class SongBrowser(tk.Tk):
     def _copy(self, text: str):
         self.clipboard_clear()
         self.clipboard_append(text)
+
+    def _clear_score(self, song: SongInfo):
+        if not self.player_dat_path:
+            return
+        ids_to_clear = set(song_level_ids(song))
+        try:
+            raw = self.player_dat_path.read_text(encoding="utf-8", errors="replace")
+            self._backup_player_data(raw)
+            data = json.loads(raw)
+            players = data.get("localPlayers", [])
+            if not players:
+                return
+            entries = players[0].get("levelsStatsData", [])
+            before = len(entries)
+            players[0]["levelsStatsData"] = [
+                e for e in entries if e.get("levelId", "") not in ids_to_clear
+            ]
+            removed = before - len(players[0]["levelsStatsData"])
+            self.player_dat_path.write_text(
+                json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            self.player_stats = load_player_stats(self.player_dat_path)
+            self._render_list()
+            self.status_bar.config(
+                text=f"Cleared {removed} score entr{'y' if removed == 1 else 'ies'} for: {song.display_name}"
+            )
+        except Exception as exc:
+            messagebox.showerror("Clear Score Failed", str(exc))
 
     def _delete_song(self, song: SongInfo):
         msg = f'Delete "{song.display_name}"?\n\nThe folder will be removed from CustomLevels. Your scores will not be affected.'
