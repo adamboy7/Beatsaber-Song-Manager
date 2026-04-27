@@ -791,6 +791,28 @@ class SongBrowser(tk.Tk):
                     "ffplay not found. Place ffplay.exe next to this script or add it to your PATH.",
                 )
 
+    def _bak_files(self, song: SongInfo) -> list[Path]:
+        return list(song.folder.glob("*.bak"))
+
+    def _restore_files(self, song: SongInfo):
+        baks = self._bak_files(song)
+        if not baks:
+            return
+        errors = []
+        for bak in baks:
+            dest = bak.with_suffix("")
+            try:
+                import shutil
+                shutil.move(str(bak), str(dest))
+            except Exception as exc:
+                errors.append(f"{bak.name}: {exc}")
+        if errors:
+            messagebox.showerror("Restore Failed", "\n".join(errors))
+        else:
+            self._thumbnails.clear()
+            self._render_list()
+            self.status_bar.config(text=f"Restored {len(baks)} file(s) for: {song.display_name}")
+
     def _replace_art(self, song: SongInfo):
         if not song.cover_path:
             messagebox.showwarning("Replace Art", "This song has no cover image to replace.")
@@ -926,6 +948,7 @@ class SongBrowser(tk.Tk):
 
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
         is_fav = self._is_favorite(song)
+        baks = self._bak_files(song)
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
@@ -947,6 +970,9 @@ class SongBrowser(tk.Tk):
         menu.add_command(label="Replace Audio",
                          command=lambda: self._replace_audio(song),
                          state="normal" if song.audio_path else "disabled")
+        if baks:
+            menu.add_command(label=f"Restore Files ({len(baks)})",
+                             command=lambda: self._restore_files(song))
         menu.add_separator()
         menu.add_command(label="Copy Link",
                          command=lambda: self._copy(f"https://beatsaver.com/maps/{song.song_id}"),
