@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
 from PIL import Image, ImageTk
+import time
 import datetime
 import threading
 
@@ -403,6 +404,8 @@ class SongBrowser(tk.Tk):
         self.player_stats: dict = {}
         self.favorite_ids: set[str] = set()
         self.player_dat_path: Path | None = None
+        self._pending_install_id: str | None = None
+        self._install_gen: int = 0
         player_dat, pd_debug = find_player_data()
         if player_dat:
             self.player_dat_path = player_dat
@@ -417,8 +420,10 @@ class SongBrowser(tk.Tk):
         self.geometry("780x680")
         self.minsize(600, 400)
 
+        self._kb_listener = None
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
+        self._start_media_keys()
         self._load_async()
 
     # ── Layout ────────────────────────────────────────────────────────────────
@@ -461,6 +466,7 @@ class SongBrowser(tk.Tk):
             bd=6,
         )
         search_entry.pack(side="left", fill="x", expand=True, ipady=4)
+        search_entry.bind("<Return>", self._on_search_enter)
         self.search_entry = search_entry
 
         # Path label
@@ -574,6 +580,9 @@ class SongBrowser(tk.Tk):
         for w in self.list_frame.winfo_children():
             w.destroy()
         self._row_frames.clear()
+
+        if self._pending_install_id:
+            self._build_install_row(self._pending_install_id)
 
         for idx, song in enumerate(self.filtered):
             self._build_row(idx, song)
@@ -758,8 +767,24 @@ class SongBrowser(tk.Tk):
             messagebox.showerror("Favorites Error", str(exc))
 
     def _on_close(self):
+        self._install_gen += 1  # cancel any pending install watch
+        if self._kb_listener:
+            self._kb_listener.stop()
         self._stop_audio()
         self.destroy()
+
+    def _start_media_keys(self):
+        from pynput import keyboard as pynput_kb
+
+        def on_press(key):
+            if key == pynput_kb.Key.media_play_pause:
+                self.after(0, self._toggle_pause_audio)
+            elif key == pynput_kb.Key.media_stop:
+                self.after(0, self._stop_audio)
+
+        self._kb_listener = pynput_kb.Listener(on_press=on_press)
+        self._kb_listener.daemon = True
+        self._kb_listener.start()
 
     def _on_space(self, *_):
         if self.focus_get() is self.search_entry:
@@ -1081,22 +1106,204 @@ class SongBrowser(tk.Tk):
 
     # ── Search ────────────────────────────────────────────────────────────────
 
+    def _extract_song_id(self, query: str) -> str | None:
+        """Return the BeatSaver song ID if query is a one-click or map URL, else None."""
+        q = query.strip()
+        m = re.match(r'^beatsaver://([A-Za-z0-9]+)/?$', q, re.IGNORECASE)
+        if m:
+            return m.group(1).lower()
+        m = re.match(r'^https?://beatsaver\.com/maps/([A-Za-z0-9]+)', q, re.IGNORECASE)
+        if m:
+            return m.group(1).lower()
+        return None
+
     def _on_search(self, *_):
-        query = self.search_var.get().lower().strip()
-        if not query:
+        query = self.search_var.get().strip()
+
+        song_id = self._extract_song_id(query)
+        if song_id:
+            installed = [s for s in self.songs if s.song_id.lower() == song_id]
+            if installed:
+                self.filtered = installed
+                self._pending_install_id = None
+                self.status_bar.config(text=f"Song {song_id} is already installed.")
+            else:
+                self.filtered = []
+                self._pending_install_id = song_id
+                self.status_bar.config(
+                    text=f"Song {song_id} not installed — press Enter or click to install via Mod Assistant."
+                )
+            self.selected_index = None
+            self._thumbnails.clear()
+            self._render_list()
+            return
+
+        self._pending_install_id = None
+        self._install_gen += 1  # cancel any pending install watch
+        query_lower = query.lower()
+        if not query_lower:
             self.filtered = self.songs[:]
         else:
             self.filtered = [
                 s for s in self.songs
-                if query in s.display_name.lower()
-                or query in s.author.lower()
-                or query in s.mapper.lower()
-                or query in s.song_id.lower()
+                if query_lower in s.display_name.lower()
+                or query_lower in s.author.lower()
+                or query_lower in s.mapper.lower()
+                or query_lower in s.song_id.lower()
             ]
         self.selected_index = None
         self._thumbnails.clear()   # free memory; will reload on render
         self._render_list()
         self.status_bar.config(text=f"{len(self.filtered)} songs shown")
+
+    def _on_search_enter(self, *_):
+        if self._pending_install_id:
+            self._trigger_install(self._pending_install_id)
+
+    def _trigger_install(self, song_id: str):
+        if not self._has_beatsaver_handler():
+            self.status_bar.config(
+                text="No handler for beatsaver:// — install Mod Assistant and enable one-click installs."
+            )
+            return
+        webbrowser.open(f"beatsaver://{song_id}")
+        self._watch_for_install(song_id)
+
+    @staticmethod
+    def _has_beatsaver_handler() -> bool:
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "beatsaver")
+            winreg.CloseKey(key)
+            return True
+        except (FileNotFoundError, OSError):
+            return False
+
+    def _watch_for_install(self, song_id: str):
+        self._install_gen += 1
+        gen = self._install_gen
+        self._pulse_install_status(song_id, gen, 0)
+
+        def worker():
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if gen != self._install_gen:
+                    return
+                try:
+                    for entry in self.custom_levels.iterdir():
+                        if not entry.is_dir():
+                            continue
+                        name = entry.name.lower()
+                        if name.startswith(song_id + " ") or name == song_id:
+                            if self._is_song_complete(entry):
+                                if gen == self._install_gen:
+                                    self.after(0, lambda: self._on_install_complete(gen))
+                                return
+                except Exception:
+                    pass
+                time.sleep(1)
+            if gen == self._install_gen:
+                self.after(0, lambda: self._on_install_timeout(song_id, gen))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _pulse_install_status(self, song_id: str, gen: int, elapsed: int):
+        if gen != self._install_gen:
+            return
+        dots = "." * (elapsed % 4)
+        self.status_bar.config(text=f"Waiting for {song_id} to install{dots}  ({elapsed}s)")
+        if elapsed < 30:
+            self.after(1000, lambda: self._pulse_install_status(song_id, gen, elapsed + 1))
+
+    def _is_song_complete(self, folder: Path) -> bool:
+        info_file = None
+        for name in ("Info.dat", "info.dat"):
+            candidate = folder / name
+            if candidate.exists():
+                info_file = candidate
+                break
+        if not info_file:
+            return False
+        try:
+            data = json.loads(info_file.read_text(encoding="utf-8", errors="replace"))
+            audio = data.get("_songFilename", "")
+            if audio and not (folder / audio).exists():
+                return False
+            cover = data.get("_coverImageFilename", "")
+            if cover and not (folder / cover).exists():
+                return False
+            for bms in data.get("_difficultyBeatmapSets", []):
+                for bm in bms.get("_difficultyBeatmaps", []):
+                    diff_file = bm.get("_beatmapFilename", "")
+                    if diff_file and not (folder / diff_file).exists():
+                        return False
+            return True
+        except Exception:
+            return False
+
+    def _on_install_complete(self, gen: int):
+        if gen != self._install_gen:
+            return
+        self._install_gen += 1  # stop the pulse
+
+        def worker():
+            songs = load_songs(self.custom_levels)
+            hashes = load_song_hashes(self.custom_levels)
+            for song in songs:
+                song.song_hash = hashes.get(song.folder.name, "")
+            self.after(0, lambda: self._after_install_load(songs))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_install_load(self, songs: list[SongInfo]):
+        self.songs = songs
+        self.count_label.config(text=f"({len(songs)} songs)")
+        self._on_search()  # re-applies search bar content; shows installed song and clears pending_install_id
+
+    def _on_install_timeout(self, song_id: str, gen: int):
+        if gen != self._install_gen:
+            return
+        self.status_bar.config(
+            text=f"No install detected for {song_id} — check that Mod Assistant is running and one-click installs are enabled."
+        )
+
+    def _build_install_row(self, song_id: str):
+        row = tk.Frame(self.list_frame, bg=HOVER_BG, cursor="hand2")
+        row.pack(fill="x", pady=1)
+
+        icon_lbl = tk.Label(row, text="⬇", font=("Segoe UI", 20),
+                            bg=HOVER_BG, fg=ACCENT_COLOR, width=4)
+        icon_lbl.pack(side="left", padx=8, pady=6)
+
+        text_frame = tk.Frame(row, bg=HOVER_BG)
+        text_frame.pack(side="left", fill="both", expand=True, padx=4, pady=6)
+
+        title_lbl = tk.Label(
+            text_frame,
+            text=f"Click to install {song_id}…",
+            font=("Segoe UI", 11, "bold"),
+            bg=HOVER_BG, fg=ACCENT_COLOR,
+            anchor="w", cursor="hand2",
+        )
+        title_lbl.pack(fill="x")
+
+        sub_lbl = tk.Label(
+            text_frame,
+            text="Opens one-click install via Mod Assistant  •  or press Enter",
+            font=("Segoe UI", 9),
+            bg=HOVER_BG, fg=SUBTEXT_COLOR,
+            anchor="w",
+        )
+        sub_lbl.pack(fill="x")
+
+        sep = tk.Frame(self.list_frame, bg=SEPARATOR_COLOR, height=1)
+        sep.pack(fill="x")
+
+        for w in [row, icon_lbl, text_frame, title_lbl, sub_lbl]:
+            w.bind("<Button-1>",   lambda _, sid=song_id: self._trigger_install(sid))
+            w.bind("<Enter>",      lambda _, r=row: self._recolor_row(r, SELECTED_BG))
+            w.bind("<Leave>",      lambda _, r=row: self._recolor_row(r, HOVER_BG))
+            w.bind("<MouseWheel>", self._on_mousewheel)
 
     # ── Scroll helpers ────────────────────────────────────────────────────────
 

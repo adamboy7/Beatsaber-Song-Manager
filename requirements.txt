@@ -1,3 +1,4 @@
 Pillow
 pydub
 audioop-lts
+pynput
