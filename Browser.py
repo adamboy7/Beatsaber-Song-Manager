@@ -1051,6 +1051,12 @@ class SongBrowser(tk.Tk):
     def _clear_score(self, song: SongInfo):
         if not self.player_dat_path:
             return
+        if not messagebox.askyesno(
+            "Clear Score",
+            f'Clear all scores for "{song.display_name}"?\n\nThis cannot be undone (a backup will be made).',
+            icon="warning", default="no",
+        ):
+            return
         ids_to_clear = set(song_level_ids(song))
         try:
             raw = self.player_dat_path.read_text(encoding="utf-8", errors="replace")
