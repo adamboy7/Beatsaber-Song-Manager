@@ -7,6 +7,7 @@ with cover art and metadata. Click art or title to select a song.
 import os
 import re
 import json
+import subprocess
 import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -377,6 +378,15 @@ def _find_ffmpeg() -> str | None:
     return shutil.which("ffmpeg")
 
 
+def _find_ffplay() -> str | None:
+    """Return path to ffplay: checks script directory first, then PATH."""
+    import shutil
+    local = Path(__file__).parent / "ffplay.exe"
+    if local.exists():
+        return str(local)
+    return shutil.which("ffplay")
+
+
 class SongBrowser(tk.Tk):
     def __init__(self, custom_levels: Path):
         super().__init__()
@@ -387,6 +397,7 @@ class SongBrowser(tk.Tk):
         self._thumbnails: dict[int, ImageTk.PhotoImage] = {}   # keep refs alive
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
+        self._audio_proc: subprocess.Popen | None = None
 
         self.player_stats: dict = {}
         self.favorite_ids: set[str] = set()
@@ -405,6 +416,7 @@ class SongBrowser(tk.Tk):
         self.geometry("780x680")
         self.minsize(600, 400)
 
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
         self._load_async()
 
@@ -742,6 +754,43 @@ class SongBrowser(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Favorites Error", str(exc))
 
+    def _on_close(self):
+        self._stop_audio()
+        self.destroy()
+
+    def _stop_audio(self):
+        if self._audio_proc and self._audio_proc.poll() is None:
+            self._audio_proc.terminate()
+        self._audio_proc = None
+
+    def _play_audio(self, song: SongInfo):
+        if not song.audio_path:
+            messagebox.showwarning("Play Audio", "This song has no audio file.")
+            return
+        self._stop_audio()
+        ffplay = _find_ffplay()
+        if ffplay:
+            try:
+                self._audio_proc = subprocess.Popen(
+                    [ffplay, "-nodisp", "-autoexit", str(song.audio_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception as exc:
+                messagebox.showerror("Play Audio Failed", str(exc))
+        else:
+            ext = song.audio_path.suffix.lower()
+            if ext == ".ogg":
+                try:
+                    os.startfile(song.audio_path)
+                except Exception as exc:
+                    messagebox.showerror("Play Audio Failed", str(exc))
+            else:
+                messagebox.showwarning(
+                    "Play Audio",
+                    "ffplay not found. Place ffplay.exe next to this script or add it to your PATH.",
+                )
+
     def _replace_art(self, song: SongInfo):
         if not song.cover_path:
             messagebox.showwarning("Replace Art", "This song has no cover image to replace.")
@@ -880,6 +929,9 @@ class SongBrowser(tk.Tk):
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
+        menu.add_command(label="Play Audio",
+                         command=lambda: self._play_audio(song),
+                         state="normal" if song.audio_path else "disabled")
         if is_fav:
             menu.add_command(label="Remove from Favorites",
                              command=lambda: self._remove_from_favorites(song),
@@ -888,6 +940,7 @@ class SongBrowser(tk.Tk):
             menu.add_command(label="Add to Favorites",
                              command=lambda: self._add_to_favorites(song),
                              state="normal" if self.player_dat_path else "disabled")
+        menu.add_separator()
         menu.add_command(label="Replace Art",
                          command=lambda: self._replace_art(song),
                          state="normal" if song.cover_path else "disabled")
