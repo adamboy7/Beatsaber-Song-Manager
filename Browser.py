@@ -64,7 +64,7 @@ class SongInfo:
     __slots__ = (
         "folder", "song_id", "display_name",
         "song_name", "sub_name", "author",
-        "mapper", "bpm", "cover_path", "created_at",
+        "mapper", "bpm", "cover_path", "audio_path", "created_at",
         "diff_labels", "song_hash",
     )
 
@@ -78,6 +78,7 @@ class SongInfo:
         self.mapper = ""
         self.bpm = 0.0
         self.cover_path: Path | None = None
+        self.audio_path: Path | None = None
         self.diff_labels: dict[int, str] = {}
         self.song_hash: str = ""
         # Use st_birthtime (Windows/macOS) with st_ctime as fallback
@@ -112,6 +113,12 @@ class SongInfo:
                     cp = self.folder / cover_filename
                     if cp.exists():
                         self.cover_path = cp
+
+                audio_filename = data.get("_songFilename", "")
+                if audio_filename:
+                    ap = self.folder / audio_filename
+                    if ap.exists():
+                        self.audio_path = ap
 
                 _DIFF_STR_TO_INT = {"Easy": 0, "Normal": 1, "Hard": 2, "Expert": 3, "ExpertPlus": 4}
                 standard_labels: dict[int, str] = {}
@@ -360,6 +367,15 @@ def format_diff_stats(diff_stats: dict[int, DiffStat],
 
 
 # ─── UI ───────────────────────────────────────────────────────────────────────
+
+def _find_ffmpeg() -> str | None:
+    """Return path to ffmpeg: checks script directory first, then PATH."""
+    import shutil
+    local = Path(__file__).parent / "ffmpeg.exe"
+    if local.exists():
+        return str(local)
+    return shutil.which("ffmpeg")
+
 
 class SongBrowser(tk.Tk):
     def __init__(self, custom_levels: Path):
@@ -726,6 +742,139 @@ class SongBrowser(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Favorites Error", str(exc))
 
+    def _replace_art(self, song: SongInfo):
+        if not song.cover_path:
+            messagebox.showwarning("Replace Art", "This song has no cover image to replace.")
+            return
+
+        import tkinter.filedialog as fd
+        new_path_str = fd.askopenfilename(
+            title="Select New Cover Image",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"), ("All files", "*.*")],
+        )
+        if not new_path_str:
+            return
+
+        try:
+            with Image.open(song.cover_path) as orig:
+                orig_size = orig.size
+                orig_format = orig.format or song.cover_path.suffix.lstrip(".").upper()
+                if orig_format == "JPG":
+                    orig_format = "JPEG"
+
+            bak_path = song.cover_path.parent / (song.cover_path.name + ".bak")
+            import shutil
+            shutil.copy2(song.cover_path, bak_path)
+
+            with Image.open(new_path_str) as new_img:
+                if orig_format == "JPEG":
+                    new_img = new_img.convert("RGB")
+                new_img = new_img.resize(orig_size, Image.LANCZOS)
+                new_img.save(song.cover_path, format=orig_format)
+
+            self._thumbnails.clear()
+            self._render_list()
+        except Exception as exc:
+            messagebox.showerror("Replace Art Failed", str(exc))
+
+    def _prompt_ffmpeg_download(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("ffmpeg Required")
+        dlg.configure(bg=BG_COLOR)
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        tk.Label(
+            dlg,
+            text="ffmpeg is required to convert audio files.\n"
+                 "Download it and add ffmpeg.exe to your PATH.",
+            font=("Segoe UI", 10),
+            bg=BG_COLOR, fg=TEXT_COLOR,
+            padx=24, pady=18,
+            justify="center",
+        ).pack()
+
+        btn_frame = tk.Frame(dlg, bg=BG_COLOR)
+        btn_frame.pack(pady=(0, 16))
+
+        tk.Button(
+            btn_frame,
+            text="Download",
+            font=("Segoe UI", 10),
+            bg=ACCENT_COLOR, fg=TEXT_COLOR,
+            activebackground="#a01d90", activeforeground=TEXT_COLOR,
+            relief="flat", padx=14, pady=5,
+            command=lambda: (
+                webbrowser.open("https://ffmpeg.org/download.html#build-windows"),
+                dlg.destroy(),
+            ),
+        ).pack(side="left", padx=6)
+
+        tk.Button(
+            btn_frame,
+            text="Cancel",
+            font=("Segoe UI", 10),
+            bg="#333333", fg=TEXT_COLOR,
+            activebackground="#444444", activeforeground=TEXT_COLOR,
+            relief="flat", padx=14, pady=5,
+            command=dlg.destroy,
+        ).pack(side="left", padx=6)
+
+        dlg.wait_window()
+
+    def _replace_audio(self, song: SongInfo):
+        if not song.audio_path:
+            messagebox.showwarning("Replace Audio", "This song has no audio file to replace.")
+            return
+
+        import tkinter.filedialog as fd
+        new_path_str = fd.askopenfilename(
+            title="Select New Audio File",
+            filetypes=[
+                ("Audio files", "*.mp3 *.wav *.ogg *.egg *.m4a"),
+                ("MP3",         "*.mp3"),
+                ("WAV",         "*.wav"),
+                ("OGG / EGG",   "*.ogg *.egg"),
+                ("M4A",         "*.m4a"),
+                ("All files",   "*.*"),
+            ],
+        )
+        if not new_path_str:
+            return
+
+        try:
+            import shutil
+            new_path = Path(new_path_str)
+            ext = new_path.suffix.lower()
+
+            bak_path = song.audio_path.parent / (song.audio_path.name + ".bak")
+            shutil.copy2(song.audio_path, bak_path)
+
+            if ext in (".egg", ".ogg"):
+                shutil.copy2(new_path, song.audio_path)
+            else:
+                ffmpeg_path = _find_ffmpeg()
+                if not ffmpeg_path:
+                    self._prompt_ffmpeg_download()
+                    return
+                try:
+                    from pydub import AudioSegment
+                except ImportError as e:
+                    messagebox.showerror(
+                        "Replace Audio",
+                        "Missing dependencies for audio conversion.\n"
+                        "Run: pip install -r requirements.txt\n\n"
+                        f"Detail: {e}",
+                    )
+                    return
+                AudioSegment.converter = ffmpeg_path
+                audio = AudioSegment.from_file(new_path_str)
+                audio.export(str(song.audio_path), format="ogg")
+
+            self.status_bar.config(text=f"Audio replaced for: {song.display_name}")
+        except Exception as exc:
+            messagebox.showerror("Replace Audio Failed", str(exc))
+
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
         is_fav = self._is_favorite(song)
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
@@ -739,11 +888,20 @@ class SongBrowser(tk.Tk):
             menu.add_command(label="Add to Favorites",
                              command=lambda: self._add_to_favorites(song),
                              state="normal" if self.player_dat_path else "disabled")
+        menu.add_command(label="Replace Art",
+                         command=lambda: self._replace_art(song),
+                         state="normal" if song.cover_path else "disabled")
+        menu.add_command(label="Replace Audio",
+                         command=lambda: self._replace_audio(song),
+                         state="normal" if song.audio_path else "disabled")
         menu.add_separator()
         menu.add_command(label="Copy Link",
                          command=lambda: self._copy(f"https://beatsaver.com/maps/{song.song_id}"),
                          state="normal" if song.song_id else "disabled")
         menu.add_command(label="Copy Name", command=lambda: self._copy(song.display_name))
+        menu.add_separator()
+        menu.add_command(label="Open Folder…",
+                         command=lambda: os.startfile(song.folder))
         menu.add_separator()
         shift_held = bool(event.state & 0x1)
         menu.add_command(label="Delete",
