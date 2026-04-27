@@ -656,6 +656,7 @@ class SongBrowser(tk.Tk):
             w.bind("<MouseWheel>",  self._on_mousewheel)
 
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
+        is_fav = self._is_favorite(song)
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
@@ -663,11 +664,35 @@ class SongBrowser(tk.Tk):
                          command=lambda: self._copy(f"https://beatsaver.com/maps/{song.song_id}"),
                          state="normal" if song.song_id else "disabled")
         menu.add_command(label="Copy Name", command=lambda: self._copy(song.display_name))
+        menu.add_separator()
+        menu.add_command(label="Delete",
+                         command=lambda: self._delete_song(song),
+                         state="disabled" if is_fav else "normal")
         menu.tk_popup(event.x_root, event.y_root)
 
     def _copy(self, text: str):
         self.clipboard_clear()
         self.clipboard_append(text)
+
+    def _delete_song(self, song: SongInfo):
+        msg = f'Delete "{song.display_name}"?\n\nThe folder will be removed from CustomLevels. Your scores will not be affected.'
+        if self._is_favorite(song):
+            return
+        if not messagebox.askyesno("Delete Song", msg, icon="warning", default="no"):
+            return
+        try:
+            import shutil
+            shutil.rmtree(song.folder)
+        except Exception as exc:
+            messagebox.showerror("Delete Failed", str(exc))
+            return
+        self.songs    = [s for s in self.songs    if s is not song]
+        self.filtered = [s for s in self.filtered if s is not song]
+        self.selected_index = None
+        self._thumbnails.clear()
+        self._render_list()
+        self.count_label.config(text=f"({len(self.songs)} songs)")
+        self.status_bar.config(text=f"{len(self.filtered)} songs shown")
 
     def _hover(self, row: tk.Frame, sep: tk.Frame, entering: bool):
         if self._row_is_selected(row):
