@@ -245,13 +245,14 @@ def find_player_data() -> tuple["Path | None", str]:
 
 
 class DiffStat:
-    """High score, rank string, and play count for one difficulty."""
-    __slots__ = ("score", "rank", "plays")
+    """High score, rank string, play count, and FC flag for one difficulty."""
+    __slots__ = ("score", "rank", "plays", "full_combo")
 
-    def __init__(self, score: int, rank: str, plays: int):
-        self.score = score
-        self.rank  = rank
-        self.plays = plays
+    def __init__(self, score: int, rank: str, plays: int, full_combo: bool = False):
+        self.score      = score
+        self.rank       = rank
+        self.plays      = plays
+        self.full_combo = full_combo
 
 
 def load_favorites(player_data_path: Path) -> set[str]:
@@ -280,14 +281,15 @@ def load_player_stats(player_data_path: Path) -> dict[str, dict[int, DiffStat]]:
             if plays == 0:
                 continue  # Beat Saber creates zero entries on scan; not actual play data
 
-            level_id = entry.get("levelId", "")
-            diff     = entry.get("difficulty", 0)
-            score    = entry.get("highScore", 0)
-            rank_int = entry.get("maxRank", 0)
+            level_id   = entry.get("levelId", "")
+            diff       = entry.get("difficulty", 0)
+            score      = entry.get("highScore", 0)
+            rank_int   = entry.get("maxRank", 0)
+            full_combo = bool(entry.get("fullCombo", False))
 
             rank_str = RANK_LABELS.get(rank_int, "E") if score > 0 else "DNF"
 
-            stat = DiffStat(score, rank_str, plays)
+            stat = DiffStat(score, rank_str, plays, full_combo)
             stats.setdefault(level_id, {})[diff] = stat
     except Exception:
         pass
@@ -325,35 +327,34 @@ def get_song_stats(song: "SongInfo",
             continue
         for diff_int, stat in entry.items():
             if diff_int not in merged:
-                merged[diff_int] = DiffStat(stat.score, stat.rank, stat.plays)
+                merged[diff_int] = DiffStat(stat.score, stat.rank, stat.plays, stat.full_combo)
             else:
                 existing = merged[diff_int]
+                fc = existing.full_combo or stat.full_combo
                 if stat.score > existing.score:
-                    merged[diff_int] = DiffStat(stat.score, stat.rank, existing.plays + stat.plays)
+                    merged[diff_int] = DiffStat(stat.score, stat.rank, existing.plays + stat.plays, fc)
                 else:
-                    merged[diff_int] = DiffStat(existing.score, existing.rank, existing.plays + stat.plays)
+                    merged[diff_int] = DiffStat(existing.score, existing.rank, existing.plays + stat.plays, fc)
     return merged if merged else None
 
 
 def format_diff_stats(diff_stats: dict[int, DiffStat],
-                      custom_labels: dict[int, str] | None = None) -> tuple[str, str]:
-    """Return (scores_line, plays_line) for display in the row."""
-    # Only include difficulties that are actually tracked in the save file
-    ordered = sorted(diff_stats.items())   # sort by difficulty int
-    parts = []
+                      custom_labels: dict[int, str] | None = None,
+                      ) -> tuple[list[tuple[str, bool]], str]:
+    """Return ([(text, is_fc), ...], plays_line) for display in the row."""
+    ordered = sorted(diff_stats.items())
+    parts: list[tuple[str, bool]] = []
     total_plays = 0
     for diff_int, stat in ordered:
         label = (custom_labels or {}).get(diff_int) or DIFF_LABELS.get(diff_int, f"D{diff_int}")
-        # Only abbreviate standard names; custom labels are shown as-is
         short = {"Easy": "Easy", "Normal": "Norm", "Hard": "Hard",
                  "Expert": "Expert", "ExpertPlus": "E+"}.get(label, label)
         score_str = f"{stat.score:,}" if stat.score else "0"
-        parts.append(f"{short}:{score_str} | {stat.rank}")
+        parts.append((f"{short}:{score_str} | {stat.rank}", stat.full_combo))
         total_plays += stat.plays
 
-    scores_line = "  •  ".join(parts) if parts else ""
-    plays_line  = f"Plays: {total_plays}" if total_plays else ""
-    return scores_line, plays_line
+    plays_line = f"Plays: {total_plays}" if total_plays else ""
+    return parts, plays_line
 
 
 
@@ -597,16 +598,17 @@ class SongBrowser(tk.Tk):
         diff_stats = get_song_stats(song, self.player_stats)
         is_fav = self._is_favorite(song)
         if diff_stats:
-            scores_line, plays_line = format_diff_stats(diff_stats, song.diff_labels)
-            if scores_line:
-                scores_lbl = tk.Label(
-                    text_frame,
-                    text=scores_line,
-                    font=("Courier New", 8),
-                    bg=ITEM_BG, fg="#c724b1",
-                    anchor="w",
-                )
-                scores_lbl.pack(fill="x")
+            diff_parts, plays_line = format_diff_stats(diff_stats, song.diff_labels)
+            if diff_parts:
+                scores_frame = tk.Frame(text_frame, bg=ITEM_BG)
+                scores_frame.pack(fill="x")
+                for i, (text, is_fc) in enumerate(diff_parts):
+                    if i > 0:
+                        tk.Label(scores_frame, text="  •  ", font=("Courier New", 8),
+                                 bg=ITEM_BG, fg=SUBTEXT_COLOR).pack(side="left")
+                    tk.Label(scores_frame, text=text, font=("Courier New", 8),
+                             bg=ITEM_BG, fg=ACCENT_COLOR if is_fc else TEXT_COLOR,
+                             anchor="w").pack(side="left")
             if plays_line:
                 display_plays = ("★ " + plays_line) if is_fav else plays_line
                 plays_lbl = tk.Label(
@@ -620,7 +622,7 @@ class SongBrowser(tk.Tk):
         else:
             tk.Label(
                 text_frame,
-                text="Easy: 0 | DNF",
+                text="Easy:0 | DNF",
                 font=("Courier New", 8),
                 bg=ITEM_BG, fg="#555555",
                 anchor="w",
@@ -641,6 +643,8 @@ class SongBrowser(tk.Tk):
         widgets = [row, thumb_lbl, text_frame, title_lbl]
         for child in text_frame.winfo_children():
             widgets.append(child)
+            for grandchild in child.winfo_children():
+                widgets.append(grandchild)
 
         for w in widgets:
             w.bind("<Button-1>",    lambda e, i=idx: self._select(i))
@@ -669,6 +673,11 @@ class SongBrowser(tk.Tk):
                     grandchild.configure(bg=bg)
                 except Exception:
                     pass
+                for great in grandchild.winfo_children():
+                    try:
+                        great.configure(bg=bg)
+                    except Exception:
+                        pass
 
     def _select(self, idx: int):
         # Deselect previous
