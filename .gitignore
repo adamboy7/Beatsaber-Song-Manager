@@ -6,3 +6,6 @@ build/
 *.spec
 Reference/
 backups/
+ffmpeg.exe
+ffplay.exe
+ffprobe.exe
