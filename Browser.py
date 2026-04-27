@@ -400,6 +400,7 @@ class SongBrowser(tk.Tk):
         self._row_frames: list[tk.Frame] = []
         self._audio_proc: subprocess.Popen | None = None
         self._audio_paused: bool = False
+        self._playing_song: SongInfo | None = None
 
         self.player_stats: dict = {}
         self.favorite_ids: set[str] = set()
@@ -814,6 +815,7 @@ class SongBrowser(tk.Tk):
         if self._audio_proc and self._audio_proc.poll() is None:
             self._audio_proc.terminate()
         self._audio_proc = None
+        self._playing_song = None
 
     def _play_audio(self, song: SongInfo):
         if not song.audio_path:
@@ -828,6 +830,7 @@ class SongBrowser(tk.Tk):
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+                self._playing_song = song
             except Exception as exc:
                 messagebox.showerror("Play Audio Failed", str(exc))
         else:
@@ -1089,6 +1092,15 @@ class SongBrowser(tk.Tk):
         msg = f'Delete "{song.display_name}"?\n\nThe folder will be removed from CustomLevels. Your scores will not be affected.'
         if not messagebox.askyesno("Delete Song", msg, icon="warning", default="no"):
             return
+        if song is self._playing_song:
+            proc = self._audio_proc
+            self._stop_audio()
+            if proc:
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
         try:
             import shutil
             shutil.rmtree(song.folder)
