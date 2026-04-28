@@ -17,375 +17,21 @@ import time
 import datetime
 import threading
 
-# ─── Constants ────────────────────────────────────────────────────────────────
-
-BEATSABER_APP_ID = "620980"
-STEAM_RELATIVE_PATH = Path("steamapps/common/Beat Saber/Beat Saber_Data/CustomLevels")
-DEFAULT_VDF_PATH   = Path(r"C:\Program Files (x86)\Steam\steamapps\libraryfolders.vdf")
-THUMBNAIL_SIZE     = (80, 80)
-WINDOW_TITLE       = "Beat Saber – Custom Song Browser"
-BG_COLOR           = "#0d0d0d"
-ACCENT_COLOR       = "#c724b1"       # Beat Saber magenta
-TEXT_COLOR         = "#ffffff"
-SUBTEXT_COLOR      = "#aaaaaa"
-SELECTED_BG        = "#2a0033"
-HOVER_BG           = "#1a001f"
-ITEM_BG            = "#111111"
-SEPARATOR_COLOR    = "#2a002e"
-SCROLLBAR_BG       = "#1a001f"
-
-# ─── VDF / path helpers ───────────────────────────────────────────────────────
-
-def parse_vdf_library_paths(vdf_path: Path) -> list[Path]:
-    """Return every Steam library root found in libraryfolders.vdf."""
-    paths = []
-    try:
-        text = vdf_path.read_text(encoding="utf-8", errors="replace")
-        for match in re.finditer(r'"path"\s+"([^"]+)"', text):
-            p = Path(match.group(1).replace("\\\\", "\\"))
-            if p.exists():
-                paths.append(p)
-    except FileNotFoundError:
-        pass
-    return paths
-
-
-def find_beatsaber_custom_levels(vdf_path: Path = DEFAULT_VDF_PATH) -> Path | None:
-    """Locate the CustomLevels folder by scanning Steam library folders."""
-    library_roots = parse_vdf_library_paths(vdf_path)
-    for root in library_roots:
-        candidate = root / STEAM_RELATIVE_PATH
-        if candidate.is_dir():
-            return candidate
-    return None
-
-
-# ─── Song data ────────────────────────────────────────────────────────────────
-
-class SongInfo:
-    __slots__ = (
-        "folder", "song_id", "display_name",
-        "song_name", "sub_name", "author",
-        "mapper", "bpm", "cover_path", "audio_path", "created_at",
-        "diff_labels", "song_hash",
-    )
-
-    def __init__(self, folder: Path):
-        self.folder = folder
-        self.song_id = ""
-        self.display_name = folder.name
-        self.song_name = ""
-        self.sub_name = ""
-        self.author = ""
-        self.mapper = ""
-        self.bpm = 0.0
-        self.cover_path: Path | None = None
-        self.audio_path: Path | None = None
-        self.diff_labels: dict[int, str] = {}
-        self.song_hash: str = ""
-        # Use st_birthtime (Windows/macOS) with st_ctime as fallback
-        stat = folder.stat()
-        self.created_at: float = getattr(stat, "st_birthtime", stat.st_ctime)
-        self._parse()
-
-    def _parse(self):
-        # Detect community format: "abcd1 (Song Name - Mapper)"
-        m = re.match(r'^([A-Za-z0-9]+)\s+\((.+)\)$', self.folder.name)
-        if m:
-            self.song_id = m.group(1)
-
-        # Read Info.dat (case-insensitive search)
-        info_file = None
-        for name in ("Info.dat", "info.dat", "INFO.DAT"):
-            candidate = self.folder / name
-            if candidate.exists():
-                info_file = candidate
-                break
-
-        if info_file:
-            try:
-                data = json.loads(info_file.read_text(encoding="utf-8", errors="replace"))
-                self.song_name  = data.get("_songName", "")
-                self.sub_name   = data.get("_songSubName", "")
-                self.author     = data.get("_songAuthorName", "")
-                self.mapper     = data.get("_levelAuthorName", "")
-                self.bpm        = float(data.get("_beatsPerMinute", 0))
-                cover_filename  = data.get("_coverImageFilename", "")
-                if cover_filename:
-                    cp = self.folder / cover_filename
-                    if cp.exists():
-                        self.cover_path = cp
-
-                audio_filename = data.get("_songFilename", "")
-                if audio_filename:
-                    ap = self.folder / audio_filename
-                    if ap.exists():
-                        self.audio_path = ap
-
-                _DIFF_STR_TO_INT = {"Easy": 0, "Normal": 1, "Hard": 2, "Expert": 3, "ExpertPlus": 4}
-                standard_labels: dict[int, str] = {}
-                other_labels:    dict[int, str] = {}
-                for bms in data.get("_difficultyBeatmapSets", []):
-                    char = bms.get("_beatmapCharacteristicName", "")
-                    for bm in bms.get("_difficultyBeatmaps", []):
-                        diff_int = _DIFF_STR_TO_INT.get(bm.get("_difficulty", ""))
-                        if diff_int is None:
-                            continue
-                        # V2 uses _customData, V3/V4 uses customData
-                        custom = bm.get("_customData", bm.get("customData", {}))
-                        label = custom.get("_difficultyLabel", custom.get("difficultyLabel", "")).strip()
-                        if not label:
-                            continue
-                        if char == "Standard":
-                            standard_labels[diff_int] = label
-                        else:
-                            other_labels.setdefault(diff_int, label)
-                self.diff_labels = {**other_labels, **standard_labels}
-            except Exception:
-                pass
-
-        # Build display name
-        if self.song_name:
-            self.display_name = self.song_name
-            if self.sub_name:
-                self.display_name += f" {self.sub_name}"
-        else:
-            self.display_name = self.folder.name
-
-    @property
-    def bpm_str(self) -> str:
-        return f"{self.bpm:.0f} BPM" if self.bpm else ""
-
-    @property
-    def author_line(self) -> str:
-        parts = []
-        if self.author:
-            parts.append(self.author)
-        if self.mapper:
-            parts.append(f"mapped by {self.mapper}")
-        return "  •  ".join(parts)
-
-
-def load_song_hashes(custom_levels: Path) -> dict[str, str]:
-    """Return {folder_name: songHash} by reading SongCore's SongHashData.dat."""
-    hash_file = custom_levels.parent.parent / "UserData" / "SongCore" / "SongHashData.dat"
-    result: dict[str, str] = {}
-    try:
-        data = json.loads(hash_file.read_text(encoding="utf-8", errors="replace"))
-        for key, val in data.items():
-            folder_name = Path(key.replace("\\", "/")).name
-            song_hash = val.get("songHash", "")
-            if folder_name and song_hash:
-                result[folder_name] = song_hash.upper()
-    except Exception:
-        pass
-    return result
-
-
-def load_songs(custom_levels: Path) -> list[SongInfo]:
-    songs = []
-    for entry in custom_levels.iterdir():
-        if entry.is_dir():
-            songs.append(SongInfo(entry))
-    # Newest folder first
-    songs.sort(key=lambda s: s.created_at, reverse=True)
-    return songs
-
-
-# ─── PlayerData.dat ───────────────────────────────────────────────────────────
-
-# Beat Saber difficulty int → label
-DIFF_LABELS = {0: "Easy", 1: "Normal", 2: "Hard", 3: "Expert", 4: "ExpertPlus"}
-
-# Beat Saber maxRank int → display string
-RANK_LABELS = {0: "E", 1: "D", 2: "C", 3: "B", 4: "A", 5: "S", 6: "SS"}
-
-# Colour per rank for display
-RANK_COLORS = {
-    "SS": "#FFD700", "S": "#FFD700",
-    "A":  "#84e060", "B": "#60b4e0",
-    "C":  "#e0c060", "D": "#e08060",
-    "E":  "#888888", "DNF": "#555555",
-}
-
-
-def find_player_data() -> tuple["Path | None", str]:
-    """Locate PlayerData.dat. Returns (path_or_None, debug_string)."""
-    debug = []
-    bs_relative = Path("Hyperbolic Magnetism") / "Beat Saber" / "PlayerData.dat"
-
-    # Strategy 1: Registry — 'Local AppData' value tells us the real path;
-    # LocalLow is always a sibling folder (Local -> LocalLow).
-    try:
-        import winreg
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"
-        )
-        local_appdata, _ = winreg.QueryValueEx(key, "Local AppData")
-        winreg.CloseKey(key)
-        local_low = Path(local_appdata).parent / "LocalLow"
-        debug.append(f"Registry->LocalLow:{local_low}")
-        candidate = local_low / bs_relative
-        if candidate.exists():
-            return candidate, " | ".join(debug)
-    except Exception as e:
-        debug.append(f"registry_fail:{e}")
-
-    # Strategy 2: USERPROFILE environment variable
-    try:
-        profile = os.environ.get("USERPROFILE", "")
-        if profile:
-            local_low = Path(profile) / "AppData" / "LocalLow"
-            debug.append(f"USERPROFILE->LocalLow:{local_low}")
-            candidate = local_low / bs_relative
-            if candidate.exists():
-                return candidate, " | ".join(debug)
-    except Exception as e:
-        debug.append(f"userprofile_fail:{e}")
-
-    # Strategy 3: Path.home()
-    local_low = Path.home() / "AppData" / "LocalLow"
-    debug.append(f"home()->LocalLow:{local_low}")
-    candidate = local_low / bs_relative
-    if candidate.exists():
-        return candidate, " | ".join(debug)
-
-    return None, "NOT_FOUND | " + " | ".join(debug)
-
-
-class DiffStat:
-    """High score, rank string, play count, and FC flag for one difficulty."""
-    __slots__ = ("score", "rank", "plays", "full_combo")
-
-    def __init__(self, score: int, rank: str, plays: int, full_combo: bool = False):
-        self.score      = score
-        self.rank       = rank
-        self.plays      = plays
-        self.full_combo = full_combo
-
-
-def load_favorites(player_data_path: Path) -> set[str]:
-    """Return the set of favorited levelIds from PlayerData.dat."""
-    try:
-        raw = json.loads(player_data_path.read_text(encoding="utf-8", errors="replace"))
-        players = raw.get("localPlayers", [])
-        if not players:
-            return set()
-        return set(players[0].get("favoritesLevelIds", []))
-    except Exception:
-        return set()
-
-
-def load_player_stats(player_data_path: Path) -> dict[str, dict[int, DiffStat]]:
-    """Return {level_id: {difficulty_int: DiffStat}} for all entries."""
-    stats: dict[str, dict[int, DiffStat]] = {}
-    try:
-        raw = json.loads(player_data_path.read_text(encoding="utf-8", errors="replace"))
-        players = raw.get("localPlayers", [])
-        if not players:
-            return stats
-        entries = players[0].get("levelsStatsData", [])
-        for entry in entries:
-            plays = entry.get("playCount", 0)
-            if plays == 0:
-                continue  # Beat Saber creates zero entries on scan; not actual play data
-
-            level_id   = entry.get("levelId", "")
-            diff       = entry.get("difficulty", 0)
-            score      = entry.get("highScore", 0)
-            rank_int   = entry.get("maxRank", 0)
-            full_combo = bool(entry.get("fullCombo", False))
-
-            rank_str = RANK_LABELS.get(rank_int, "E") if score > 0 else "DNF"
-
-            stat = DiffStat(score, rank_str, plays, full_combo)
-            stats.setdefault(level_id, {})[diff] = stat
-    except Exception:
-        pass
-    return stats
-
-
-def song_level_ids(song: "SongInfo") -> list[str]:
-    """Generate the candidate levelId strings Beat Saber uses for this song.
-
-    Beat Saber stores custom maps as:
-      • "custom_level_{folder_name}"  — for community maps (short hex or SHA1)
-      • levelId == folder name        — for built-in / OST maps
-    """
-    ids = []
-    if song.song_hash:
-        ids.append(f"custom_level_{song.song_hash}")   # most accurate: matches PlayerData
-    ids.append(f"custom_level_{song.folder.name}")     # fallback: old folder-name form
-    ids.append(song.folder.name)                       # fallback for OST / built-in
-    return ids
-
-
-def get_song_stats(song: "SongInfo",
-                   all_stats: dict[str, dict[int, DiffStat]]
-                   ) -> dict[int, DiffStat] | None:
-    """Merge stats across all known levelId forms for this song.
-
-    Vanilla Beat Saber writes custom_level_{folder_name}; SongCore writes
-    custom_level_{hash}. Both may exist if the player switched between them,
-    so we collect all matches and combine them per-difficulty.
-    """
-    merged: dict[int, DiffStat] = {}
-    for lid in song_level_ids(song):
-        entry = all_stats.get(lid)
-        if not entry:
-            continue
-        for diff_int, stat in entry.items():
-            if diff_int not in merged:
-                merged[diff_int] = DiffStat(stat.score, stat.rank, stat.plays, stat.full_combo)
-            else:
-                existing = merged[diff_int]
-                fc = existing.full_combo or stat.full_combo
-                if stat.score > existing.score:
-                    merged[diff_int] = DiffStat(stat.score, stat.rank, existing.plays + stat.plays, fc)
-                else:
-                    merged[diff_int] = DiffStat(existing.score, existing.rank, existing.plays + stat.plays, fc)
-    return merged if merged else None
-
-
-def format_diff_stats(diff_stats: dict[int, DiffStat],
-                      custom_labels: dict[int, str] | None = None,
-                      ) -> tuple[list[tuple[str, bool]], str]:
-    """Return ([(text, is_fc), ...], plays_line) for display in the row."""
-    ordered = sorted(diff_stats.items())
-    parts: list[tuple[str, bool]] = []
-    total_plays = 0
-    for diff_int, stat in ordered:
-        label = (custom_labels or {}).get(diff_int) or DIFF_LABELS.get(diff_int, f"D{diff_int}")
-        short = {"Easy": "Easy", "Normal": "Norm", "Hard": "Hard",
-                 "Expert": "Expert", "ExpertPlus": "E+"}.get(label, label)
-        score_str = f"{stat.score:,}" if stat.score else "0"
-        parts.append((f"{short}:{score_str} | {stat.rank}", stat.full_combo))
-        total_plays += stat.plays
-
-    plays_line = f"Plays: {total_plays}" if total_plays else ""
-    return parts, plays_line
-
-
-
-# ─── UI ───────────────────────────────────────────────────────────────────────
-
-def _find_ffmpeg() -> str | None:
-    """Return path to ffmpeg: checks script directory first, then PATH."""
-    import shutil
-    local = Path(__file__).parent / "ffmpeg.exe"
-    if local.exists():
-        return str(local)
-    return shutil.which("ffmpeg")
-
-
-def _find_ffplay() -> str | None:
-    """Return path to ffplay: checks script directory first, then PATH."""
-    import shutil
-    local = Path(__file__).parent / "ffplay.exe"
-    if local.exists():
-        return str(local)
-    return shutil.which("ffplay")
+from libraries.constants import (
+    BG_COLOR, ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
+    SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR, SCROLLBAR_BG,
+    THUMBNAIL_SIZE, WINDOW_TITLE,
+)
+from libraries.steam_paths import find_beatsaber_custom_levels
+from libraries.song_data import SongInfo, load_songs, load_song_hashes
+from libraries.player_data import (
+    DIFF_LABELS, RANK_LABELS, RANK_COLORS,
+    DiffStat, find_player_data,
+    load_favorites, load_player_stats,
+    song_level_ids, get_song_stats, format_diff_stats,
+)
+from libraries.audio_utils import find_ffmpeg, find_ffplay
+from libraries.asset_editor import bak_files, restore_files, replace_art, replace_audio
 
 
 class SongBrowser(tk.Tk):
@@ -822,7 +468,7 @@ class SongBrowser(tk.Tk):
             messagebox.showwarning("Play Audio", "This song has no audio file.")
             return
         self._stop_audio()
-        ffplay = _find_ffplay()
+        ffplay = find_ffplay()
         if ffplay:
             try:
                 self._audio_proc = subprocess.Popen(
@@ -846,21 +492,11 @@ class SongBrowser(tk.Tk):
                     "ffplay not found. Place ffplay.exe next to this script or add it to your PATH.",
                 )
 
-    def _bak_files(self, song: SongInfo) -> list[Path]:
-        return list(song.folder.glob("*.bak"))
-
     def _restore_files(self, song: SongInfo):
-        baks = self._bak_files(song)
+        baks = bak_files(song)
         if not baks:
             return
-        errors = []
-        for bak in baks:
-            dest = bak.with_suffix("")
-            try:
-                import shutil
-                shutil.move(str(bak), str(dest))
-            except Exception as exc:
-                errors.append(f"{bak.name}: {exc}")
+        errors = restore_files(song)
         if errors:
             messagebox.showerror("Restore Failed", "\n".join(errors))
         else:
@@ -882,22 +518,7 @@ class SongBrowser(tk.Tk):
             return
 
         try:
-            with Image.open(song.cover_path) as orig:
-                orig_size = orig.size
-                orig_format = orig.format or song.cover_path.suffix.lstrip(".").upper()
-                if orig_format == "JPG":
-                    orig_format = "JPEG"
-
-            bak_path = song.cover_path.parent / (song.cover_path.name + ".bak")
-            import shutil
-            shutil.copy2(song.cover_path, bak_path)
-
-            with Image.open(new_path_str) as new_img:
-                if orig_format == "JPEG":
-                    new_img = new_img.convert("RGB")
-                new_img = new_img.resize(orig_size, Image.LANCZOS)
-                new_img.save(song.cover_path, format=orig_format)
-
+            replace_art(song.cover_path, new_path_str)
             self._thumbnails.clear()
             self._render_list()
         except Exception as exc:
@@ -968,42 +589,20 @@ class SongBrowser(tk.Tk):
         if not new_path_str:
             return
 
+        ffmpeg_path = find_ffmpeg()
+        if not ffmpeg_path and Path(new_path_str).suffix.lower() not in (".egg", ".ogg"):
+            self._prompt_ffmpeg_download()
+            return
+
         try:
-            import shutil
-            new_path = Path(new_path_str)
-            ext = new_path.suffix.lower()
-
-            bak_path = song.audio_path.parent / (song.audio_path.name + ".bak")
-            shutil.copy2(song.audio_path, bak_path)
-
-            if ext in (".egg", ".ogg"):
-                shutil.copy2(new_path, song.audio_path)
-            else:
-                ffmpeg_path = _find_ffmpeg()
-                if not ffmpeg_path:
-                    self._prompt_ffmpeg_download()
-                    return
-                try:
-                    from pydub import AudioSegment
-                except ImportError as e:
-                    messagebox.showerror(
-                        "Replace Audio",
-                        "Missing dependencies for audio conversion.\n"
-                        "Run: pip install -r requirements.txt\n\n"
-                        f"Detail: {e}",
-                    )
-                    return
-                AudioSegment.converter = ffmpeg_path
-                audio = AudioSegment.from_file(new_path_str)
-                audio.export(str(song.audio_path), format="ogg")
-
+            replace_audio(song.audio_path, new_path_str, ffmpeg_path or "")
             self.status_bar.config(text=f"Audio replaced for: {song.display_name}")
         except Exception as exc:
             messagebox.showerror("Replace Audio Failed", str(exc))
 
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
         is_fav = self._is_favorite(song)
-        baks = self._bak_files(song)
+        baks = bak_files(song)
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
