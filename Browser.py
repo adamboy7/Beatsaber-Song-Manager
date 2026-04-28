@@ -44,6 +44,7 @@ class SongBrowser(tk.Tk):
         self.songs: list[SongInfo] = []
         self.filtered: list[SongInfo] = []
         self.selected_index: int | None = None
+        self.selected_indices: set[int] = set()
         self._thumbnails: dict[int, ImageTk.PhotoImage] = {}   # keep refs alive
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
@@ -242,6 +243,10 @@ class SongBrowser(tk.Tk):
         for idx, song in enumerate(self.filtered):
             self._build_row(idx, song)
 
+        for i in self.selected_indices:
+            if i < len(self._row_frames):
+                self._recolor_row(self._row_frames[i], SELECTED_BG)
+
         self._update_scroll()
 
     def _is_favorite(self, song: SongInfo) -> bool:
@@ -353,9 +358,9 @@ class SongBrowser(tk.Tk):
                 widgets.append(grandchild)
 
         for w in widgets:
-            w.bind("<Button-1>",         lambda e, i=idx: self._select(i))
+            w.bind("<Button-1>",         lambda e, i=idx: self._select(i, shift_held=bool(e.state & 0x1)))
             w.bind("<Control-Button-1>",   lambda _, s=song: webbrowser.open(f"https://beatsaver.com/maps/{s.song_id}") if s.song_id else None)
-            w.bind("<Button-3>",         lambda e, s=song: self._show_context_menu(e, s))
+            w.bind("<Button-3>",         lambda e, i=idx, s=song: self._on_right_click(e, i, s))
             w.bind("<Enter>",       lambda e, r=row, s=sep: self._hover(r, s, True))
             w.bind("<Leave>",       lambda e, r=row, s=sep: self._hover(r, s, False))
             w.bind("<MouseWheel>",  self._on_mousewheel)
@@ -383,6 +388,28 @@ class SongBrowser(tk.Tk):
         if not self.player_dat_path:
             return
         if remove_from_favorites(self.player_dat_path, song, self.favorite_ids):
+            self._render_list()
+
+    def _add_to_favorites_multi(self, songs: list[SongInfo]):
+        if not self.player_dat_path:
+            return
+        changed = False
+        for song in songs:
+            if not self._is_favorite(song):
+                if add_to_favorites(self.player_dat_path, song, self.favorite_ids):
+                    changed = True
+        if changed:
+            self._render_list()
+
+    def _remove_from_favorites_multi(self, songs: list[SongInfo]):
+        if not self.player_dat_path:
+            return
+        changed = False
+        for song in songs:
+            if self._is_favorite(song):
+                if remove_from_favorites(self.player_dat_path, song, self.favorite_ids):
+                    changed = True
+        if changed:
             self._render_list()
 
     # ── Song operations ───────────────────────────────────────────────────────
@@ -458,6 +485,38 @@ class SongBrowser(tk.Tk):
                          foreground="#ff5555" if is_deletable else SUBTEXT_COLOR)
         menu.tk_popup(event.x_root, event.y_root)
 
+    def _on_right_click(self, event: tk.Event, idx: int, song: SongInfo):
+        if len(self.selected_indices) > 1 and idx in self.selected_indices:
+            songs = [self.filtered[i] for i in sorted(self.selected_indices)]
+            self._show_context_menu_multi(event, songs)
+        else:
+            self._show_context_menu(event, song)
+
+    def _show_context_menu_multi(self, event: tk.Event, songs: list[SongInfo]):
+        shift_held = bool(event.state & 0x1)
+        any_favorited = any(self._is_favorite(s) for s in songs)
+        fav_state = "normal" if self.player_dat_path else "disabled"
+        menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
+                       activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+                       bd=0)
+        menu.add_command(label="Play", state="disabled")
+        menu.add_separator()
+        menu.add_command(label="Add to Favorites",
+                         command=lambda: self._add_to_favorites_multi(songs),
+                         state=fav_state)
+        menu.add_command(label="Remove from Favorites",
+                         command=lambda: self._remove_from_favorites_multi(songs),
+                         state=fav_state)
+        menu.add_separator()
+        menu.add_command(label="Share Playlist", state="disabled")
+        menu.add_separator()
+        is_deletable = not any_favorited or shift_held
+        menu.add_command(label="Delete",
+                         command=lambda: self._delete_songs(songs, shift_held),
+                         state="normal" if is_deletable else "disabled",
+                         foreground="#ff5555" if is_deletable else SUBTEXT_COLOR)
+        menu.tk_popup(event.x_root, event.y_root)
+
     def _copy(self, text: str):
         self.clipboard_clear()
         self.clipboard_append(text)
@@ -494,10 +553,40 @@ class SongBrowser(tk.Tk):
         self.songs    = [s for s in self.songs    if s is not song]
         self.filtered = [s for s in self.filtered if s is not song]
         self.selected_index = None
+        self.selected_indices = set()
         self._thumbnails.clear()
         self._render_list()
         self.count_label.config(text=f"({len(self.songs)} songs)")
         self.status_bar.config(text=f"{len(self.filtered)} songs shown")
+
+    def _delete_songs(self, songs: list[SongInfo], shift_held: bool):
+        if any(self._is_favorite(s) for s in songs) and not shift_held:
+            return
+        count = len(songs)
+        msg = (f'Delete {count} songs?\n\n'
+               f'The folders will be removed from CustomLevels. Your scores will not be affected.')
+        if not messagebox.askyesno("Delete Songs", msg, icon="warning", default="no"):
+            return
+        failed: list[tuple[SongInfo, Exception]] = []
+        for song in songs:
+            if song is self._media_player.playing_song:
+                self._media_player.stop_and_wait()
+            try:
+                shutil.rmtree(song.folder)
+            except Exception as exc:
+                failed.append((song, exc))
+        deleted_ids = {id(s) for s in songs} - {id(s) for s, _ in failed}
+        self.songs    = [s for s in self.songs    if id(s) not in deleted_ids]
+        self.filtered = [s for s in self.filtered if id(s) not in deleted_ids]
+        self.selected_index = None
+        self.selected_indices = set()
+        self._thumbnails.clear()
+        self._render_list()
+        self.count_label.config(text=f"({len(self.songs)} songs)")
+        self.status_bar.config(text=f"{len(self.filtered)} songs shown")
+        if failed:
+            errs = "\n".join(f"{s.display_name}: {exc}" for s, exc in failed)
+            messagebox.showerror("Delete Failed", f"Failed to delete {len(failed)} song(s):\n{errs}")
 
     def _hover(self, row: tk.Frame, sep: tk.Frame, entering: bool):
         if self._row_is_selected(row):
@@ -526,21 +615,38 @@ class SongBrowser(tk.Tk):
                     except Exception:
                         pass
 
-    def _select(self, idx: int):
+    def _select(self, idx: int, shift_held: bool = False):
         self.canvas.focus_set()
-        # Deselect previous
-        if self.selected_index is not None and self.selected_index < len(self._row_frames):
-            self._recolor_row(self._row_frames[self.selected_index], ITEM_BG)
 
-        self.selected_index = idx
-        self._recolor_row(self._row_frames[idx], SELECTED_BG)
+        if shift_held:
+            if idx in self.selected_indices:
+                self.selected_indices.discard(idx)
+                if idx < len(self._row_frames):
+                    self._recolor_row(self._row_frames[idx], ITEM_BG)
+                if self.selected_index == idx:
+                    self.selected_index = max(self.selected_indices) if self.selected_indices else None
+            else:
+                self.selected_indices.add(idx)
+                self.selected_index = idx
+                if idx < len(self._row_frames):
+                    self._recolor_row(self._row_frames[idx], SELECTED_BG)
+        else:
+            for i in self.selected_indices:
+                if i < len(self._row_frames):
+                    self._recolor_row(self._row_frames[i], ITEM_BG)
+            self.selected_indices = {idx}
+            self.selected_index = idx
+            self._recolor_row(self._row_frames[idx], SELECTED_BG)
 
-        song = self.filtered[idx]
-        self.status_bar.config(
-            text=f"Selected: {song.display_name}"
-                 + (f"  •  {song.author}" if song.author else "")
-                 + (f"  •  {song.bpm_str}" if song.bpm_str else "")
-        )
+        if len(self.selected_indices) > 1:
+            self.status_bar.config(text=f"{len(self.selected_indices)} songs selected")
+        elif self.selected_index is not None:
+            song = self.filtered[self.selected_index]
+            self.status_bar.config(
+                text=f"Selected: {song.display_name}"
+                     + (f"  •  {song.author}" if song.author else "")
+                     + (f"  •  {song.bpm_str}" if song.bpm_str else "")
+            )
 
     # ── Search ────────────────────────────────────────────────────────────────
 
@@ -572,6 +678,7 @@ class SongBrowser(tk.Tk):
                     text=f"Song {song_id} not installed — press Enter or click to install via Mod Assistant."
                 )
             self.selected_index = None
+            self.selected_indices = set()
             self._thumbnails.clear()
             self._render_list()
             return
@@ -590,6 +697,7 @@ class SongBrowser(tk.Tk):
                 or query_lower in s.song_id.lower()
             ]
         self.selected_index = None
+        self.selected_indices = set()
         self._thumbnails.clear()   # free memory; will reload on render
         self._render_list()
         self.status_bar.config(text=f"{len(self.filtered)} songs shown")
