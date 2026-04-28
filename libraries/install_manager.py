@@ -83,17 +83,31 @@ class InstallManager:
             return False
         try:
             data = json.loads(info_file.read_text(encoding="utf-8", errors="replace"))
-            audio = data.get("_songFilename", "")
-            if audio and not (folder / audio).exists():
-                return False
-            cover = data.get("_coverImageFilename", "")
-            if cover and not (folder / cover).exists():
-                return False
-            for bms in data.get("_difficultyBeatmapSets", []):
-                for bm in bms.get("_difficultyBeatmaps", []):
-                    diff_file = bm.get("_beatmapFilename", "")
+            is_v4 = data.get("version", "").startswith("4")
+            if is_v4:
+                audio_obj = data.get("audio", {})
+                audio = audio_obj.get("songFilename", "")
+                cover = data.get("coverImageFilename", "")
+                if audio and not (folder / audio).exists():
+                    return False
+                if cover and not (folder / cover).exists():
+                    return False
+                for bm in data.get("difficultyBeatmaps", []):
+                    diff_file = bm.get("beatmapDataFilename", "")
                     if diff_file and not (folder / diff_file).exists():
                         return False
+            else:
+                audio = data.get("_songFilename", "")
+                cover = data.get("_coverImageFilename", "")
+                if audio and not (folder / audio).exists():
+                    return False
+                if cover and not (folder / cover).exists():
+                    return False
+                for bms in data.get("_difficultyBeatmapSets", []):
+                    for bm in bms.get("_difficultyBeatmaps", []):
+                        diff_file = bm.get("_beatmapFilename", "")
+                        if diff_file and not (folder / diff_file).exists():
+                            return False
             return True
         except Exception:
             return False

@@ -47,18 +47,39 @@ class SongInfo:
         if info_file:
             try:
                 data = json.loads(info_file.read_text(encoding="utf-8", errors="replace"))
-                self.song_name  = data.get("_songName", "")
-                self.sub_name   = data.get("_songSubName", "")
-                self.author     = data.get("_songAuthorName", "")
-                self.mapper     = data.get("_levelAuthorName", "")
-                self.bpm        = float(data.get("_beatsPerMinute", 0))
-                cover_filename  = data.get("_coverImageFilename", "")
+                is_v4 = data.get("version", "").startswith("4")
+
+                if is_v4:
+                    song_obj = data.get("song", {})
+                    audio_obj = data.get("audio", {})
+                    self.song_name = song_obj.get("title", "")
+                    self.sub_name  = song_obj.get("subTitle", "")
+                    self.author    = song_obj.get("author", "")
+                    self.bpm       = float(audio_obj.get("bpm", 0))
+                    cover_filename = data.get("coverImageFilename", "")
+                    audio_filename = audio_obj.get("songFilename", "")
+                    mappers: list[str] = []
+                    seen: set[str] = set()
+                    for bm in data.get("difficultyBeatmaps", []):
+                        for mapper_name in bm.get("beatmapAuthors", {}).get("mappers", []):
+                            if mapper_name not in seen:
+                                mappers.append(mapper_name)
+                                seen.add(mapper_name)
+                    self.mapper = ", ".join(mappers)
+                else:
+                    self.song_name = data.get("_songName", "")
+                    self.sub_name  = data.get("_songSubName", "")
+                    self.author    = data.get("_songAuthorName", "")
+                    self.mapper    = data.get("_levelAuthorName", "")
+                    self.bpm       = float(data.get("_beatsPerMinute", 0))
+                    cover_filename = data.get("_coverImageFilename", "")
+                    audio_filename = data.get("_songFilename", "")
+
                 if cover_filename:
                     cp = self.folder / cover_filename
                     if cp.exists():
                         self.cover_path = cp
 
-                audio_filename = data.get("_songFilename", "")
                 if audio_filename:
                     ap = self.folder / audio_filename
                     if ap.exists():
@@ -67,21 +88,35 @@ class SongInfo:
                 _DIFF_STR_TO_INT = {"Easy": 0, "Normal": 1, "Hard": 2, "Expert": 3, "ExpertPlus": 4}
                 standard_labels: dict[int, str] = {}
                 other_labels:    dict[int, str] = {}
-                for bms in data.get("_difficultyBeatmapSets", []):
-                    char = bms.get("_beatmapCharacteristicName", "")
-                    for bm in bms.get("_difficultyBeatmaps", []):
-                        diff_int = _DIFF_STR_TO_INT.get(bm.get("_difficulty", ""))
+                if is_v4:
+                    for bm in data.get("difficultyBeatmaps", []):
+                        char = bm.get("characteristic", "")
+                        diff_int = _DIFF_STR_TO_INT.get(bm.get("difficulty", ""))
                         if diff_int is None:
                             continue
-                        # V2 uses _customData, V3/V4 uses customData
-                        custom = bm.get("_customData", bm.get("customData", {}))
-                        label = custom.get("_difficultyLabel", custom.get("difficultyLabel", "")).strip()
+                        custom = bm.get("customData", {})
+                        label = custom.get("difficultyLabel", "").strip()
                         if not label:
                             continue
                         if char == "Standard":
                             standard_labels[diff_int] = label
                         else:
                             other_labels.setdefault(diff_int, label)
+                else:
+                    for bms in data.get("_difficultyBeatmapSets", []):
+                        char = bms.get("_beatmapCharacteristicName", "")
+                        for bm in bms.get("_difficultyBeatmaps", []):
+                            diff_int = _DIFF_STR_TO_INT.get(bm.get("_difficulty", ""))
+                            if diff_int is None:
+                                continue
+                            custom = bm.get("_customData", bm.get("customData", {}))
+                            label = custom.get("_difficultyLabel", custom.get("difficultyLabel", "")).strip()
+                            if not label:
+                                continue
+                            if char == "Standard":
+                                standard_labels[diff_int] = label
+                            else:
+                                other_labels.setdefault(diff_int, label)
                 self.diff_labels = {**other_labels, **standard_labels}
             except Exception:
                 pass
