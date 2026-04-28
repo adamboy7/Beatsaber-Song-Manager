@@ -6,6 +6,9 @@ with cover art and metadata. Click art or title to select a song.
 
 import os
 import re
+import io
+import json
+import base64
 import shutil
 import webbrowser
 import datetime
@@ -412,6 +415,71 @@ class SongBrowser(tk.Tk):
         if changed:
             self._render_list()
 
+    def _share_playlist(self, songs: list[SongInfo]) -> None:
+        invalid = [s for s in songs if not s.song_hash]
+        valid = [s for s in songs if s.song_hash]
+
+        if invalid:
+            names = "\n".join(f"  • {s.display_name}" for s in invalid)
+            if not valid:
+                messagebox.showerror(
+                    "Cannot Create Playlist",
+                    "None of the selected songs have a hash — they may not have been "
+                    "loaded by Beat Saber yet.\n\n" + names,
+                )
+                return
+            proceed = messagebox.askyesno(
+                "Invalid Songs",
+                f"{len(invalid)} song(s) have no hash and will be skipped:\n\n"
+                + names
+                + "\n\nContinue with the remaining "
+                + str(len(valid))
+                + " song(s)?",
+            )
+            if not proceed:
+                return
+
+        import tkinter.filedialog as fd
+        save_path = fd.asksaveasfilename(
+            title="Save Playlist",
+            filetypes=[("Beat Saber Playlist", "*.bplist"), ("All files", "*.*")],
+            defaultextension=".bplist",
+        )
+        if not save_path:
+            return
+
+        title = Path(save_path).stem
+
+        image_data = ""
+        for song in valid:
+            if song.cover_path and song.cover_path.exists():
+                try:
+                    buf = io.BytesIO()
+                    Image.open(song.cover_path).convert("RGB").save(buf, format="JPEG")
+                    image_data = base64.b64encode(buf.getvalue()).decode("ascii")
+                except Exception:
+                    pass
+                break
+
+        playlist = {
+            "playlistTitle": title,
+            "playlistAuthor": "",
+            "image": image_data,
+            "customData": {},
+            "songs": [
+                {"key": s.song_id, "hash": s.song_hash, "songName": s.display_name}
+                for s in valid
+            ],
+        }
+
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(playlist, f, indent=2)
+
+        messagebox.showinfo(
+            "Playlist Saved",
+            f"Saved {len(valid)} songs to {Path(save_path).name}",
+        )
+
     # ── Song operations ───────────────────────────────────────────────────────
 
     def _play_audio(self, song: SongInfo):
@@ -508,7 +576,9 @@ class SongBrowser(tk.Tk):
                          command=lambda: self._remove_from_favorites_multi(songs),
                          state=fav_state)
         menu.add_separator()
-        menu.add_command(label="Share Playlist", state="disabled")
+        menu.add_command(label="Share Playlist",
+                         command=lambda: self._share_playlist(songs),
+                         state="normal")
         menu.add_separator()
         is_deletable = not any_favorited or shift_held
         menu.add_command(label="Delete",
