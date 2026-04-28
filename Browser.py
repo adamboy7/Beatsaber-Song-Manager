@@ -6,16 +6,14 @@ with cover art and metadata. Click art or title to select a song.
 
 import os
 import re
-import json
-import subprocess
+import shutil
 import webbrowser
+import datetime
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
 from PIL import Image, ImageTk
-import time
-import datetime
-import threading
 
 from libraries.constants import (
     BG_COLOR, ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
@@ -30,8 +28,13 @@ from libraries.player_data import (
     load_favorites, load_player_stats,
     song_level_ids, get_song_stats, format_diff_stats,
 )
-from libraries.audio_utils import find_ffmpeg, find_ffplay
-from libraries.asset_editor import bak_files, restore_files, replace_art, replace_audio
+from libraries.asset_editor import bak_files
+from libraries.media_player import MediaPlayer
+from libraries.favorites import add_to_favorites, remove_from_favorites
+from libraries.install_manager import InstallManager
+from libraries.song_operations import (
+    restore_song_files, replace_song_art, replace_song_audio, clear_song_score,
+)
 
 
 class SongBrowser(tk.Tk):
@@ -44,15 +47,11 @@ class SongBrowser(tk.Tk):
         self._thumbnails: dict[int, ImageTk.PhotoImage] = {}   # keep refs alive
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
-        self._audio_proc: subprocess.Popen | None = None
-        self._audio_paused: bool = False
-        self._playing_song: SongInfo | None = None
+        self._pending_install_id: str | None = None
 
         self.player_stats: dict = {}
         self.favorite_ids: set[str] = set()
         self.player_dat_path: Path | None = None
-        self._pending_install_id: str | None = None
-        self._install_gen: int = 0
         player_dat, pd_debug = find_player_data()
         if player_dat:
             self.player_dat_path = player_dat
@@ -67,10 +66,19 @@ class SongBrowser(tk.Tk):
         self.geometry("780x680")
         self.minsize(600, 400)
 
-        self._kb_listener = None
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
-        self._start_media_keys()
+
+        self._media_player = MediaPlayer()
+        self._media_player.start_media_keys(self.after)
+
+        self._install_manager = InstallManager(
+            custom_levels,
+            self.after,
+            lambda text: self.status_bar.config(text=text),
+            self._on_install_complete_reload,
+        )
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._load_async()
 
     # ── Layout ────────────────────────────────────────────────────────────────
@@ -352,253 +360,55 @@ class SongBrowser(tk.Tk):
             w.bind("<Leave>",       lambda e, r=row, s=sep: self._hover(r, s, False))
             w.bind("<MouseWheel>",  self._on_mousewheel)
 
-    def _favorite_level_id(self, song: SongInfo) -> str:
-        if song.song_hash:
-            return f"custom_level_{song.song_hash}"
-        return f"custom_level_{song.folder.name}"
-
-    def _add_to_favorites(self, song: SongInfo):
-        if not self.player_dat_path:
-            return
-        try:
-            raw = self.player_dat_path.read_text(encoding="utf-8", errors="replace")
-            self._backup_player_data(raw)
-            data = json.loads(raw)
-            players = data.get("localPlayers", [])
-            if not players:
-                return
-            level_id = self._favorite_level_id(song)
-            favs: list = players[0].setdefault("favoritesLevelIds", [])
-            if level_id not in favs:
-                favs.append(level_id)
-            self.player_dat_path.write_text(
-                json.dumps(data, ensure_ascii=False, separators=(",", ":")),
-                encoding="utf-8",
-            )
-            self.favorite_ids.add(level_id)
-            self._render_list()
-        except Exception as exc:
-            messagebox.showerror("Favorites Error", str(exc))
-
-    def _backup_player_data(self, raw: str):
-        """Write a timestamped backup to backups/ and a plain .bak alongside PlayerData."""
-        bak_dir = Path(__file__).parent / "backups"
-        bak_dir.mkdir(exist_ok=True)
-        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        (bak_dir / f"PlayerData_{stamp}.dat.bak").write_text(raw, encoding="utf-8")
-        self.player_dat_path.with_suffix(".dat.bak").write_text(raw, encoding="utf-8")
-
-    def _remove_from_favorites(self, song: SongInfo):
-        if not self.player_dat_path:
-            return
-        try:
-            raw = self.player_dat_path.read_text(encoding="utf-8", errors="replace")
-            self._backup_player_data(raw)
-            data = json.loads(raw)
-            players = data.get("localPlayers", [])
-            if not players:
-                return
-            # Scrub every known levelId form for this song
-            to_remove = {f"custom_level_{song.folder.name}"}
-            if song.song_hash:
-                to_remove.add(f"custom_level_{song.song_hash}")
-            favs: list = players[0].get("favoritesLevelIds", [])
-            players[0]["favoritesLevelIds"] = [f for f in favs if f not in to_remove]
-            self.player_dat_path.write_text(
-                json.dumps(data, ensure_ascii=False, separators=(",", ":")),
-                encoding="utf-8",
-            )
-            self.favorite_ids -= to_remove
-            self._render_list()
-        except Exception as exc:
-            messagebox.showerror("Favorites Error", str(exc))
-
     def _on_close(self):
-        self._install_gen += 1  # cancel any pending install watch
-        if self._kb_listener:
-            self._kb_listener.stop()
-        self._stop_audio()
+        self._install_manager.cancel()
+        self._media_player.stop_listener()
+        self._media_player.stop()
         self.destroy()
-
-    def _start_media_keys(self):
-        from pynput import keyboard as pynput_kb
-
-        def on_press(key):
-            if key == pynput_kb.Key.media_play_pause:
-                self.after(0, self._toggle_pause_audio)
-            elif key == pynput_kb.Key.media_stop:
-                self.after(0, self._stop_audio)
-
-        self._kb_listener = pynput_kb.Listener(on_press=on_press)
-        self._kb_listener.daemon = True
-        self._kb_listener.start()
 
     def _on_space(self, *_):
         if self.focus_get() is self.search_entry:
             return
-        self._toggle_pause_audio()
+        self._media_player.toggle_pause()
 
-    def _toggle_pause_audio(self):
-        if not self._audio_proc or self._audio_proc.poll() is not None:
-            self._audio_paused = False
+    # ── Favorites ─────────────────────────────────────────────────────────────
+
+    def _add_to_favorites(self, song: SongInfo):
+        if not self.player_dat_path:
             return
-        try:
-            import ctypes
-            ntdll   = ctypes.WinDLL("ntdll")
-            kernel32 = ctypes.WinDLL("kernel32")
-            handle = kernel32.OpenProcess(0x1F0FFF, False, self._audio_proc.pid)
-            if self._audio_paused:
-                ntdll.NtResumeProcess(handle)
-                self._audio_paused = False
-            else:
-                ntdll.NtSuspendProcess(handle)
-                self._audio_paused = True
-            kernel32.CloseHandle(handle)
-        except Exception as exc:
-            messagebox.showerror("Pause Failed", str(exc))
+        if add_to_favorites(self.player_dat_path, song, self.favorite_ids):
+            self._render_list()
 
-    def _stop_audio(self):
-        if self._audio_proc and self._audio_proc.poll() is None:
-            self._audio_proc.terminate()
-        self._audio_proc = None
-        self._playing_song = None
+    def _remove_from_favorites(self, song: SongInfo):
+        if not self.player_dat_path:
+            return
+        if remove_from_favorites(self.player_dat_path, song, self.favorite_ids):
+            self._render_list()
+
+    # ── Song operations ───────────────────────────────────────────────────────
 
     def _play_audio(self, song: SongInfo):
-        if not song.audio_path:
-            messagebox.showwarning("Play Audio", "This song has no audio file.")
-            return
-        self._stop_audio()
-        ffplay = find_ffplay()
-        if ffplay:
-            try:
-                self._audio_proc = subprocess.Popen(
-                    [ffplay, "-nodisp", "-autoexit", str(song.audio_path)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                self._playing_song = song
-            except Exception as exc:
-                messagebox.showerror("Play Audio Failed", str(exc))
-        else:
-            ext = song.audio_path.suffix.lower()
-            if ext == ".ogg":
-                try:
-                    os.startfile(song.audio_path)
-                except Exception as exc:
-                    messagebox.showerror("Play Audio Failed", str(exc))
-            else:
-                messagebox.showwarning(
-                    "Play Audio",
-                    "ffplay not found. Place ffplay.exe next to this script or add it to your PATH.",
-                )
+        self._media_player.play(song)
 
     def _restore_files(self, song: SongInfo):
-        baks = bak_files(song)
-        if not baks:
+        count, errors = restore_song_files(song)
+        if count == 0:
             return
-        errors = restore_files(song)
         if errors:
             messagebox.showerror("Restore Failed", "\n".join(errors))
         else:
             self._thumbnails.clear()
             self._render_list()
-            self.status_bar.config(text=f"Restored {len(baks)} file(s) for: {song.display_name}")
+            self.status_bar.config(text=f"Restored {count} file(s) for: {song.display_name}")
 
     def _replace_art(self, song: SongInfo):
-        if not song.cover_path:
-            messagebox.showwarning("Replace Art", "This song has no cover image to replace.")
-            return
-
-        import tkinter.filedialog as fd
-        new_path_str = fd.askopenfilename(
-            title="Select New Cover Image",
-            filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"), ("All files", "*.*")],
-        )
-        if not new_path_str:
-            return
-
-        try:
-            replace_art(song.cover_path, new_path_str)
+        if replace_song_art(self, song):
             self._thumbnails.clear()
             self._render_list()
-        except Exception as exc:
-            messagebox.showerror("Replace Art Failed", str(exc))
-
-    def _prompt_ffmpeg_download(self):
-        dlg = tk.Toplevel(self)
-        dlg.title("ffmpeg Required")
-        dlg.configure(bg=BG_COLOR)
-        dlg.resizable(False, False)
-        dlg.grab_set()
-
-        tk.Label(
-            dlg,
-            text="ffmpeg is required to convert audio files.\n"
-                 "Download it and add ffmpeg.exe to your PATH.",
-            font=("Segoe UI", 10),
-            bg=BG_COLOR, fg=TEXT_COLOR,
-            padx=24, pady=18,
-            justify="center",
-        ).pack()
-
-        btn_frame = tk.Frame(dlg, bg=BG_COLOR)
-        btn_frame.pack(pady=(0, 16))
-
-        tk.Button(
-            btn_frame,
-            text="Download",
-            font=("Segoe UI", 10),
-            bg=ACCENT_COLOR, fg=TEXT_COLOR,
-            activebackground="#a01d90", activeforeground=TEXT_COLOR,
-            relief="flat", padx=14, pady=5,
-            command=lambda: (
-                webbrowser.open("https://ffmpeg.org/download.html#build-windows"),
-                dlg.destroy(),
-            ),
-        ).pack(side="left", padx=6)
-
-        tk.Button(
-            btn_frame,
-            text="Cancel",
-            font=("Segoe UI", 10),
-            bg="#333333", fg=TEXT_COLOR,
-            activebackground="#444444", activeforeground=TEXT_COLOR,
-            relief="flat", padx=14, pady=5,
-            command=dlg.destroy,
-        ).pack(side="left", padx=6)
-
-        dlg.wait_window()
 
     def _replace_audio(self, song: SongInfo):
-        if not song.audio_path:
-            messagebox.showwarning("Replace Audio", "This song has no audio file to replace.")
-            return
-
-        import tkinter.filedialog as fd
-        new_path_str = fd.askopenfilename(
-            title="Select New Audio File",
-            filetypes=[
-                ("Audio files", "*.mp3 *.wav *.ogg *.egg *.m4a"),
-                ("MP3",         "*.mp3"),
-                ("WAV",         "*.wav"),
-                ("OGG / EGG",   "*.ogg *.egg"),
-                ("M4A",         "*.m4a"),
-                ("All files",   "*.*"),
-            ],
-        )
-        if not new_path_str:
-            return
-
-        ffmpeg_path = find_ffmpeg()
-        if not ffmpeg_path and Path(new_path_str).suffix.lower() not in (".egg", ".ogg"):
-            self._prompt_ffmpeg_download()
-            return
-
-        try:
-            replace_audio(song.audio_path, new_path_str, ffmpeg_path or "")
+        if replace_song_audio(self, song):
             self.status_bar.config(text=f"Audio replaced for: {song.display_name}")
-        except Exception as exc:
-            messagebox.showerror("Replace Audio Failed", str(exc))
 
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
         is_fav = self._is_favorite(song)
@@ -661,47 +471,22 @@ class SongBrowser(tk.Tk):
             icon="warning", default="no",
         ):
             return
-        ids_to_clear = set(song_level_ids(song))
-        try:
-            raw = self.player_dat_path.read_text(encoding="utf-8", errors="replace")
-            self._backup_player_data(raw)
-            data = json.loads(raw)
-            players = data.get("localPlayers", [])
-            if not players:
-                return
-            entries = players[0].get("levelsStatsData", [])
-            before = len(entries)
-            players[0]["levelsStatsData"] = [
-                e for e in entries if e.get("levelId", "") not in ids_to_clear
-            ]
-            removed = before - len(players[0]["levelsStatsData"])
-            self.player_dat_path.write_text(
-                json.dumps(data, ensure_ascii=False, separators=(",", ":")),
-                encoding="utf-8",
-            )
-            self.player_stats = load_player_stats(self.player_dat_path)
+        result = clear_song_score(self.player_dat_path, song)
+        if result is not None:
+            removed, new_stats = result
+            self.player_stats = new_stats
             self._render_list()
             self.status_bar.config(
                 text=f"Cleared {removed} score entr{'y' if removed == 1 else 'ies'} for: {song.display_name}"
             )
-        except Exception as exc:
-            messagebox.showerror("Clear Score Failed", str(exc))
 
     def _delete_song(self, song: SongInfo):
         msg = f'Delete "{song.display_name}"?\n\nThe folder will be removed from CustomLevels. Your scores will not be affected.'
         if not messagebox.askyesno("Delete Song", msg, icon="warning", default="no"):
             return
-        if song is self._playing_song:
-            proc = self._audio_proc
-            self._stop_audio()
-            if proc:
-                try:
-                    proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
+        if song is self._media_player.playing_song:
+            self._media_player.stop_and_wait()
         try:
-            import shutil
             shutil.rmtree(song.folder)
         except Exception as exc:
             messagebox.showerror("Delete Failed", str(exc))
@@ -792,7 +577,7 @@ class SongBrowser(tk.Tk):
             return
 
         self._pending_install_id = None
-        self._install_gen += 1  # cancel any pending install watch
+        self._install_manager.cancel()
         query_lower = query.lower()
         if not query_lower:
             self.filtered = self.songs[:]
@@ -814,91 +599,11 @@ class SongBrowser(tk.Tk):
             self._trigger_install(self._pending_install_id)
 
     def _trigger_install(self, song_id: str):
-        if not self._has_beatsaver_handler():
-            self.status_bar.config(
-                text="No handler for beatsaver:// — install Mod Assistant and enable one-click installs."
-            )
-            return
-        webbrowser.open(f"beatsaver://{song_id}")
-        self._watch_for_install(song_id)
+        self._install_manager.trigger(song_id)
 
-    @staticmethod
-    def _has_beatsaver_handler() -> bool:
-        try:
-            import winreg
-            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "beatsaver")
-            winreg.CloseKey(key)
-            return True
-        except (FileNotFoundError, OSError):
-            return False
+    # ── Install completion ────────────────────────────────────────────────────
 
-    def _watch_for_install(self, song_id: str):
-        self._install_gen += 1
-        gen = self._install_gen
-        self._pulse_install_status(song_id, gen, 0)
-
-        def worker():
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
-                if gen != self._install_gen:
-                    return
-                try:
-                    for entry in self.custom_levels.iterdir():
-                        if not entry.is_dir():
-                            continue
-                        name = entry.name.lower()
-                        if name.startswith(song_id + " ") or name == song_id:
-                            if self._is_song_complete(entry):
-                                if gen == self._install_gen:
-                                    self.after(0, lambda: self._on_install_complete(gen))
-                                return
-                except Exception:
-                    pass
-                time.sleep(1)
-            if gen == self._install_gen:
-                self.after(0, lambda: self._on_install_timeout(song_id, gen))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _pulse_install_status(self, song_id: str, gen: int, elapsed: int):
-        if gen != self._install_gen:
-            return
-        dots = "." * (elapsed % 4)
-        self.status_bar.config(text=f"Waiting for {song_id} to install{dots}  ({elapsed}s)")
-        if elapsed < 30:
-            self.after(1000, lambda: self._pulse_install_status(song_id, gen, elapsed + 1))
-
-    def _is_song_complete(self, folder: Path) -> bool:
-        info_file = None
-        for name in ("Info.dat", "info.dat"):
-            candidate = folder / name
-            if candidate.exists():
-                info_file = candidate
-                break
-        if not info_file:
-            return False
-        try:
-            data = json.loads(info_file.read_text(encoding="utf-8", errors="replace"))
-            audio = data.get("_songFilename", "")
-            if audio and not (folder / audio).exists():
-                return False
-            cover = data.get("_coverImageFilename", "")
-            if cover and not (folder / cover).exists():
-                return False
-            for bms in data.get("_difficultyBeatmapSets", []):
-                for bm in bms.get("_difficultyBeatmaps", []):
-                    diff_file = bm.get("_beatmapFilename", "")
-                    if diff_file and not (folder / diff_file).exists():
-                        return False
-            return True
-        except Exception:
-            return False
-
-    def _on_install_complete(self, gen: int):
-        if gen != self._install_gen:
-            return
-        self._install_gen += 1  # stop the pulse
-
+    def _on_install_complete_reload(self):
         def worker():
             songs = load_songs(self.custom_levels)
             hashes = load_song_hashes(self.custom_levels)
@@ -912,14 +617,6 @@ class SongBrowser(tk.Tk):
         self.songs = songs
         self.count_label.config(text=f"({len(songs)} songs)")
         self._on_search()  # re-applies search bar content; shows installed song and clears pending_install_id
-
-    def _on_install_timeout(self, song_id: str, gen: int):
-        if gen != self._install_gen:
-            return
-        self._install_gen += 1  # stop any late-firing pulse from overwriting the message
-        self.status_bar.config(
-            text=f"No install detected for {song_id} — check that Mod Assistant is running and one-click installs are enabled."
-        )
 
     def _build_install_row(self, song_id: str):
         row = tk.Frame(self.list_frame, bg=HOVER_BG, cursor="hand2")
