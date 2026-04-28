@@ -48,7 +48,7 @@ class SongBrowser(tk.Tk):
         self.filtered: list[SongInfo] = []
         self.selected_index: int | None = None
         self.selected_indices: set[int] = set()
-        self._thumbnails: dict[int, ImageTk.PhotoImage] = {}   # keep refs alive
+        self._thumbnails: dict[str, ImageTk.PhotoImage] = {}   # keep refs alive; keyed by folder path
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
         self._pending_install_id: str | None = None
@@ -220,15 +220,16 @@ class SongBrowser(tk.Tk):
             self._placeholder = ImageTk.PhotoImage(img)
         return self._placeholder
 
-    def _load_thumbnail(self, song: SongInfo, idx: int) -> ImageTk.PhotoImage:
-        if idx in self._thumbnails:
-            return self._thumbnails[idx]
+    def _load_thumbnail(self, song: SongInfo) -> ImageTk.PhotoImage:
+        key = str(song.folder)
+        if key in self._thumbnails:
+            return self._thumbnails[key]
         try:
             if song.cover_path:
                 img = Image.open(song.cover_path).convert("RGB")
                 img = img.resize(THUMBNAIL_SIZE, Image.LANCZOS)
                 photo = ImageTk.PhotoImage(img)
-                self._thumbnails[idx] = photo
+                self._thumbnails[key] = photo
                 return photo
         except Exception:
             pass
@@ -262,7 +263,7 @@ class SongBrowser(tk.Tk):
         self._row_frames.append(row)
 
         # Thumbnail (loaded lazily)
-        thumb_img = self._load_thumbnail(song, self.filtered.index(song))
+        thumb_img = self._load_thumbnail(song)
         thumb_lbl = tk.Label(row, image=thumb_img, bg=ITEM_BG, cursor="hand2")
         thumb_lbl.image = thumb_img   # keep ref
         thumb_lbl.pack(side="left", padx=8, pady=6)
