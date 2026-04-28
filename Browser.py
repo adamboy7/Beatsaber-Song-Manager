@@ -31,6 +31,7 @@ from libraries.player_data import (
     song_level_ids, get_song_stats, format_diff_stats,
 )
 from libraries.audio_utils import find_ffmpeg, find_ffplay
+from libraries.asset_editor import bak_files, restore_files, replace_art, replace_audio
 
 
 class SongBrowser(tk.Tk):
@@ -491,21 +492,11 @@ class SongBrowser(tk.Tk):
                     "ffplay not found. Place ffplay.exe next to this script or add it to your PATH.",
                 )
 
-    def _bak_files(self, song: SongInfo) -> list[Path]:
-        return list(song.folder.glob("*.bak"))
-
     def _restore_files(self, song: SongInfo):
-        baks = self._bak_files(song)
+        baks = bak_files(song)
         if not baks:
             return
-        errors = []
-        for bak in baks:
-            dest = bak.with_suffix("")
-            try:
-                import shutil
-                shutil.move(str(bak), str(dest))
-            except Exception as exc:
-                errors.append(f"{bak.name}: {exc}")
+        errors = restore_files(song)
         if errors:
             messagebox.showerror("Restore Failed", "\n".join(errors))
         else:
@@ -527,22 +518,7 @@ class SongBrowser(tk.Tk):
             return
 
         try:
-            with Image.open(song.cover_path) as orig:
-                orig_size = orig.size
-                orig_format = orig.format or song.cover_path.suffix.lstrip(".").upper()
-                if orig_format == "JPG":
-                    orig_format = "JPEG"
-
-            bak_path = song.cover_path.parent / (song.cover_path.name + ".bak")
-            import shutil
-            shutil.copy2(song.cover_path, bak_path)
-
-            with Image.open(new_path_str) as new_img:
-                if orig_format == "JPEG":
-                    new_img = new_img.convert("RGB")
-                new_img = new_img.resize(orig_size, Image.LANCZOS)
-                new_img.save(song.cover_path, format=orig_format)
-
+            replace_art(song.cover_path, new_path_str)
             self._thumbnails.clear()
             self._render_list()
         except Exception as exc:
@@ -613,42 +589,20 @@ class SongBrowser(tk.Tk):
         if not new_path_str:
             return
 
+        ffmpeg_path = find_ffmpeg()
+        if not ffmpeg_path and Path(new_path_str).suffix.lower() not in (".egg", ".ogg"):
+            self._prompt_ffmpeg_download()
+            return
+
         try:
-            import shutil
-            new_path = Path(new_path_str)
-            ext = new_path.suffix.lower()
-
-            bak_path = song.audio_path.parent / (song.audio_path.name + ".bak")
-            shutil.copy2(song.audio_path, bak_path)
-
-            if ext in (".egg", ".ogg"):
-                shutil.copy2(new_path, song.audio_path)
-            else:
-                ffmpeg_path = find_ffmpeg()
-                if not ffmpeg_path:
-                    self._prompt_ffmpeg_download()
-                    return
-                try:
-                    from pydub import AudioSegment
-                except ImportError as e:
-                    messagebox.showerror(
-                        "Replace Audio",
-                        "Missing dependencies for audio conversion.\n"
-                        "Run: pip install -r requirements.txt\n\n"
-                        f"Detail: {e}",
-                    )
-                    return
-                AudioSegment.converter = ffmpeg_path
-                audio = AudioSegment.from_file(new_path_str)
-                audio.export(str(song.audio_path), format="ogg")
-
+            replace_audio(song.audio_path, new_path_str, ffmpeg_path or "")
             self.status_bar.config(text=f"Audio replaced for: {song.display_name}")
         except Exception as exc:
             messagebox.showerror("Replace Audio Failed", str(exc))
 
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
         is_fav = self._is_favorite(song)
-        baks = self._bak_files(song)
+        baks = bak_files(song)
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
