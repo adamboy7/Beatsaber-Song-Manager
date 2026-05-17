@@ -678,7 +678,14 @@ class SongBrowser(tk.Tk):
         menu.add_command(label="Previous",
                          state="normal" if can_prev else "disabled",
                          command=self._queue_prev)
+        menu.add_separator()
+        menu.add_command(label="Share Queue",
+                         state="normal" if self._queue else "disabled",
+                         command=self._export_queue_playlist)
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _export_queue_playlist(self):
+        self._share_playlist(list(self._queue))
 
     def _start_player_tick(self):
         if self._player_tick_id:
