@@ -56,6 +56,7 @@ class SongBrowser(tk.Tk):
         self._row_frames: list[tk.Frame] = []
         self._pending_install_id: str | None = None
         self.page: int = 0
+        self.page_size: int = PAGE_SIZE
 
         self.player_stats: dict = {}
         self.favorite_ids: set[str] = set()
@@ -179,6 +180,7 @@ class SongBrowser(tk.Tk):
             command=self._prev_page,
         )
         self._prev_btn.pack(side="left")
+        self._prev_btn.bind("<Button-3>", lambda _: self._jump_to_page())
 
         self._page_label = tk.Label(
             self.pagination_frame, text="",
@@ -186,6 +188,7 @@ class SongBrowser(tk.Tk):
             bg=BG_COLOR, fg=SUBTEXT_COLOR,
         )
         self._page_label.pack(side="left", expand=True)
+        self._page_label.bind("<Button-3>", lambda _: self._change_page_size())
 
         self._next_btn = tk.Button(
             self.pagination_frame, text="Next  ▶",
@@ -196,6 +199,7 @@ class SongBrowser(tk.Tk):
             command=self._next_page,
         )
         self._next_btn.pack(side="right")
+        self._next_btn.bind("<Button-3>", lambda _: self._jump_to_page())
 
         # Status / selection bar
         self.status_bar = tk.Label(
@@ -282,8 +286,8 @@ class SongBrowser(tk.Tk):
         if self._pending_install_id:
             self._build_install_row(self._pending_install_id)
 
-        page_start = self.page * PAGE_SIZE
-        for local_idx, song in enumerate(self.filtered[page_start:page_start + PAGE_SIZE]):
+        page_start = self.page * self.page_size
+        for local_idx, song in enumerate(self.filtered[page_start:page_start + self.page_size]):
             self._build_row(page_start + local_idx, song)
 
         for global_i in self.selected_indices:
@@ -738,7 +742,7 @@ class SongBrowser(tk.Tk):
 
     def _select(self, idx: int, shift_held: bool = False):
         self.canvas.focus_set()
-        page_start = self.page * PAGE_SIZE
+        page_start = self.page * self.page_size
         local_idx = idx - page_start
 
         if shift_held:
@@ -778,20 +782,156 @@ class SongBrowser(tk.Tk):
 
     # ── Pagination ────────────────────────────────────────────────────────────
 
+    def _change_page_size(self):
+        dlg = tk.Toplevel(self, bg=BG_COLOR)
+        dlg.title("Results per page")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+
+        tk.Label(
+            dlg, text="Results per page:",
+            bg=BG_COLOR, fg=TEXT_COLOR, font=("Segoe UI", 10),
+        ).pack(padx=20, pady=(16, 6))
+
+        entry = tk.Entry(
+            dlg, font=("Segoe UI", 10), width=10,
+            bg="#1e1e1e", fg=TEXT_COLOR, insertbackground=TEXT_COLOR,
+            relief="flat", bd=4, justify="center",
+        )
+        entry.insert(0, str(self.page_size))
+        entry.select_range(0, "end")
+        entry.pack(padx=20, pady=(0, 12))
+        entry.focus_set()
+
+        btn_frame = tk.Frame(dlg, bg=BG_COLOR)
+        btn_frame.pack(padx=20, pady=(0, 16))
+
+        result: list[int | None] = [None]
+
+        def _confirm():
+            try:
+                result[0] = max(1, int(entry.get()))
+            except ValueError:
+                pass
+            dlg.destroy()
+
+        def _cancel():
+            dlg.destroy()
+
+        tk.Button(
+            btn_frame, text="OK", width=8,
+            bg="#1e1e1e", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=4, command=_confirm,
+        ).pack(side="left", padx=(0, 8))
+
+        tk.Button(
+            btn_frame, text="Cancel", width=8,
+            bg="#1e1e1e", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=4, command=_cancel,
+        ).pack(side="left")
+
+        entry.bind("<Return>", lambda _: _confirm())
+        entry.bind("<Escape>", lambda _: _cancel())
+
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{x}+{y}")
+
+        self.wait_window(dlg)
+
+        if result[0] is not None and result[0] != self.page_size:
+            self.page_size = result[0]
+            self.page = 0
+            self._render_list()
+
     def _prev_page(self):
         if self.page > 0:
             self.page -= 1
             self._render_list()
 
     def _next_page(self):
-        total_pages = max(1, (len(self.filtered) + PAGE_SIZE - 1) // PAGE_SIZE)
+        total_pages = max(1, (len(self.filtered) + self.page_size - 1) // self.page_size)
         if self.page < total_pages - 1:
             self.page += 1
             self._render_list()
 
+    def _jump_to_page(self):
+        total_pages = max(1, (len(self.filtered) + self.page_size - 1) // self.page_size)
+        if total_pages <= 1:
+            return
+
+        dlg = tk.Toplevel(self, bg=BG_COLOR)
+        dlg.title("Go to page")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+
+        tk.Label(
+            dlg, text=f"Enter page number (1–{total_pages}):",
+            bg=BG_COLOR, fg=TEXT_COLOR, font=("Segoe UI", 10),
+        ).pack(padx=20, pady=(16, 6))
+
+        entry = tk.Entry(
+            dlg, font=("Segoe UI", 10), width=10,
+            bg="#1e1e1e", fg=TEXT_COLOR, insertbackground=TEXT_COLOR,
+            relief="flat", bd=4, justify="center",
+        )
+        entry.insert(0, str(self.page + 1))
+        entry.select_range(0, "end")
+        entry.pack(padx=20, pady=(0, 12))
+        entry.focus_set()
+
+        btn_frame = tk.Frame(dlg, bg=BG_COLOR)
+        btn_frame.pack(padx=20, pady=(0, 16))
+
+        result: list[int | None] = [None]
+
+        def _confirm():
+            try:
+                result[0] = int(entry.get())
+            except ValueError:
+                pass
+            dlg.destroy()
+
+        def _cancel():
+            dlg.destroy()
+
+        ok_btn = tk.Button(
+            btn_frame, text="OK", width=8,
+            bg="#1e1e1e", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=4, command=_confirm,
+        )
+        ok_btn.pack(side="left", padx=(0, 8))
+
+        tk.Button(
+            btn_frame, text="Cancel", width=8,
+            bg="#1e1e1e", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=4, command=_cancel,
+        ).pack(side="left")
+
+        entry.bind("<Return>", lambda _: _confirm())
+        entry.bind("<Escape>", lambda _: _cancel())
+
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{x}+{y}")
+
+        self.wait_window(dlg)
+
+        if result[0] is not None:
+            self.page = max(0, min(result[0] - 1, total_pages - 1))
+            self._render_list()
+
     def _update_pagination_controls(self):
         total = len(self.filtered)
-        total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        total_pages = max(1, (total + self.page_size - 1) // self.page_size)
         self._prev_btn.config(state="normal" if self.page > 0 else "disabled")
         self._next_btn.config(state="normal" if self.page < total_pages - 1 else "disabled")
         if total == 0:
@@ -799,8 +939,8 @@ class SongBrowser(tk.Tk):
         elif total_pages <= 1:
             self._page_label.config(text="")
         else:
-            start = self.page * PAGE_SIZE + 1
-            end = min(start + PAGE_SIZE - 1, total)
+            start = self.page * self.page_size + 1
+            end = min(start + self.page_size - 1, total)
             self._page_label.config(
                 text=f"Page {self.page + 1} of {total_pages}  •  {start}–{end} of {total}"
             )
