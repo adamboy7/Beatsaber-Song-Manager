@@ -39,6 +39,8 @@ from libraries.song_operations import (
     restore_song_files, replace_song_art, replace_song_audio, clear_song_score,
 )
 
+PAGE_SIZE = 50
+
 
 class SongBrowser(tk.Tk):
     def __init__(self, custom_levels: Path):
@@ -48,10 +50,12 @@ class SongBrowser(tk.Tk):
         self.filtered: list[SongInfo] = []
         self.selected_index: int | None = None
         self.selected_indices: set[int] = set()
+        self._selected_folders: set[str] = set()
         self._thumbnails: dict[str, ImageTk.PhotoImage] = {}   # keep refs alive; keyed by folder path
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
         self._pending_install_id: str | None = None
+        self.page: int = 0
 
         self.player_stats: dict = {}
         self.favorite_ids: set[str] = set()
@@ -162,6 +166,37 @@ class SongBrowser(tk.Tk):
         self.bind("<F5>", self._refresh)
         self.bind("<space>", self._on_space)
 
+        # Pagination controls
+        self.pagination_frame = tk.Frame(self, bg=BG_COLOR)
+        self.pagination_frame.pack(fill="x", padx=16, pady=(0, 4))
+
+        self._prev_btn = tk.Button(
+            self.pagination_frame, text="◀  Prev",
+            font=("Segoe UI", 9),
+            bg="#1e1e1e", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=4,
+            command=self._prev_page,
+        )
+        self._prev_btn.pack(side="left")
+
+        self._page_label = tk.Label(
+            self.pagination_frame, text="",
+            font=("Segoe UI", 9),
+            bg=BG_COLOR, fg=SUBTEXT_COLOR,
+        )
+        self._page_label.pack(side="left", expand=True)
+
+        self._next_btn = tk.Button(
+            self.pagination_frame, text="Next  ▶",
+            font=("Segoe UI", 9),
+            bg="#1e1e1e", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=4,
+            command=self._next_page,
+        )
+        self._next_btn.pack(side="right")
+
         # Status / selection bar
         self.status_bar = tk.Label(
             self,
@@ -195,6 +230,10 @@ class SongBrowser(tk.Tk):
     def _on_loaded(self, songs: list[SongInfo]):
         self.songs = songs
         self.filtered = songs[:]
+        self.page = 0
+        self._selected_folders.clear()
+        self.selected_indices.clear()
+        self.selected_index = None
         self.count_label.config(text=f"({len(songs)} songs)")
         self.status_bar.config(text=f"{len(songs)} songs found  •  {self.player_data_status}")
         self._render_list()
@@ -236,7 +275,6 @@ class SongBrowser(tk.Tk):
         return self._make_placeholder()
 
     def _render_list(self):
-        # Clear existing rows
         for w in self.list_frame.winfo_children():
             w.destroy()
         self._row_frames.clear()
@@ -244,13 +282,16 @@ class SongBrowser(tk.Tk):
         if self._pending_install_id:
             self._build_install_row(self._pending_install_id)
 
-        for idx, song in enumerate(self.filtered):
-            self._build_row(idx, song)
+        page_start = self.page * PAGE_SIZE
+        for local_idx, song in enumerate(self.filtered[page_start:page_start + PAGE_SIZE]):
+            self._build_row(page_start + local_idx, song)
 
-        for i in self.selected_indices:
-            if i < len(self._row_frames):
-                self._recolor_row(self._row_frames[i], SELECTED_BG)
+        for global_i in self.selected_indices:
+            local_i = global_i - page_start
+            if 0 <= local_i < len(self._row_frames):
+                self._recolor_row(self._row_frames[local_i], SELECTED_BG)
 
+        self._update_pagination_controls()
         self._update_scroll()
 
     def _is_favorite(self, song: SongInfo) -> bool:
@@ -554,9 +595,9 @@ class SongBrowser(tk.Tk):
                          foreground="#ff5555" if is_deletable else SUBTEXT_COLOR)
         menu.tk_popup(event.x_root, event.y_root)
 
-    def _on_right_click(self, event: tk.Event, idx: int, song: SongInfo):
-        if len(self.selected_indices) > 1 and idx in self.selected_indices:
-            songs = [self.filtered[i] for i in sorted(self.selected_indices)]
+    def _on_right_click(self, event: tk.Event, _idx: int, song: SongInfo):
+        if len(self._selected_folders) > 1 and str(song.folder) in self._selected_folders:
+            songs = [s for s in self.songs if str(s.folder) in self._selected_folders]
             self._show_context_menu_multi(event, songs)
         else:
             self._show_context_menu(event, song)
@@ -623,8 +664,12 @@ class SongBrowser(tk.Tk):
             return
         self.songs    = [s for s in self.songs    if s is not song]
         self.filtered = [s for s in self.filtered if s is not song]
-        self.selected_index = None
-        self.selected_indices = set()
+        self._selected_folders.discard(str(song.folder))
+        self.selected_indices = {
+            i for i, s in enumerate(self.filtered)
+            if str(s.folder) in self._selected_folders
+        }
+        self.selected_index = max(self.selected_indices) if self.selected_indices else None
         self._thumbnails.clear()
         self._render_list()
         self.count_label.config(text=f"({len(self.songs)} songs)")
@@ -647,10 +692,15 @@ class SongBrowser(tk.Tk):
             except Exception as exc:
                 failed.append((song, exc))
         deleted_ids = {id(s) for s in songs} - {id(s) for s, _ in failed}
+        deleted_folders = {str(s.folder) for s in songs if id(s) in deleted_ids}
         self.songs    = [s for s in self.songs    if id(s) not in deleted_ids]
         self.filtered = [s for s in self.filtered if id(s) not in deleted_ids]
-        self.selected_index = None
-        self.selected_indices = set()
+        self._selected_folders -= deleted_folders
+        self.selected_indices = {
+            i for i, s in enumerate(self.filtered)
+            if str(s.folder) in self._selected_folders
+        }
+        self.selected_index = max(self.selected_indices) if self.selected_indices else None
         self._thumbnails.clear()
         self._render_list()
         self.count_label.config(text=f"({len(self.songs)} songs)")
@@ -688,35 +738,71 @@ class SongBrowser(tk.Tk):
 
     def _select(self, idx: int, shift_held: bool = False):
         self.canvas.focus_set()
+        page_start = self.page * PAGE_SIZE
+        local_idx = idx - page_start
 
         if shift_held:
             if idx in self.selected_indices:
                 self.selected_indices.discard(idx)
-                if idx < len(self._row_frames):
-                    self._recolor_row(self._row_frames[idx], ITEM_BG)
+                self._selected_folders.discard(str(self.filtered[idx].folder))
+                if 0 <= local_idx < len(self._row_frames):
+                    self._recolor_row(self._row_frames[local_idx], ITEM_BG)
                 if self.selected_index == idx:
                     self.selected_index = max(self.selected_indices) if self.selected_indices else None
             else:
                 self.selected_indices.add(idx)
+                self._selected_folders.add(str(self.filtered[idx].folder))
                 self.selected_index = idx
-                if idx < len(self._row_frames):
-                    self._recolor_row(self._row_frames[idx], SELECTED_BG)
+                if 0 <= local_idx < len(self._row_frames):
+                    self._recolor_row(self._row_frames[local_idx], SELECTED_BG)
         else:
             for i in self.selected_indices:
-                if i < len(self._row_frames):
-                    self._recolor_row(self._row_frames[i], ITEM_BG)
+                li = i - page_start
+                if 0 <= li < len(self._row_frames):
+                    self._recolor_row(self._row_frames[li], ITEM_BG)
             self.selected_indices = {idx}
+            self._selected_folders = {str(self.filtered[idx].folder)}
             self.selected_index = idx
-            self._recolor_row(self._row_frames[idx], SELECTED_BG)
+            if 0 <= local_idx < len(self._row_frames):
+                self._recolor_row(self._row_frames[local_idx], SELECTED_BG)
 
-        if len(self.selected_indices) > 1:
-            self.status_bar.config(text=f"{len(self.selected_indices)} songs selected")
+        if len(self._selected_folders) > 1:
+            self.status_bar.config(text=f"{len(self._selected_folders)} songs selected")
         elif self.selected_index is not None:
             song = self.filtered[self.selected_index]
             self.status_bar.config(
                 text=f"Selected: {song.display_name}"
                      + (f"  •  {song.author}" if song.author else "")
                      + (f"  •  {song.bpm_str}" if song.bpm_str else "")
+            )
+
+    # ── Pagination ────────────────────────────────────────────────────────────
+
+    def _prev_page(self):
+        if self.page > 0:
+            self.page -= 1
+            self._render_list()
+
+    def _next_page(self):
+        total_pages = max(1, (len(self.filtered) + PAGE_SIZE - 1) // PAGE_SIZE)
+        if self.page < total_pages - 1:
+            self.page += 1
+            self._render_list()
+
+    def _update_pagination_controls(self):
+        total = len(self.filtered)
+        total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        self._prev_btn.config(state="normal" if self.page > 0 else "disabled")
+        self._next_btn.config(state="normal" if self.page < total_pages - 1 else "disabled")
+        if total == 0:
+            self._page_label.config(text="")
+        elif total_pages <= 1:
+            self._page_label.config(text="")
+        else:
+            start = self.page * PAGE_SIZE + 1
+            end = min(start + PAGE_SIZE - 1, total)
+            self._page_label.config(
+                text=f"Page {self.page + 1} of {total_pages}  •  {start}–{end} of {total}"
             )
 
     # ── Search ────────────────────────────────────────────────────────────────
@@ -748,9 +834,13 @@ class SongBrowser(tk.Tk):
                 self.status_bar.config(
                     text=f"Song {song_id} not installed — press Enter or click to install via Mod Assistant."
                 )
-            self.selected_index = None
-            self.selected_indices = set()
+            self.selected_indices = {
+                i for i, s in enumerate(self.filtered)
+                if str(s.folder) in self._selected_folders
+            }
+            self.selected_index = max(self.selected_indices) if self.selected_indices else None
             self._thumbnails.clear()
+            self.page = 0
             self._render_list()
             return
 
@@ -767,9 +857,13 @@ class SongBrowser(tk.Tk):
                 or query_lower in s.mapper.lower()
                 or query_lower in s.song_id.lower()
             ]
-        self.selected_index = None
-        self.selected_indices = set()
+        self.selected_indices = {
+            i for i, s in enumerate(self.filtered)
+            if str(s.folder) in self._selected_folders
+        }
+        self.selected_index = max(self.selected_indices) if self.selected_indices else None
         self._thumbnails.clear()   # free memory; will reload on render
+        self.page = 0
         self._render_list()
         self.status_bar.config(text=f"{len(self.filtered)} songs shown")
 
