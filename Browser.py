@@ -201,6 +201,58 @@ class SongBrowser(tk.Tk):
         self._next_btn.pack(side="right")
         self._next_btn.bind("<Button-3>", lambda _: self._jump_to_page())
 
+        # Now-playing bar (hidden until a song plays)
+        self._player_bar_frame = tk.Frame(self, bg="#0d0d1a")
+        # _player_bar_frame is shown/hidden dynamically — not packed here
+
+        player_top = tk.Frame(self._player_bar_frame, bg="#0d0d1a")
+        player_top.pack(fill="x", padx=10, pady=(5, 2))
+
+        self._player_name_label = tk.Label(
+            player_top, text="",
+            font=("Segoe UI", 9, "bold"),
+            bg="#0d0d1a", fg=ACCENT_COLOR,
+            anchor="w",
+        )
+        self._player_name_label.pack(side="left", fill="x", expand=True)
+
+        self._player_time_label = tk.Label(
+            player_top, text="",
+            font=("Segoe UI", 9),
+            bg="#0d0d1a", fg=SUBTEXT_COLOR,
+            anchor="e",
+        )
+        self._player_time_label.pack(side="right")
+
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure(
+            "Player.Horizontal.TProgressbar",
+            troughcolor="#1a1a2e",
+            background=ACCENT_COLOR,
+            bordercolor="#0d0d1a",
+            lightcolor=ACCENT_COLOR,
+            darkcolor=ACCENT_COLOR,
+        )
+        self._player_progress = ttk.Progressbar(
+            self._player_bar_frame,
+            style="Player.Horizontal.TProgressbar",
+            orient="horizontal",
+            mode="determinate",
+            maximum=100,
+        )
+        self._player_progress.pack(fill="x", padx=10, pady=(0, 5))
+
+        for _w in (
+            self._player_bar_frame,
+            self._player_name_label,
+            self._player_time_label,
+            self._player_progress,
+        ):
+            _w.bind("<Button-3>", self._show_player_context_menu)
+
+        self._player_tick_id: str | None = None
+
         # Status / selection bar
         self.status_bar = tk.Label(
             self,
@@ -529,7 +581,87 @@ class SongBrowser(tk.Tk):
     # ── Song operations ───────────────────────────────────────────────────────
 
     def _play_audio(self, song: SongInfo):
+        if song is not self._media_player.playing_song:
+            self._media_player._looping = False
         self._media_player.play(song)
+        self._show_player_bar(song)
+        self._start_player_tick()
+
+    def _show_player_bar(self, song: SongInfo):
+        name = song.display_name or song.song_name or "Unknown"
+        loop_suffix = " 🔁" if self._media_player._looping else ""
+        self._player_name_label.config(text=f"▶  {name}{loop_suffix}")
+        self._player_time_label.config(text="0:00")
+        self._player_progress["value"] = 0
+        self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
+
+    def _hide_player_bar(self):
+        self._player_bar_frame.pack_forget()
+
+    def _stop_player(self):
+        if self._player_tick_id:
+            self.after_cancel(self._player_tick_id)
+            self._player_tick_id = None
+        self._media_player.stop()
+        self._hide_player_bar()
+
+    def _show_player_context_menu(self, event: tk.Event):
+        mp = self._media_player
+        paused = mp._audio_paused
+        play_label = "Pause" if not paused else "Play"
+
+        loop_var = tk.BooleanVar(value=mp._looping)
+
+        menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
+                       activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0)
+        menu.add_command(label=play_label, command=mp.toggle_pause)
+        menu.add_command(label="Stop", command=self._stop_player)
+        menu.add_checkbutton(
+            label="Loop", variable=loop_var, command=mp.toggle_loop,
+            selectcolor=ACCENT_COLOR,
+        )
+        menu.add_separator()
+        menu.add_command(label="Next", state="disabled")
+        menu.add_command(label="Previous", state="disabled")
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _start_player_tick(self):
+        if self._player_tick_id:
+            self.after_cancel(self._player_tick_id)
+        self._player_tick_id = self.after(500, self._tick_player)
+
+    def _tick_player(self):
+        proc = self._media_player._audio_proc
+        if proc is None or proc.poll() is not None:
+            if self._media_player._looping and self._media_player.playing_song:
+                song = self._media_player.playing_song
+                self._play_audio(song)
+                return
+            self._hide_player_bar()
+            self._player_tick_id = None
+            return
+
+        elapsed = self._media_player.elapsed_seconds() or 0.0
+        duration = self._media_player.song_duration
+        paused = self._media_player._audio_paused
+
+        icon = "⏸" if paused else "▶"
+        song = self._media_player.playing_song
+        name = (song.display_name or song.song_name or "Unknown") if song else ""
+        loop_suffix = " 🔁" if self._media_player._looping else ""
+        self._player_name_label.config(text=f"{icon}  {name}{loop_suffix}")
+
+        e_min, e_sec = divmod(int(elapsed), 60)
+        if duration:
+            d_min, d_sec = divmod(int(duration), 60)
+            self._player_time_label.config(text=f"{e_min}:{e_sec:02d} / {d_min}:{d_sec:02d}")
+            pct = min(100.0, elapsed / duration * 100)
+            self._player_progress["value"] = pct
+        else:
+            self._player_time_label.config(text=f"{e_min}:{e_sec:02d}")
+            self._player_progress["value"] = 0
+
+        self._player_tick_id = self.after(500, self._tick_player)
 
     def _restore_files(self, song: SongInfo):
         count, errors = restore_song_files(song)
