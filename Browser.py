@@ -78,7 +78,10 @@ class SongBrowser(tk.Tk):
         self._build_ui()
 
         self._media_player = MediaPlayer()
-        self._media_player.start_media_keys(self.after)
+        self._media_player.start_media_keys(self.after, self._stop_player)
+        self._queue: list[SongInfo] = []
+        self._queue_index: int = -1
+        self._player_bar_visible: bool = False
 
         self._install_manager = InstallManager(
             custom_levels,
@@ -587,6 +590,48 @@ class SongBrowser(tk.Tk):
         self._show_player_bar(song)
         self._start_player_tick()
 
+    def _play_queue(self, songs: list[SongInfo]) -> None:
+        playable = [s for s in songs if s.audio_path]
+        if not playable:
+            return
+        self._queue = playable
+        self._queue_index = 0
+        self._play_audio(playable[0])
+
+    def _add_to_queue(self, songs: list[SongInfo]) -> None:
+        playable = [s for s in songs if s.audio_path]
+        if not playable:
+            return
+        self._queue.extend(playable)
+        if self._media_player.playing_song is None and self._player_bar_visible:
+            self._queue_index = len(self._queue) - len(playable)
+            self._play_audio(self._queue[self._queue_index])
+
+    def _queue_next(self) -> None:
+        if self._media_player._looping:
+            return
+        next_idx = self._queue_index + 1
+        if next_idx < len(self._queue):
+            self._queue_index = next_idx
+            self._play_audio(self._queue[next_idx])
+
+    def _queue_prev(self) -> None:
+        if self._media_player._looping:
+            return
+        if self._queue_index > 0:
+            self._queue_index -= 1
+            self._play_audio(self._queue[self._queue_index])
+
+    def _show_player_bar_idle(self, song: SongInfo | None, duration: float | None) -> None:
+        name = (song.display_name or song.song_name or "Unknown") if song else "Unknown"
+        self._player_name_label.config(text=f"⏹  {name}")
+        if duration:
+            d_min, d_sec = divmod(int(duration), 60)
+            self._player_time_label.config(text=f"{d_min}:{d_sec:02d} / {d_min}:{d_sec:02d}")
+            self._player_progress["value"] = 100.0
+        else:
+            self._player_time_label.config(text="--:--")
+
     def _show_player_bar(self, song: SongInfo):
         name = song.display_name or song.song_name or "Unknown"
         loop_suffix = " 🔁" if self._media_player._looping else ""
@@ -594,9 +639,11 @@ class SongBrowser(tk.Tk):
         self._player_time_label.config(text="0:00")
         self._player_progress["value"] = 0
         self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
+        self._player_bar_visible = True
 
     def _hide_player_bar(self):
         self._player_bar_frame.pack_forget()
+        self._player_bar_visible = False
 
     def _stop_player(self):
         if self._player_tick_id:
@@ -604,6 +651,8 @@ class SongBrowser(tk.Tk):
             self._player_tick_id = None
         self._media_player.stop()
         self._hide_player_bar()
+        self._queue.clear()
+        self._queue_index = -1
 
     def _show_player_context_menu(self, event: tk.Event):
         mp = self._media_player
@@ -620,9 +669,15 @@ class SongBrowser(tk.Tk):
             label="Loop", variable=loop_var, command=mp.toggle_loop,
             selectcolor=ACCENT_COLOR,
         )
+        can_next = not mp._looping and (self._queue_index + 1 < len(self._queue))
+        can_prev = not mp._looping and (self._queue_index > 0)
         menu.add_separator()
-        menu.add_command(label="Next", state="disabled")
-        menu.add_command(label="Previous", state="disabled")
+        menu.add_command(label="Next",
+                         state="normal" if can_next else "disabled",
+                         command=self._queue_next)
+        menu.add_command(label="Previous",
+                         state="normal" if can_prev else "disabled",
+                         command=self._queue_prev)
         menu.tk_popup(event.x_root, event.y_root)
 
     def _start_player_tick(self):
@@ -634,10 +689,17 @@ class SongBrowser(tk.Tk):
         proc = self._media_player._audio_proc
         if proc is None or proc.poll() is not None:
             if self._media_player._looping and self._media_player.playing_song:
-                song = self._media_player.playing_song
-                self._play_audio(song)
+                self._play_audio(self._media_player.playing_song)
                 return
-            self._hide_player_bar()
+            next_idx = self._queue_index + 1
+            if 0 <= next_idx < len(self._queue):
+                self._queue_index = next_idx
+                self._play_audio(self._queue[next_idx])
+                return
+            last_song = self._media_player.playing_song
+            last_duration = self._media_player.song_duration
+            self._media_player.stop()
+            self._show_player_bar_idle(last_song, last_duration)
             self._player_tick_id = None
             return
 
@@ -689,9 +751,14 @@ class SongBrowser(tk.Tk):
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
-        menu.add_command(label="Play Audio",
-                         command=lambda: self._play_audio(song),
-                         state="normal" if song.audio_path else "disabled")
+        if self._player_bar_visible:
+            menu.add_command(label="Add to Queue",
+                             command=lambda: self._add_to_queue([song]),
+                             state="normal" if song.audio_path else "disabled")
+        else:
+            menu.add_command(label="Play Audio",
+                             command=lambda: self._play_queue([song]),
+                             state="normal" if song.audio_path else "disabled")
         if is_fav:
             menu.add_command(label="Remove from Favorites",
                              command=lambda: self._remove_from_favorites(song),
@@ -745,7 +812,14 @@ class SongBrowser(tk.Tk):
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
-        menu.add_command(label="Play", state="disabled")
+        if self._player_bar_visible:
+            menu.add_command(label="Add to Queue",
+                             command=lambda: self._add_to_queue(songs))
+        else:
+            has_audio = any(s.audio_path for s in songs)
+            menu.add_command(label="Play",
+                             state="normal" if has_audio else "disabled",
+                             command=lambda: self._play_queue(songs))
         menu.add_separator()
         menu.add_command(label="Add to Favorites",
                          command=lambda: self._add_to_favorites_multi(songs),
