@@ -1,5 +1,6 @@
 import re
 import json
+import hashlib
 import datetime
 from pathlib import Path
 
@@ -143,8 +144,69 @@ class SongInfo:
         return "  •  ".join(parts)
 
 
+def compute_song_hash(song_folder: Path) -> str:
+    """Compute the Beat Saber song hash for a folder the way SongCore does:
+    SHA1 over Info.dat's bytes followed by the bytes of every difficulty .dat
+    file referenced in Info.dat (in the order they appear). Returns an
+    uppercase hex digest, or "" if the folder isn't a valid map.
+
+    This is the fallback we use when SongCore hasn't yet indexed a song
+    (e.g. it was just installed and Beat Saber hasn't been relaunched since).
+    """
+    # Find Info.dat (case-insensitive)
+    info_file = None
+    for name in ("Info.dat", "info.dat", "INFO.DAT"):
+        candidate = song_folder / name
+        if candidate.exists():
+            info_file = candidate
+            break
+    if info_file is None:
+        return ""
+
+    try:
+        info_bytes = info_file.read_bytes()
+        data = json.loads(info_bytes.decode("utf-8", errors="replace"))
+    except Exception:
+        return ""
+
+    # Gather difficulty filenames in the order they appear in Info.dat.
+    # v4 maps use a flat "difficultyBeatmaps" list; v2/v3 nest them under
+    # "_difficultyBeatmapSets" -> "_difficultyBeatmaps".
+    diff_filenames: list[str] = []
+    is_v4 = str(data.get("version", "")).startswith("4")
+    if is_v4:
+        for bm in data.get("difficultyBeatmaps", []):
+            fn = bm.get("beatmapDataFilename") or bm.get("lightshowDataFilename")
+            if fn:
+                diff_filenames.append(fn)
+    else:
+        for bms in data.get("_difficultyBeatmapSets", []):
+            for bm in bms.get("_difficultyBeatmaps", []):
+                fn = bm.get("_beatmapFilename")
+                if fn:
+                    diff_filenames.append(fn)
+
+    sha = hashlib.sha1()
+    sha.update(info_bytes)
+    for fn in diff_filenames:
+        diff_path = song_folder / fn
+        if diff_path.exists():
+            try:
+                sha.update(diff_path.read_bytes())
+            except Exception:
+                # If a referenced diff can't be read, the hash will differ from
+                # SongCore's — better to bail than to produce a wrong hash.
+                return ""
+    return sha.hexdigest().upper()
+
+
 def load_song_hashes(custom_levels: Path) -> dict[str, str]:
-    """Return {folder_name: songHash} by reading SongCore's SongHashData.dat."""
+    """Return {folder_name: songHash}.
+
+    Primary source is SongCore's SongHashData.dat. For any custom-level
+    folder that file doesn't cover (e.g. songs added since SongCore last
+    ran), we fall back to computing the hash from the map files directly.
+    """
     hash_file = custom_levels.parent.parent / "UserData" / "SongCore" / "SongHashData.dat"
     result: dict[str, str] = {}
     try:
@@ -156,6 +218,20 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
                 result[folder_name] = song_hash.upper()
     except Exception:
         pass
+
+    # Fallback: compute hashes for folders SongCore didn't list.
+    try:
+        for entry in custom_levels.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name in result:
+                continue
+            computed = compute_song_hash(entry)
+            if computed:
+                result[entry.name] = computed
+    except Exception:
+        pass
+
     return result
 
 
