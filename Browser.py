@@ -235,6 +235,7 @@ class QueueWindow(tk.Toplevel):
         b.selected_index = idx
         b._selected_folders = {str(song.folder)}
         b._render_list()
+        b._scroll_to_selected()
         b.status_bar.config(text=f"Selected: {song.display_name}")
         b.lift()
         b.focus_force()
@@ -1697,6 +1698,40 @@ class SongBrowser(tk.Tk):
     def _update_scroll(self):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         self.canvas.yview_moveto(0)
+
+    def _scroll_to_selected(self):
+        """Scroll the song list so the currently selected row is centered in view.
+
+        Safe to call when nothing is selected or when the selected song isn't on
+        the currently rendered page — it just no-ops in those cases.
+        """
+        if self.selected_index is None:
+            return
+        page_start = self.page * self.page_size
+        local_idx = self.selected_index - page_start
+        if not (0 <= local_idx < len(self._row_frames)):
+            return
+        row = self._row_frames[local_idx]
+        try:
+            # Force geometry to settle so winfo_y / bbox return real values.
+            self.list_frame.update_idletasks()
+            self.canvas.update_idletasks()
+            bbox = self.canvas.bbox("all")
+            if not bbox:
+                return
+            total_height = bbox[3] - bbox[1]
+            if total_height <= 0:
+                return
+            canvas_height = self.canvas.winfo_height()
+            row_height = row.winfo_height()
+            row_y = row.winfo_y()
+            # Center the row in the viewport when possible.
+            target_y = row_y - max(0, (canvas_height - row_height) // 2)
+            target_y = max(0, min(target_y, total_height - canvas_height))
+            fraction = target_y / total_height if total_height else 0.0
+            self.canvas.yview_moveto(max(0.0, min(1.0, fraction)))
+        except (tk.TclError, ZeroDivisionError):
+            pass
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
