@@ -82,7 +82,9 @@ class QueueWindow(tk.Toplevel):
         container.pack(fill="both", expand=True)
 
         self._canvas = tk.Canvas(container, bg="#0d0d1a", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self._canvas.yview)
+        scrollbar = tk.Scrollbar(container, orient="vertical",
+                                 command=self._canvas.yview,
+                                 bg=SCROLLBAR_BG)
         self._canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self._canvas.pack(side="left", fill="both", expand=True)
