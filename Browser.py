@@ -216,8 +216,8 @@ class QueueWindow(tk.Toplevel):
             bg="#1e1e1e", fg=TEXT_COLOR,
             activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0,
         )
-        menu.add_command(label="View Song", command=lambda: self._view_song(song))
         menu.add_command(label="Play",      command=lambda: self._play_from_queue(idx, song))
+        menu.add_command(label="View Song", command=lambda: self._view_song(song))
         menu.add_separator()
         menu.add_command(
             label="Move to Top",
