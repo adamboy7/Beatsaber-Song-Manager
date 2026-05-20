@@ -44,6 +44,7 @@ PAGE_SIZE = 50
 
 _QUEUE_THUMB = (48, 48)
 _QUEUE_PLAYING_BG = "#1a1a3a"
+_IDLE_BRAILLE = "⠠⠏⠇⠁⠽ ⠞⠓⠁⠞ ⠎⠕⠝⠛   "
 
 
 class QueueWindow(tk.Toplevel):
@@ -500,7 +501,7 @@ class SongBrowser(tk.Tk):
 
         self._favorites_only: bool = False
         self._hide_favorites: bool = False
-        self._keep_player_visible: bool = False
+        self._keep_player_visible: bool = True
         self._loop_queue: bool = False
 
         self._build_ui()
@@ -510,6 +511,10 @@ class SongBrowser(tk.Tk):
         self._queue: list[SongInfo] = []
         self._queue_index: int = -1
         self._player_bar_visible: bool = False
+        if self._keep_player_visible:
+            self._show_player_bar_idle(None, None)
+            self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
+            self._player_bar_visible = True
         self._queue_window: QueueWindow | None = None
         self._pending_playlist_entries: list[dict] | None = None
         self._pending_playlist_queue: list[dict] = []
@@ -551,7 +556,7 @@ class SongBrowser(tk.Tk):
         menubar.add_cascade(label="View", menu=view_menu)
 
         options_menu = tk.Menu(menubar, tearoff=0)
-        self._keep_player_visible_var = tk.BooleanVar(value=False)
+        self._keep_player_visible_var = tk.BooleanVar(value=True)
         self._loop_queue_var = tk.BooleanVar(value=False)
         options_menu.add_checkbutton(label="Show Media Player",
                                      variable=self._keep_player_visible_var,
@@ -725,6 +730,8 @@ class SongBrowser(tk.Tk):
             _w.bind("<Button-3>", self._show_player_context_menu)
 
         self._player_tick_id: str | None = None
+        self._idle_anim_id: str | None = None
+        self._idle_anim_frame: int = 0
 
         # Status / selection bar
         self.status_bar = tk.Label(
@@ -847,12 +854,14 @@ class SongBrowser(tk.Tk):
     def _toggle_keep_player_visible(self):
         self._keep_player_visible = self._keep_player_visible_var.get()
         if self._keep_player_visible and not self._player_bar_visible:
-            self._show_player_bar_idle(None, None)
-            self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
-            self._player_bar_visible = True
-        elif not self._keep_player_visible and self._player_bar_visible:
-            if self._media_player._audio_proc is None:
-                self._hide_player_bar()
+            if self._media_player._audio_proc is not None:
+                self._show_player_bar(self._media_player.playing_song)
+            else:
+                self._show_player_bar_idle(None, None)
+                self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
+                self._player_bar_visible = True
+        elif not self._keep_player_visible:
+            self._hide_player_bar()
 
     def _toggle_loop_queue(self):
         self._loop_queue = self._loop_queue_var.get()
@@ -971,6 +980,7 @@ class SongBrowser(tk.Tk):
             w.bind("<MouseWheel>",  self._on_mousewheel)
 
     def _on_close(self):
+        self._stop_idle_animation()
         self._install_manager.cancel()
         self._playlist_installer.cancel()
         self._media_player.stop_listener()
@@ -1253,7 +1263,13 @@ class SongBrowser(tk.Tk):
             self._play_audio(self._queue[self._queue_index])
 
     def _show_player_bar_idle(self, song: SongInfo | None, duration: float | None) -> None:
-        name = (song.display_name or song.song_name or "Unknown") if song else "Unknown"
+        if song is None:
+            self._player_time_label.config(text="--:--")
+            self._player_progress["value"] = 0
+            self._start_idle_animation()
+            return
+        self._stop_idle_animation()
+        name = song.display_name or song.song_name or "Unknown"
         self._player_name_label.config(text=f"⏹  {name}")
         if duration:
             d_min, d_sec = divmod(int(duration), 60)
@@ -1263,17 +1279,41 @@ class SongBrowser(tk.Tk):
             self._player_time_label.config(text="--:--")
 
     def _show_player_bar(self, song: SongInfo):
+        self._stop_idle_animation()
         name = song.display_name or song.song_name or "Unknown"
         loop_suffix = " 🔁" if self._media_player._looping else ""
         self._player_name_label.config(text=f"▶  {name}{loop_suffix}")
         self._player_time_label.config(text="0:00")
         self._player_progress["value"] = 0
-        self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
-        self._player_bar_visible = True
+        if self._keep_player_visible:
+            self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
+            self._player_bar_visible = True
 
     def _hide_player_bar(self):
+        self._stop_idle_animation()
         self._player_bar_frame.pack_forget()
         self._player_bar_visible = False
+
+    def _start_idle_animation(self):
+        if self._idle_anim_id:
+            self.after_cancel(self._idle_anim_id)
+        self._idle_anim_frame = 0
+        self._tick_idle_anim()
+
+    def _tick_idle_anim(self):
+        n = len(_IDLE_BRAILLE)
+        frame = self._idle_anim_frame % n
+        window = (_IDLE_BRAILLE * 2)[frame:frame + 4]
+        self._player_name_label.config(
+            text=f"⏹  Add a song to Queue to begin  {window}"
+        )
+        self._idle_anim_frame += 1
+        self._idle_anim_id = self.after(150, self._tick_idle_anim)
+
+    def _stop_idle_animation(self):
+        if self._idle_anim_id:
+            self.after_cancel(self._idle_anim_id)
+            self._idle_anim_id = None
 
     def _stop_player(self):
         if self._player_tick_id:
