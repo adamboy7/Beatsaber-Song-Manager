@@ -9,8 +9,11 @@ and per-song row building / hover / selection bookkeeping.
 from __future__ import annotations
 
 import datetime
+import shlex
+import subprocess
 import webbrowser
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 from PIL import Image, ImageTk
 
@@ -31,11 +34,37 @@ class BrowserUIMixin:
 
     # ── Menus / chrome ────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _find_mod_assistant():
+        try:
+            import winreg
+        except ImportError:
+            return None
+        for protocol in ("beatsaver", "bsplaylist"):
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, rf"{protocol}\shell\open\command")
+                cmd, _ = winreg.QueryValueEx(key, "")
+                winreg.CloseKey(key)
+                exe = Path(shlex.split(cmd)[0])
+                if exe.exists():
+                    return exe
+            except (FileNotFoundError, OSError, ValueError):
+                continue
+        return None
+
+    def _open_mod_assistant(self):
+        if self._mod_assistant_path:
+            subprocess.Popen([str(self._mod_assistant_path)])
+
     def _build_menubar(self):
         menubar = tk.Menu(self)
 
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Open Playlist…", command=self._open_playlist)
+        self._mod_assistant_path = self._find_mod_assistant()
+        if self._mod_assistant_path:
+            file_menu.add_separator()
+            file_menu.add_command(label="Open Mod Assistant", command=self._open_mod_assistant)
         menubar.add_cascade(label="File", menu=file_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)
