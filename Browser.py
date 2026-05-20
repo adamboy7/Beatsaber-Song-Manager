@@ -1,5 +1,5 @@
 """
-Beat Saber Custom Song Browser
+Beat Saber Custom Song Browser.
 Parses Steam library to locate Beat Saber, then lists all custom songs
 with cover art and metadata. Click art or title to select a song.
 """
@@ -35,6 +35,7 @@ from libraries.asset_editor import bak_files
 from libraries.media_player import MediaPlayer
 from libraries.favorites import add_to_favorites, remove_from_favorites
 from libraries.install_manager import InstallManager
+from libraries.playlist_installer import PlaylistInstaller
 from libraries.song_operations import (
     restore_song_files, replace_song_art, replace_song_audio, clear_song_score,
 )
@@ -476,6 +477,12 @@ class SongBrowser(tk.Tk):
             lambda text: self.status_bar.config(text=text),
             self._on_install_complete_reload,
         )
+        self._playlist_installer = PlaylistInstaller(
+            custom_levels,
+            self.after,
+            lambda text: self.status_bar.config(text=text),
+            self._on_playlist_install_complete,
+        )
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._load_async()
@@ -858,6 +865,7 @@ class SongBrowser(tk.Tk):
 
     def _on_close(self):
         self._install_manager.cancel()
+        self._playlist_installer.cancel()
         self._media_player.stop_listener()
         self._media_player.stop()
         self.destroy()
@@ -1041,6 +1049,20 @@ class SongBrowser(tk.Tk):
             return
 
         self._pending_playlist_entries = list(entries)
+
+        # Preferred path: hand the whole playlist to Mod Assistant in one
+        # shot via bsplaylist://. Mod Assistant downloads every missing
+        # song in a single window. Falls back to the per-song beatsaver://
+        # loop if the protocol isn't registered.
+        if PlaylistInstaller.has_handler():
+            expected_keys = [
+                (e.get("key") or e.get("id") or "") for e in installable
+            ]
+            launched = self._playlist_installer.install(Path(path), expected_keys)
+            if launched:
+                self._pending_playlist_queue = []
+                return
+
         self._pending_playlist_queue = installable[:]
         self._install_next_playlist_song()
 
@@ -1050,6 +1072,18 @@ class SongBrowser(tk.Tk):
         entry = self._pending_playlist_queue.pop(0)
         song_id = entry.get("key") or entry.get("id")
         self._install_manager.trigger(song_id)
+
+    def _on_playlist_install_complete(self, success: bool) -> None:
+        """Called by PlaylistInstaller once Mod Assistant has finished
+        (or timed out / been cancelled). Reload songs and queue everything
+        the playlist references."""
+        if not success:
+            self.status_bar.config(
+                text="Playlist install did not complete — queuing what's available."
+            )
+        # Trigger a song-library reload; _after_install_load then calls
+        # _check_pending_playlist which will queue the songs.
+        self._on_install_complete_reload()
 
     def _check_pending_playlist(self) -> None:
         if self._pending_playlist_entries is None:
