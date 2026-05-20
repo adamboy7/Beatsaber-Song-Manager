@@ -1,0 +1,280 @@
+"""
+Playback / queue / player-bar behavior for SongBrowser.
+
+Manages the audio queue (``self._queue`` / ``self._queue_index``),
+the now-playing bar widgets, the idle braille animation, the
+periodic tick that advances the queue, and the right-click player
+context menu (Play/Pause/Stop/Shuffle/Loop/Next/Prev).
+
+Also owns the View-toggle handlers for player visibility, queue
+loop, and shuffle, and the spacebar pause hotkey.
+"""
+
+from __future__ import annotations
+
+import random
+import tkinter as tk
+
+from libraries.constants import ACCENT_COLOR, TEXT_COLOR
+from libraries.song_data import SongInfo
+
+
+_IDLE_BRAILLE = "⠠⠏⠇⠁⠽ ⠞⠓⠁⠞ ⠎⠕⠝⠛   "
+
+
+class BrowserPlaybackMixin:
+    """Audio playback, queue management, and player-bar UI."""
+
+    # ── View toggles tied to playback ─────────────────────────────────────────
+
+    def _toggle_keep_player_visible(self):
+        self._keep_player_visible = self._keep_player_visible_var.get()
+        if self._keep_player_visible and not self._player_bar_visible:
+            if self._media_player._audio_proc is not None:
+                self._show_player_bar(self._media_player.playing_song)
+            else:
+                self._show_player_bar_idle(None, None)
+                self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
+                self._player_bar_visible = True
+        elif not self._keep_player_visible:
+            self._hide_player_bar()
+
+    def _toggle_loop_queue(self):
+        self._loop_queue = self._loop_queue_var.get()
+
+    def _toggle_shuffle_queue(self):
+        self._shuffle_queue = not self._shuffle_queue
+        if not self._shuffle_queue:
+            self._last_shuffle_index = None
+
+    def _on_space(self, *_):
+        if self.focus_get() is self.search_entry:
+            return
+        self._media_player.toggle_pause()
+
+    # ── Play / queue ──────────────────────────────────────────────────────────
+
+    def _play_audio(self, song: SongInfo):
+        if song is not self._media_player.playing_song:
+            self._media_player._looping = False
+        self._media_player.play(song)
+        self._show_player_bar(song)
+        self._start_player_tick()
+
+    def _play_queue(self, songs: list[SongInfo]) -> None:
+        playable = [s for s in songs if s.audio_path]
+        if not playable:
+            return
+        self._queue = playable
+        self._queue_index = 0
+        self._play_audio(playable[0])
+        self._notify_queue_window()
+
+    def _add_to_queue(self, songs: list[SongInfo]) -> None:
+        playable = [s for s in songs if s.audio_path]
+        if not playable:
+            return
+        self._queue.extend(playable)
+        if self._media_player.playing_song is None and self._player_bar_visible:
+            self._queue_index = len(self._queue) - len(playable)
+            self._play_audio(self._queue[self._queue_index])
+        self._notify_queue_window()
+
+    def _queue_next(self) -> None:
+        if self._media_player._looping:
+            return
+        if self._shuffle_queue and len(self._queue) >= 2:
+            candidates = [i for i in range(len(self._queue)) if i != self._queue_index]
+            next_idx = random.choice(candidates)
+            if next_idx == self._last_shuffle_index and len(candidates) > 1:
+                candidates.remove(next_idx)
+                next_idx = random.choice(candidates)
+            self._last_shuffle_index = next_idx
+            self._queue_index = next_idx
+            self._play_audio(self._queue[next_idx])
+            return
+        next_idx = self._queue_index + 1
+        if next_idx < len(self._queue):
+            self._queue_index = next_idx
+            self._play_audio(self._queue[next_idx])
+
+    def _queue_prev(self) -> None:
+        if self._media_player._looping:
+            return
+        if self._queue_index > 0:
+            self._queue_index -= 1
+            self._play_audio(self._queue[self._queue_index])
+
+    # ── Player bar ────────────────────────────────────────────────────────────
+
+    def _show_player_bar_idle(self, song: SongInfo | None, duration: float | None) -> None:
+        if song is None:
+            self._player_time_label.config(text="--:--")
+            self._player_progress["value"] = 0
+            self._start_idle_animation()
+            return
+        self._stop_idle_animation()
+        name = song.display_name or song.song_name or "Unknown"
+        self._player_name_label.config(text=f"⏹  {name}")
+        if duration:
+            d_min, d_sec = divmod(int(duration), 60)
+            self._player_time_label.config(text=f"{d_min}:{d_sec:02d} / {d_min}:{d_sec:02d}")
+            self._player_progress["value"] = 100.0
+        else:
+            self._player_time_label.config(text="--:--")
+
+    def _show_player_bar(self, song: SongInfo):
+        self._stop_idle_animation()
+        name = song.display_name or song.song_name or "Unknown"
+        loop_suffix = " 🔁" if self._media_player._looping else (" 🔀" if self._shuffle_queue else "")
+        self._player_name_label.config(text=f"▶  {name}{loop_suffix}")
+        self._player_time_label.config(text="0:00")
+        self._player_progress["value"] = 0
+        if self._keep_player_visible:
+            self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
+            self._player_bar_visible = True
+
+    def _hide_player_bar(self):
+        self._stop_idle_animation()
+        self._player_bar_frame.pack_forget()
+        self._player_bar_visible = False
+
+    def _start_idle_animation(self):
+        if self._idle_anim_id:
+            self.after_cancel(self._idle_anim_id)
+        self._idle_anim_frame = 0
+        self._tick_idle_anim()
+
+    def _tick_idle_anim(self):
+        n = len(_IDLE_BRAILLE)
+        frame = self._idle_anim_frame % n
+        window = (_IDLE_BRAILLE * 2)[frame:frame + 4]
+        self._player_name_label.config(
+            text=f"⏹  Add a song to Queue to begin  {window}"
+        )
+        self._idle_anim_frame += 1
+        self._idle_anim_id = self.after(150, self._tick_idle_anim)
+
+    def _stop_idle_animation(self):
+        if self._idle_anim_id:
+            self.after_cancel(self._idle_anim_id)
+            self._idle_anim_id = None
+
+    def _stop_player(self):
+        if self._player_tick_id:
+            self.after_cancel(self._player_tick_id)
+            self._player_tick_id = None
+        self._media_player.stop()
+        if self._keep_player_visible:
+            self._show_player_bar_idle(None, None)
+        else:
+            self._hide_player_bar()
+        self._queue.clear()
+        self._queue_index = -1
+        self._notify_queue_window()
+
+    def _stop_audio_keep_queue(self):
+        if self._player_tick_id:
+            self.after_cancel(self._player_tick_id)
+            self._player_tick_id = None
+        self._media_player.stop()
+        self._hide_player_bar()
+        self._queue_index = -1
+
+    def _show_player_context_menu(self, event: tk.Event):
+        mp = self._media_player
+        paused = mp._audio_paused
+        play_label = "Pause" if not paused else "Play"
+
+        loop_var = tk.BooleanVar(value=mp._looping)
+
+        menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
+                       activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0)
+        menu.add_command(label=play_label, command=mp.toggle_pause)
+        menu.add_command(label="Stop", command=self._stop_player)
+        shuffle_var = tk.BooleanVar(value=self._shuffle_queue)
+        can_shuffle = len(self._queue) >= 2
+        menu.add_checkbutton(
+            label="Shuffle", variable=shuffle_var,
+            command=self._toggle_shuffle_queue,
+            selectcolor=ACCENT_COLOR,
+            state="normal" if can_shuffle else "disabled",
+        )
+        menu.add_checkbutton(
+            label="Loop", variable=loop_var, command=mp.toggle_loop,
+            selectcolor=ACCENT_COLOR,
+        )
+        can_next = not mp._looping and (self._queue_index + 1 < len(self._queue) or (self._shuffle_queue and len(self._queue) >= 2))
+        can_prev = not mp._looping and (self._queue_index > 0)
+        menu.add_separator()
+        menu.add_command(label="Next",
+                         state="normal" if can_next else "disabled",
+                         command=self._queue_next)
+        menu.add_command(label="Previous",
+                         state="normal" if can_prev else "disabled",
+                         command=self._queue_prev)
+        menu.add_separator()
+        menu.add_command(label="View Queue",
+                         command=self._open_queue_window)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    # ── Periodic tick ─────────────────────────────────────────────────────────
+
+    def _start_player_tick(self):
+        if self._player_tick_id:
+            self.after_cancel(self._player_tick_id)
+        self._player_tick_id = self.after(500, self._tick_player)
+
+    def _tick_player(self):
+        proc = self._media_player._audio_proc
+        if proc is None or proc.poll() is not None:
+            if self._media_player._looping and self._media_player.playing_song:
+                self._play_audio(self._media_player.playing_song)
+                return
+            if self._shuffle_queue and len(self._queue) >= 2:
+                candidates = [i for i in range(len(self._queue)) if i != self._queue_index]
+                next_idx = random.choice(candidates)
+                if next_idx == self._last_shuffle_index and len(candidates) > 1:
+                    candidates.remove(next_idx)
+                    next_idx = random.choice(candidates)
+                self._last_shuffle_index = next_idx
+                self._queue_index = next_idx
+                self._play_audio(self._queue[next_idx])
+                return
+            next_idx = self._queue_index + 1
+            if 0 <= next_idx < len(self._queue):
+                self._queue_index = next_idx
+                self._play_audio(self._queue[next_idx])
+                return
+            if self._loop_queue and self._queue:
+                self._queue_index = 0
+                self._play_audio(self._queue[0])
+                return
+            last_song = self._media_player.playing_song
+            last_duration = self._media_player.song_duration
+            self._media_player.stop()
+            self._show_player_bar_idle(last_song, last_duration)
+            self._player_tick_id = None
+            return
+
+        elapsed = self._media_player.elapsed_seconds() or 0.0
+        duration = self._media_player.song_duration
+        paused = self._media_player._audio_paused
+
+        icon = "⏸" if paused else "▶"
+        song = self._media_player.playing_song
+        name = (song.display_name or song.song_name or "Unknown") if song else ""
+        loop_suffix = " 🔁" if self._media_player._looping else (" 🔀" if self._shuffle_queue else "")
+        self._player_name_label.config(text=f"{icon}  {name}{loop_suffix}")
+
+        e_min, e_sec = divmod(int(elapsed), 60)
+        if duration:
+            d_min, d_sec = divmod(int(duration), 60)
+            self._player_time_label.config(text=f"{e_min}:{e_sec:02d} / {d_min}:{d_sec:02d}")
+            pct = min(100.0, elapsed / duration * 100)
+            self._player_progress["value"] = pct
+        else:
+            self._player_time_label.config(text=f"{e_min}:{e_sec:02d}")
+            self._player_progress["value"] = 0
+
+        self._player_tick_id = self.after(500, self._tick_player)
