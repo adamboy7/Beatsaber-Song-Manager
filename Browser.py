@@ -498,6 +498,11 @@ class SongBrowser(tk.Tk):
         except Exception:
             pass
 
+        self._favorites_only: bool = False
+        self._hide_favorites: bool = False
+        self._keep_player_visible: bool = False
+        self._loop_queue: bool = False
+
         self._build_ui()
 
         self._media_player = MediaPlayer()
@@ -527,7 +532,40 @@ class SongBrowser(tk.Tk):
 
     # ── Layout ────────────────────────────────────────────────────────────────
 
+    def _build_menubar(self):
+        menubar = tk.Menu(self)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Open Playlist…", command=self._open_playlist)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        view_menu = tk.Menu(menubar, tearoff=0)
+        self._favorites_only_var = tk.BooleanVar(value=False)
+        self._hide_favorites_var = tk.BooleanVar(value=False)
+        view_menu.add_checkbutton(label="Favorites Only", variable=self._favorites_only_var,
+                                  command=self._toggle_favorites_only)
+        view_menu.add_checkbutton(label="Hide Favorites", variable=self._hide_favorites_var,
+                                  command=self._toggle_hide_favorites)
+        view_menu.add_separator()
+        view_menu.add_command(label="Queue", command=self._open_queue_window)
+        menubar.add_cascade(label="View", menu=view_menu)
+
+        options_menu = tk.Menu(menubar, tearoff=0)
+        self._keep_player_visible_var = tk.BooleanVar(value=False)
+        self._loop_queue_var = tk.BooleanVar(value=False)
+        options_menu.add_checkbutton(label="Show Media Player",
+                                     variable=self._keep_player_visible_var,
+                                     command=self._toggle_keep_player_visible)
+        options_menu.add_checkbutton(label="Loop Queue",
+                                     variable=self._loop_queue_var,
+                                     command=self._toggle_loop_queue)
+        menubar.add_cascade(label="Options", menu=options_menu)
+
+        self.config(menu=menubar)
+
     def _build_ui(self):
+        self._build_menubar()
+
         # Header
         header = tk.Frame(self, bg=BG_COLOR)
         header.pack(fill="x", padx=16, pady=(14, 4))
@@ -720,7 +758,7 @@ class SongBrowser(tk.Tk):
 
     def _on_loaded(self, songs: list[SongInfo]):
         self.songs = songs
-        self.filtered = songs[:]
+        self.filtered = self._apply_view_filters(songs[:])
         self.page = 0
         self._selected_folders.clear()
         self.selected_indices.clear()
@@ -787,6 +825,37 @@ class SongBrowser(tk.Tk):
 
     def _is_favorite(self, song: SongInfo) -> bool:
         return any(lid in self.favorite_ids for lid in song_level_ids(song))
+
+    def _apply_view_filters(self, songs: list[SongInfo]) -> list[SongInfo]:
+        if self._favorites_only:
+            songs = [s for s in songs if self._is_favorite(s)]
+        if self._hide_favorites:
+            songs = [s for s in songs if not self._is_favorite(s)]
+        return songs
+
+    def _toggle_favorites_only(self):
+        self._favorites_only = self._favorites_only_var.get()
+        self._on_search()
+
+    def _toggle_hide_favorites(self):
+        if self._favorites_only and self._hide_favorites_var.get():
+            self._favorites_only = False
+            self._favorites_only_var.set(False)
+        self._hide_favorites = self._hide_favorites_var.get()
+        self._on_search()
+
+    def _toggle_keep_player_visible(self):
+        self._keep_player_visible = self._keep_player_visible_var.get()
+        if self._keep_player_visible and not self._player_bar_visible:
+            self._show_player_bar_idle(None, None)
+            self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
+            self._player_bar_visible = True
+        elif not self._keep_player_visible and self._player_bar_visible:
+            if self._media_player._audio_proc is None:
+                self._hide_player_bar()
+
+    def _toggle_loop_queue(self):
+        self._loop_queue = self._loop_queue_var.get()
 
     def _build_row(self, idx: int, song: SongInfo):
         # Row container
@@ -1211,7 +1280,10 @@ class SongBrowser(tk.Tk):
             self.after_cancel(self._player_tick_id)
             self._player_tick_id = None
         self._media_player.stop()
-        self._hide_player_bar()
+        if self._keep_player_visible:
+            self._show_player_bar_idle(None, None)
+        else:
+            self._hide_player_bar()
         self._queue.clear()
         self._queue_index = -1
         self._notify_queue_window()
@@ -1281,6 +1353,10 @@ class SongBrowser(tk.Tk):
             if 0 <= next_idx < len(self._queue):
                 self._queue_index = next_idx
                 self._play_audio(self._queue[next_idx])
+                return
+            if self._loop_queue and self._queue:
+                self._queue_index = 0
+                self._play_audio(self._queue[0])
                 return
             last_song = self._media_player.playing_song
             last_duration = self._media_player.song_duration
@@ -1758,7 +1834,7 @@ class SongBrowser(tk.Tk):
         if song_id:
             installed = [s for s in self.songs if s.song_id.lower() == song_id]
             if installed:
-                self.filtered = installed
+                self.filtered = self._apply_view_filters(installed)
                 self._pending_install_id = None
                 self.status_bar.config(text=f"Song {song_id} is already installed.")
             else:
@@ -1790,6 +1866,7 @@ class SongBrowser(tk.Tk):
                 or query_lower in s.mapper.lower()
                 or query_lower in s.song_id.lower()
             ]
+        self.filtered = self._apply_view_filters(self.filtered)
         self.selected_indices = {
             i for i, s in enumerate(self.filtered)
             if str(s.folder) in self._selected_folders
