@@ -210,6 +210,7 @@ class QueueWindow(tk.Toplevel):
     # ── Context Menu ─────────────────────────────────────────────────────────
 
     def _on_right_click(self, event: tk.Event, idx: int, song: "SongInfo"):
+        queue = self._browser._queue
         menu = tk.Menu(
             self, tearoff=0,
             bg="#1e1e1e", fg=TEXT_COLOR,
@@ -217,6 +218,19 @@ class QueueWindow(tk.Toplevel):
         )
         menu.add_command(label="View Song", command=lambda: self._view_song(song))
         menu.add_command(label="Play",      command=lambda: self._play_from_queue(idx, song))
+        menu.add_separator()
+        menu.add_command(
+            label="Move to Top",
+            state="normal" if idx > 0 else "disabled",
+            command=lambda: self._move_to_top(idx),
+        )
+        menu.add_command(
+            label="Move to Bottom",
+            state="normal" if idx < len(queue) - 1 else "disabled",
+            command=lambda: self._move_to_bottom(idx),
+        )
+        menu.add_separator()
+        menu.add_command(label="Loop", command=lambda: self._loop_song(idx, song))
         menu.add_separator()
         menu.add_command(
             label="Save Queue",
@@ -246,6 +260,25 @@ class QueueWindow(tk.Toplevel):
     def _play_from_queue(self, idx: int, song: "SongInfo"):
         self._browser._queue_index = idx
         self._browser._play_audio(song)
+
+    def _move_to_top(self, idx: int):
+        if idx > 0:
+            self._perform_move(idx, 0)
+
+    def _move_to_bottom(self, idx: int):
+        queue = self._browser._queue
+        if idx < len(queue) - 1:
+            self._perform_move(idx, len(queue))
+
+    def _loop_song(self, idx: int, song: "SongInfo"):
+        b = self._browser
+        mp = b._media_player
+        if b._queue_index != idx:
+            b._queue_index = idx
+            b._play_audio(song)
+        if not mp._looping:
+            mp.toggle_loop()
+        b._show_player_bar(song)
 
     def _load_thumb(self, song: "SongInfo") -> ImageTk.PhotoImage:
         key = str(song.folder)
