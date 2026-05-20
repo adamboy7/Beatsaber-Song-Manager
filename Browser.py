@@ -96,7 +96,7 @@ class SongBrowser(
         self._build_ui()
 
         self._media_player = MediaPlayer()
-        self._media_player.start_media_keys(self.after, self._stop_player)
+        self._media_player.start_media_keys(self.after, self._stop_player, self._queue_next, self._queue_prev)
         self._queue: list[SongInfo] = []
         self._queue_index: int = -1
         self._player_bar_visible: bool = False

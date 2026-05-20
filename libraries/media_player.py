@@ -20,7 +20,7 @@ class MediaPlayer:
         self._paused_total: float = 0.0
         self.song_duration: float | None = None
 
-    def start_media_keys(self, after_fn, on_stop=None) -> None:
+    def start_media_keys(self, after_fn, on_stop=None, on_next=None, on_prev=None) -> None:
         from pynput import keyboard as pynput_kb
 
         def on_press(key):
@@ -28,6 +28,10 @@ class MediaPlayer:
                 after_fn(0, self.toggle_pause)
             elif key == pynput_kb.Key.media_stop:
                 after_fn(0, on_stop if on_stop is not None else self.stop)
+            elif key == pynput_kb.Key.media_next and on_next is not None:
+                after_fn(0, on_next)
+            elif key == pynput_kb.Key.media_previous and on_prev is not None:
+                after_fn(0, on_prev)
 
         self._kb_listener = pynput_kb.Listener(on_press=on_press)
         self._kb_listener.daemon = True
