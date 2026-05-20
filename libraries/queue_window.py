@@ -9,6 +9,7 @@ to-reorder logic.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import tkinter as tk
@@ -46,6 +47,9 @@ class QueueWindow(tk.Toplevel):
         self.title("Playback Queue")
         self.configure(bg="#0d0d1a")
         self.geometry("420x500")
+        _icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Playlist.png")
+        self.iconphoto(False, _icon)
+        self._icon = _icon
         self.minsize(340, 200)
 
         header = tk.Frame(self, bg="#0d0d1a")

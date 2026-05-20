@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import base64
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import tkinter as tk
@@ -35,6 +36,9 @@ class PlaylistArtWindow(tk.Toplevel):
         self.title("Playlist Art")
         self.configure(bg="#0d0d1a")
         self.resizable(False, False)
+        _icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Album.png")
+        self.iconphoto(False, _icon)
+        self._icon = _icon
 
         self._lbl = tk.Label(self, bg="#0d0d1a", cursor="hand2")
         self._lbl.pack(padx=16, pady=16)
