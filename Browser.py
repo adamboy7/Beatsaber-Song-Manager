@@ -654,6 +654,7 @@ class SongBrowser(TkinterDnD.Tk):
         )
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._setup_playlist_dnd()
         self._load_async()
 
     # ── Layout ────────────────────────────────────────────────────────────────
@@ -1220,6 +1221,27 @@ class SongBrowser(TkinterDnD.Tk):
             f"Saved {len(valid)} songs to {Path(save_path).name}",
         )
 
+    def _setup_playlist_dnd(self) -> None:
+        for widget in (self, self.canvas):
+            widget.drop_target_register(DND_FILES)
+            widget.dnd_bind('<<Drop>>', self._on_playlist_drop)
+            widget.dnd_bind('<<DropEnter>>', self._on_playlist_drop_enter)
+            widget.dnd_bind('<<DropLeave>>', self._on_playlist_drop_leave)
+
+    def _on_playlist_drop_enter(self, _event) -> None:
+        self._drag_prev_status = self.status_bar.cget("text")
+        self.status_bar.config(text="Drop .bplist file to open playlist…")
+
+    def _on_playlist_drop_leave(self, _event) -> None:
+        self.status_bar.config(text=getattr(self, "_drag_prev_status", ""))
+
+    def _on_playlist_drop(self, event) -> None:
+        self.status_bar.config(text=getattr(self, "_drag_prev_status", ""))
+        path = self.tk.splitlist(event.data)[0]
+        if Path(path).suffix.lower() not in {".bplist", ".json"}:
+            return
+        self._load_playlist_from_path(path)
+
     def _open_playlist(self) -> None:
         import tkinter.filedialog as fd
         path = fd.askopenfilename(
@@ -1228,7 +1250,9 @@ class SongBrowser(TkinterDnD.Tk):
         )
         if not path:
             return
+        self._load_playlist_from_path(path)
 
+    def _load_playlist_from_path(self, path: str) -> None:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
