@@ -25,7 +25,50 @@ from libraries.constants import (
     BG_COLOR, ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
     SELECTED_BG, HOVER_BG, SEPARATOR_COLOR,
 )
+from libraries.player_data import get_song_stats, song_level_ids
 from libraries.song_data import SongInfo, load_songs, load_song_hashes
+
+
+_TAG_RE = re.compile(r'\{(\w+)\}:(\S+)', re.IGNORECASE)
+
+
+def _parse_tags(query: str) -> tuple[list[tuple[str, str]], str]:
+    tags: list[tuple[str, str]] = []
+    plain = _TAG_RE.sub(
+        lambda m: (tags.append((m.group(1).lower(), m.group(2).lower())) or ""),
+        query,
+    )
+    return tags, plain.strip()
+
+
+def _song_matches_tags(
+    song, tags: list[tuple[str, str]], player_stats: dict, favorite_ids: set
+) -> bool:
+    for tag, value in tags:
+        if tag == "artist":
+            if value not in song.author.lower():
+                return False
+        elif tag == "mapper":
+            if value not in song.mapper.lower():
+                return False
+        elif tag == "title":
+            if value not in song.display_name.lower():
+                return False
+        elif tag == "unplayed":
+            stats = get_song_stats(song, player_stats)
+            total_plays = sum(d.plays for d in stats.values()) if stats else 0
+            is_unplayed = total_plays == 0
+            if value == "y" and not is_unplayed:
+                return False
+            if value == "n" and is_unplayed:
+                return False
+        elif tag == "favorite":
+            is_fav = any(lid in favorite_ids for lid in song_level_ids(song))
+            if value == "y" and not is_fav:
+                return False
+            if value == "n" and is_fav:
+                return False
+    return True
 
 
 class BrowserPaginationMixin:
@@ -237,16 +280,24 @@ class BrowserPaginationMixin:
 
         self._pending_install_id = None
         self._install_manager.cancel()
-        query_lower = query.lower()
-        if not query_lower:
+        raw_query = self.search_var.get().strip()
+        tags, plain = _parse_tags(raw_query)
+        plain_lower = plain.lower()
+
+        if not raw_query:
             self.filtered = self.songs[:]
         else:
             self.filtered = [
                 s for s in self.songs
-                if query_lower in s.display_name.lower()
-                or query_lower in s.author.lower()
-                or query_lower in s.mapper.lower()
-                or query_lower in s.song_id.lower()
+                if (
+                    (not plain_lower or (
+                        plain_lower in s.display_name.lower()
+                        or plain_lower in s.author.lower()
+                        or plain_lower in s.mapper.lower()
+                        or plain_lower in s.song_id.lower()
+                    ))
+                    and (not tags or _song_matches_tags(s, tags, self.player_stats, self.favorite_ids))
+                )
             ]
         self.filtered = self._apply_view_filters(self.filtered)
         self.selected_indices = {
@@ -254,10 +305,14 @@ class BrowserPaginationMixin:
             if str(s.folder) in self._selected_folders
         }
         self.selected_index = max(self.selected_indices) if self.selected_indices else None
-        self._thumbnails.clear()   # free memory; will reload on render
+        self._thumbnails.clear()
         self.page = 0
         self._render_list()
-        self.status_bar.config(text=f"{len(self.filtered)} songs shown")
+        if tags:
+            tag_summary = "  •  ".join(f"{{{t}}}:{v}" for t, v in tags)
+            self.status_bar.config(text=f"{len(self.filtered)} songs shown  •  {tag_summary}")
+        else:
+            self.status_bar.config(text=f"{len(self.filtered)} songs shown")
 
     def _on_search_enter(self, *_):
         if self._pending_install_id:
