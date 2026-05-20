@@ -125,3 +125,4 @@ class InstallManager:
         self._status_cb(
             f"No install detected for {song_id} — check that Mod Assistant is running and one-click installs are enabled."
         )
+        self._reload_cb()

@@ -467,6 +467,8 @@ class SongBrowser(tk.Tk):
         self._queue_index: int = -1
         self._player_bar_visible: bool = False
         self._queue_window: QueueWindow | None = None
+        self._pending_playlist_entries: list[dict] | None = None
+        self._pending_playlist_queue: list[dict] = []
 
         self._install_manager = InstallManager(
             custom_levels,
@@ -966,6 +968,106 @@ class SongBrowser(tk.Tk):
             f"Saved {len(valid)} songs to {Path(save_path).name}",
         )
 
+    def _open_playlist(self) -> None:
+        import tkinter.filedialog as fd
+        path = fd.askopenfilename(
+            title="Open Playlist",
+            filetypes=[("Beat Saber Playlist", "*.bplist"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not read playlist:\n{e}")
+            return
+
+        entries = data.get("songs", [])
+        if not entries:
+            messagebox.showinfo("Empty Playlist", "The playlist contains no songs.")
+            return
+
+        hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}
+
+        found: list[SongInfo] = []
+        missing: list[dict] = []
+        for entry in entries:
+            h = (entry.get("hash") or "").upper()
+            if h in hash_to_song:
+                found.append(hash_to_song[h])
+            else:
+                missing.append(entry)
+
+        if not missing:
+            self._play_queue(found)
+            title = data.get("playlistTitle", Path(path).stem)
+            self.status_bar.config(text=f"Playlist '{title}': {len(found)} songs queued")
+            return
+
+        installable = [e for e in missing if e.get("key") or e.get("id")]
+        uninstallable_count = len(missing) - len(installable)
+
+        names = "\n".join(f"  • {e.get('songName', 'Unknown')}" for e in missing[:10])
+        if len(missing) > 10:
+            names += f"\n  … and {len(missing) - 10} more"
+
+        if not installable:
+            msg = (
+                f"{len(missing)} song(s) are not installed and cannot be auto-installed "
+                f"(no BeatSaver key):\n\n{names}"
+            )
+            if found:
+                msg += f"\n\nQueue the {len(found)} available song(s) instead?"
+                if messagebox.askyesno("Missing Songs", msg):
+                    self._play_queue(found)
+            else:
+                messagebox.showerror("No Songs Available", msg)
+            return
+
+        msg = f"{len(missing)} song(s) are not installed:\n\n{names}\n\n"
+        if uninstallable_count:
+            msg += f"({uninstallable_count} cannot be auto-installed — no BeatSaver key.)\n\n"
+        msg += (
+            f"Install {len(installable)} song(s) via Mod Assistant and queue all "
+            f"songs when done?\n\nSelecting 'No' will queue only the "
+            f"{len(found)} already-installed song(s)."
+        )
+
+        if not messagebox.askyesno("Missing Songs", msg):
+            if found:
+                self._play_queue(found)
+            return
+
+        self._pending_playlist_entries = list(entries)
+        self._pending_playlist_queue = installable[:]
+        self._install_next_playlist_song()
+
+    def _install_next_playlist_song(self) -> None:
+        if not self._pending_playlist_queue:
+            return
+        entry = self._pending_playlist_queue.pop(0)
+        song_id = entry.get("key") or entry.get("id")
+        self._install_manager.trigger(song_id)
+
+    def _check_pending_playlist(self) -> None:
+        if self._pending_playlist_entries is None:
+            return
+        hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}
+        if self._pending_playlist_queue:
+            self._install_next_playlist_song()
+            return
+        queue = []
+        for entry in self._pending_playlist_entries:
+            h = (entry.get("hash") or "").upper()
+            if h in hash_to_song:
+                queue.append(hash_to_song[h])
+        self._pending_playlist_entries = None
+        if queue:
+            self._play_queue(queue)
+            self.status_bar.config(text=f"Playlist loaded: {len(queue)} songs queued")
+
     # ── Song operations ───────────────────────────────────────────────────────
 
     def _play_audio(self, song: SongInfo):
@@ -1078,6 +1180,7 @@ class SongBrowser(tk.Tk):
         menu.add_command(label="View Queue",
                          state="normal" if self._queue else "disabled",
                          command=self._open_queue_window)
+        menu.add_command(label="Open Playlist", command=self._open_playlist)
         menu.tk_popup(event.x_root, event.y_root)
 
     def _open_queue_window(self):
@@ -1647,6 +1750,7 @@ class SongBrowser(tk.Tk):
         self.songs = songs
         self.count_label.config(text=f"({len(songs)} songs)")
         self._on_search()  # re-applies search bar content; shows installed song and clears pending_install_id
+        self._check_pending_playlist()
 
     def _build_install_row(self, song_id: str):
         row = tk.Frame(self.list_frame, bg=HOVER_BG, cursor="hand2")
