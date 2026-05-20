@@ -75,6 +75,7 @@ class MediaPlayer:
         if self._audio_proc and self._audio_proc.poll() is None:
             self._audio_proc.terminate()
         self._audio_proc = None
+        self._audio_paused = False
         self.playing_song = None
         self._play_start = None
         self._pause_start = None
