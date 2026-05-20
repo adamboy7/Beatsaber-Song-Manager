@@ -2,3 +2,4 @@ Pillow
 pydub
 audioop-lts
 pynput
+tkinterdnd2

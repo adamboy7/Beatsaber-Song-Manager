@@ -16,6 +16,7 @@ import random
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
+from tkinterdnd2 import TkinterDnD, DND_FILES
 from pathlib import Path
 from PIL import Image, ImageTk
 
@@ -470,7 +471,112 @@ class QueueWindow(tk.Toplevel):
         self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
 
-class SongBrowser(tk.Tk):
+class PlaylistArtWindow(tk.Toplevel):
+    _IMG_SIZE = 400
+
+    def __init__(self, browser: "SongBrowser"):
+        super().__init__(browser)
+        self._browser = browser
+        self._photo: ImageTk.PhotoImage | None = None
+
+        self.title("Playlist Art")
+        self.configure(bg="#0d0d1a")
+        self.resizable(False, False)
+
+        self._lbl = tk.Label(self, bg="#0d0d1a", cursor="hand2")
+        self._lbl.pack(padx=16, pady=16)
+        self._lbl.bind("<Button-3>", self._on_right_click)
+        self._lbl.drop_target_register(DND_FILES)
+        self._lbl.dnd_bind('<<Drop>>', self._on_drop)
+        self._lbl.dnd_bind('<<DropEnter>>', self._on_drop_enter)
+        self._lbl.dnd_bind('<<DropLeave>>', self._on_drop_leave)
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.refresh()
+
+    def _on_close(self):
+        self._browser._playlist_art_window = None
+        self.destroy()
+
+    def refresh(self):
+        b64 = self._browser._playlist_art_b64
+        size = self._IMG_SIZE
+        try:
+            if b64:
+                img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+            else:
+                img = Image.new("RGB", (size, size), "#2a0033")
+            img = img.resize((size, size), Image.LANCZOS)
+            self._photo = ImageTk.PhotoImage(img)
+            self._lbl.config(image=self._photo)
+        except Exception:
+            img = Image.new("RGB", (size, size), "#2a0033")
+            self._photo = ImageTk.PhotoImage(img)
+            self._lbl.config(image=self._photo)
+
+    def _on_right_click(self, event: tk.Event):
+        menu = tk.Menu(
+            self, tearoff=0,
+            bg="#1e1e1e", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0,
+        )
+        menu.add_command(label="Replace…", command=self._replace_art)
+        menu.add_command(label="Reset", command=self._reset_art)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _reset_art(self):
+        self._browser._playlist_art_locked = False
+        self._browser._playlist_art_first_song_key = None
+        self._browser._playlist_art_b64 = None
+        self._browser._update_playlist_art_auto()
+        self.refresh()
+
+    def _on_drop_enter(self, _event):
+        self.configure(bg=ACCENT_COLOR)
+        self._lbl.config(bg=ACCENT_COLOR)
+
+    def _on_drop_leave(self, _event):
+        self.configure(bg="#0d0d1a")
+        self._lbl.config(bg="#0d0d1a")
+
+    def _on_drop(self, event):
+        self.configure(bg="#0d0d1a")
+        self._lbl.config(bg="#0d0d1a")
+        path = self.tk.splitlist(event.data)[0]
+        try:
+            buf = io.BytesIO()
+            Image.open(path).convert("RGB").save(buf, format="JPEG")
+            self._browser._playlist_art_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            self._browser._playlist_art_locked = True
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not load image:\n{e}", parent=self)
+            return
+        self.refresh()
+
+    def _replace_art(self):
+        import tkinter.filedialog as fd
+        path = fd.askopenfilename(
+            title="Select Image",
+            filetypes=[
+                ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"),
+                ("All files", "*.*"),
+            ],
+            parent=self,
+        )
+        if not path:
+            return
+        try:
+            buf = io.BytesIO()
+            Image.open(path).convert("RGB").save(buf, format="JPEG")
+            self._browser._playlist_art_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            self._browser._playlist_art_locked = True
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not load image:\n{e}", parent=self)
+            return
+        self.refresh()
+
+
+class SongBrowser(TkinterDnD.Tk):
     def __init__(self, custom_levels: Path):
         super().__init__()
         self.custom_levels = custom_levels
@@ -527,6 +633,10 @@ class SongBrowser(tk.Tk):
             self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
             self._player_bar_visible = True
         self._queue_window: QueueWindow | None = None
+        self._playlist_art_b64: str | None = None
+        self._playlist_art_locked: bool = False
+        self._playlist_art_first_song_key: str | None = None
+        self._playlist_art_window: PlaylistArtWindow | None = None
         self._pending_playlist_entries: list[dict] | None = None
         self._pending_playlist_queue: list[dict] = []
 
@@ -564,6 +674,7 @@ class SongBrowser(tk.Tk):
                                   command=self._toggle_hide_favorites)
         view_menu.add_separator()
         view_menu.add_command(label="Queue", command=self._open_queue_window)
+        view_menu.add_command(label="Playlist Art", command=self._open_playlist_art_window)
         menubar.add_cascade(label="View", menu=view_menu)
 
         options_menu = tk.Menu(menubar, tearoff=0)
@@ -1130,6 +1241,15 @@ class SongBrowser(tk.Tk):
             messagebox.showinfo("Empty Playlist", "The playlist contains no songs.")
             return
 
+        img_b64 = data.get("image", "")
+        if img_b64:
+            self._playlist_art_b64 = img_b64
+            self._playlist_art_locked = True
+            self._playlist_art_first_song_key = None
+            self._notify_playlist_art_window()
+        else:
+            self._playlist_art_locked = False
+
         hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}
 
         found: list[SongInfo] = []
@@ -1409,6 +1529,37 @@ class SongBrowser(tk.Tk):
     def _notify_queue_window(self):
         if self._queue_window and self._queue_window.winfo_exists():
             self._queue_window.refresh()
+        self._update_playlist_art_auto()
+
+    def _open_playlist_art_window(self):
+        if self._playlist_art_window and self._playlist_art_window.winfo_exists():
+            self._playlist_art_window.lift()
+            self._playlist_art_window.focus_force()
+            return
+        self._playlist_art_window = PlaylistArtWindow(self)
+
+    def _notify_playlist_art_window(self):
+        if self._playlist_art_window and self._playlist_art_window.winfo_exists():
+            self._playlist_art_window.refresh()
+
+    def _update_playlist_art_auto(self):
+        if self._playlist_art_locked:
+            return
+        first = self._queue[0] if self._queue else None
+        key = str(first.folder) if first else None
+        if key == self._playlist_art_first_song_key:
+            return
+        self._playlist_art_first_song_key = key
+        if first and first.cover_path and first.cover_path.exists():
+            try:
+                buf = io.BytesIO()
+                Image.open(first.cover_path).convert("RGB").save(buf, format="JPEG")
+                self._playlist_art_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            except Exception:
+                self._playlist_art_b64 = None
+        else:
+            self._playlist_art_b64 = None
+        self._notify_playlist_art_window()
 
     def _start_player_tick(self):
         if self._player_tick_id:
