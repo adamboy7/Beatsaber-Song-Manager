@@ -23,6 +23,7 @@ from tkinterdnd2 import DND_FILES
 from pathlib import Path
 from PIL import Image
 
+from libraries.constants import ACCENT_COLOR, TEXT_COLOR
 from libraries.song_data import SongInfo, load_songs, load_song_hashes
 from libraries.player_data import (
     song_level_ids, load_favorites, load_player_stats,
@@ -30,6 +31,51 @@ from libraries.player_data import (
 from libraries.playlist_installer import PlaylistInstaller
 from libraries.queue_window import QueueWindow
 from libraries.playlist_art_window import PlaylistArtWindow
+
+
+def _ask_overwrite_or_append(parent: tk.Misc) -> str:
+    """3-button dialog for non-empty queue drop. Returns 'overwrite', 'append', or ''."""
+    result: dict[str, str] = {"choice": ""}
+
+    dlg = tk.Toplevel(parent)
+    dlg.title("Queue Not Empty")
+    dlg.configure(bg="#0d0d1a")
+    dlg.resizable(False, False)
+    dlg.transient(parent)
+    dlg.grab_set()
+
+    tk.Label(
+        dlg,
+        text="The queue already has songs.\nWhat would you like to do?",
+        font=("Segoe UI", 10),
+        bg="#0d0d1a", fg=TEXT_COLOR,
+        justify="center",
+        padx=20, pady=16,
+    ).pack()
+
+    btn_frame = tk.Frame(dlg, bg="#0d0d1a")
+    btn_frame.pack(pady=(0, 16), padx=20)
+
+    def choose(val: str):
+        result["choice"] = val
+        dlg.destroy()
+
+    for label, val, bg in [
+        ("Overwrite", "overwrite", ACCENT_COLOR),
+        ("Append",    "append",    "#2a2a3a"),
+        ("Cancel",    "",          "#2a2a3a"),
+    ]:
+        tk.Button(
+            btn_frame, text=label,
+            font=("Segoe UI", 9),
+            bg=bg, fg=TEXT_COLOR,
+            activebackground="#7a44c0", activeforeground=TEXT_COLOR,
+            bd=0, padx=14, pady=6,
+            command=lambda v=val: choose(v),
+        ).pack(side="left", padx=4)
+
+    dlg.wait_window()
+    return result["choice"]
 
 
 class BrowserPlaylistsMixin:
@@ -279,6 +325,57 @@ class BrowserPlaylistsMixin:
 
         self._pending_playlist_queue = installable[:]
         self._install_next_playlist_song()
+
+    def _load_playlist_to_queue(self, path: str) -> None:
+        """Entry point for Queue-window DnD drops. Prompts when queue is non-empty."""
+        if not self._queue:
+            self._load_playlist_from_path(path)
+            return
+        choice = _ask_overwrite_or_append(self)
+        if choice == "overwrite":
+            self._load_playlist_from_path(path)
+        elif choice == "append":
+            self._append_playlist_from_path(path)
+
+    def _append_playlist_from_path(self, path: str) -> None:
+        """Append matched songs to the existing queue without changing playlist art."""
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not read playlist:\n{e}")
+            return
+
+        entries = data.get("songs", [])
+        if not entries:
+            messagebox.showinfo("Empty Playlist", "The playlist contains no songs.")
+            return
+
+        hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}
+        found: list[SongInfo] = []
+        missing_count = 0
+        for entry in entries:
+            h = (entry.get("hash") or "").upper()
+            if h in hash_to_song:
+                song = hash_to_song[h]
+                if song.audio_path:
+                    found.append(song)
+            else:
+                missing_count += 1
+
+        if not found:
+            messagebox.showinfo("No Songs Available",
+                                "No installed songs matched the playlist.")
+            return
+
+        self._queue.extend(found)
+        self._notify_queue_window()
+
+        title = data.get("playlistTitle", Path(path).stem)
+        msg = f"Appended {len(found)} songs from '{title}'"
+        if missing_count:
+            msg += f"  •  {missing_count} not installed (skipped)"
+        self.status_bar.config(text=msg)
 
     def _install_next_playlist_song(self) -> None:
         if not self._pending_playlist_queue:

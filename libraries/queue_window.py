@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import tkinter as tk
 from PIL import Image, ImageTk
+from tkinterdnd2 import DND_FILES
 
 from libraries.constants import (
     ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
@@ -60,7 +61,7 @@ class QueueWindow(tk.Toplevel):
             bg="#0d0d1a", fg=TEXT_COLOR,
         ).pack(side="left")
         tk.Label(
-            header, text="  drag to reorder  •  shift+click to select  •  del to remove",
+            header, text="  drag to reorder  •  shift+click to select  •  ctrl+a  •  del to remove",
             font=("Segoe UI", 8),
             bg="#0d0d1a", fg=SUBTEXT_COLOR,
         ).pack(side="left")
@@ -90,10 +91,37 @@ class QueueWindow(tk.Toplevel):
         self.bind("<Delete>", self._delete_selected)
         self.bind("<BackSpace>", self._delete_selected)
         self.bind("<Escape>", self._deselect_all)
+        self.bind("<Control-a>", self._select_all)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._setup_dnd()
         self.refresh()
         self._tick_id = self.after(300, self._tick)
+
+    # ── Playlist drag-and-drop ────────────────────────────────────────────────
+
+    def _setup_dnd(self):
+        for widget in (self, self._canvas, self._list_frame):
+            widget.drop_target_register(DND_FILES)
+            widget.dnd_bind('<<Drop>>', self._on_dnd_drop)
+            widget.dnd_bind('<<DropEnter>>', self._on_dnd_enter)
+            widget.dnd_bind('<<DropLeave>>', self._on_dnd_leave)
+
+    def _on_dnd_enter(self, _event):
+        self._canvas.configure(bg="#1a1a2e")
+        self._list_frame.configure(bg="#1a1a2e")
+
+    def _on_dnd_leave(self, _event):
+        self._canvas.configure(bg="#0d0d1a")
+        self._list_frame.configure(bg="#0d0d1a")
+
+    def _on_dnd_drop(self, event):
+        self._canvas.configure(bg="#0d0d1a")
+        self._list_frame.configure(bg="#0d0d1a")
+        path = self.tk.splitlist(event.data)[0]
+        if Path(path).suffix.lower() not in {".bplist", ".json"}:
+            return
+        self._browser._load_playlist_to_queue(path)
 
     def _on_close(self):
         if self._tick_id:
@@ -377,6 +405,10 @@ class QueueWindow(tk.Toplevel):
                 self._selected.add(idx)
         else:
             self._selected = {idx}
+        self._update_row_colors()
+
+    def _select_all(self, _event=None):
+        self._selected = set(range(len(self._row_frames)))
         self._update_row_colors()
 
     def _deselect_all(self, _event=None):
