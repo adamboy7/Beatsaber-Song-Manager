@@ -492,6 +492,11 @@ class SongBrowser(tk.Tk):
         self.configure(bg=BG_COLOR)
         self.geometry("780x680")
         self.minsize(600, 400)
+        try:
+            _icon = tk.PhotoImage(file=Path(__file__).parent / "Icon.png")
+            self.iconphoto(True, _icon)
+        except Exception:
+            pass
 
         self._build_ui()
 
@@ -1328,6 +1333,7 @@ class SongBrowser(tk.Tk):
 
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
         is_fav = self._is_favorite(song)
+        shift_held = bool(event.state & 0x1)
         baks = bak_files(song)
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
@@ -1349,25 +1355,25 @@ class SongBrowser(tk.Tk):
                              command=lambda: self._add_to_favorites(song),
                              state="normal" if self.player_dat_path else "disabled")
         menu.add_separator()
-        menu.add_command(label="Replace Art",
-                         command=lambda: self._replace_art(song),
-                         state="normal" if song.cover_path else "disabled")
-        menu.add_command(label="Replace Audio",
-                         command=lambda: self._replace_audio(song),
-                         state="normal" if song.audio_path else "disabled")
-        if baks:
-            menu.add_command(label=f"Restore Files ({len(baks)})",
-                             command=lambda: self._restore_files(song))
-        menu.add_separator()
-        menu.add_command(label="Copy Link",
-                         command=lambda: self._copy(f"https://beatsaver.com/maps/{song.song_id}"),
-                         state="normal" if song.song_id else "disabled")
-        menu.add_command(label="Copy Name", command=lambda: self._copy(song.display_name))
+        if shift_held:
+            menu.add_command(label="Replace Art",
+                             command=lambda: self._replace_art(song),
+                             state="normal" if song.cover_path else "disabled")
+            menu.add_command(label="Replace Audio",
+                             command=lambda: self._replace_audio(song),
+                             state="normal" if song.audio_path else "disabled")
+            if baks:
+                menu.add_command(label=f"Restore Files ({len(baks)})",
+                                 command=lambda: self._restore_files(song))
+        else:
+            menu.add_command(label="Copy Link",
+                             command=lambda: self._copy(f"https://beatsaver.com/maps/{song.song_id}"),
+                             state="normal" if song.song_id else "disabled")
+            menu.add_command(label="Copy Name", command=lambda: self._copy(song.display_name))
         menu.add_separator()
         menu.add_command(label="Open Folder…",
                          command=lambda: os.startfile(song.folder))
         menu.add_separator()
-        shift_held = bool(event.state & 0x1)
         if shift_held:
             menu.add_command(label="Clear Score",
                              command=lambda: self._clear_score(song),
