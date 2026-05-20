@@ -12,6 +12,7 @@ import base64
 import shutil
 import webbrowser
 import datetime
+import random
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -104,6 +105,7 @@ class QueueWindow(tk.Toplevel):
 
         self.bind("<Delete>", self._delete_selected)
         self.bind("<BackSpace>", self._delete_selected)
+        self.bind("<Escape>", self._deselect_all)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.refresh()
@@ -313,6 +315,9 @@ class QueueWindow(tk.Toplevel):
     def _on_b1_motion(self, event: tk.Event, source_idx: int):
         if abs(event.y_root - self._drag_start_y) > 5 and not self._dragging:
             self._dragging = True
+            if len(self._selected) > 1:
+                self._selected = {self._drag_source} if self._drag_source is not None else set()
+                self._update_row_colors()
             if 0 <= self._drag_source < len(self._row_frames):
                 self._recolor_row(self._row_frames[self._drag_source],
                                   self._drag_source, "#222244")
@@ -388,6 +393,10 @@ class QueueWindow(tk.Toplevel):
                 self._selected.add(idx)
         else:
             self._selected = {idx}
+        self._update_row_colors()
+
+    def _deselect_all(self, _event=None):
+        self._selected.clear()
         self._update_row_colors()
 
     def _delete_selected(self, event=None):
@@ -503,6 +512,8 @@ class SongBrowser(tk.Tk):
         self._hide_favorites: bool = False
         self._keep_player_visible: bool = True
         self._loop_queue: bool = False
+        self._shuffle_queue: bool = False
+        self._last_shuffle_index: int | None = None
 
         self._build_ui()
 
@@ -865,6 +876,11 @@ class SongBrowser(tk.Tk):
 
     def _toggle_loop_queue(self):
         self._loop_queue = self._loop_queue_var.get()
+
+    def _toggle_shuffle_queue(self):
+        self._shuffle_queue = not self._shuffle_queue
+        if not self._shuffle_queue:
+            self._last_shuffle_index = None
 
     def _build_row(self, idx: int, song: SongInfo):
         # Row container
@@ -1250,6 +1266,16 @@ class SongBrowser(tk.Tk):
     def _queue_next(self) -> None:
         if self._media_player._looping:
             return
+        if self._shuffle_queue and len(self._queue) >= 2:
+            candidates = [i for i in range(len(self._queue)) if i != self._queue_index]
+            next_idx = random.choice(candidates)
+            if next_idx == self._last_shuffle_index and len(candidates) > 1:
+                candidates.remove(next_idx)
+                next_idx = random.choice(candidates)
+            self._last_shuffle_index = next_idx
+            self._queue_index = next_idx
+            self._play_audio(self._queue[next_idx])
+            return
         next_idx = self._queue_index + 1
         if next_idx < len(self._queue):
             self._queue_index = next_idx
@@ -1281,7 +1307,7 @@ class SongBrowser(tk.Tk):
     def _show_player_bar(self, song: SongInfo):
         self._stop_idle_animation()
         name = song.display_name or song.song_name or "Unknown"
-        loop_suffix = " 🔁" if self._media_player._looping else ""
+        loop_suffix = " 🔁" if self._media_player._looping else (" 🔀" if self._shuffle_queue else "")
         self._player_name_label.config(text=f"▶  {name}{loop_suffix}")
         self._player_time_label.config(text="0:00")
         self._player_progress["value"] = 0
@@ -1347,11 +1373,19 @@ class SongBrowser(tk.Tk):
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0)
         menu.add_command(label=play_label, command=mp.toggle_pause)
         menu.add_command(label="Stop", command=self._stop_player)
+        shuffle_var = tk.BooleanVar(value=self._shuffle_queue)
+        can_shuffle = len(self._queue) >= 2
+        menu.add_checkbutton(
+            label="Shuffle", variable=shuffle_var,
+            command=self._toggle_shuffle_queue,
+            selectcolor=ACCENT_COLOR,
+            state="normal" if can_shuffle else "disabled",
+        )
         menu.add_checkbutton(
             label="Loop", variable=loop_var, command=mp.toggle_loop,
             selectcolor=ACCENT_COLOR,
         )
-        can_next = not mp._looping and (self._queue_index + 1 < len(self._queue))
+        can_next = not mp._looping and (self._queue_index + 1 < len(self._queue) or (self._shuffle_queue and len(self._queue) >= 2))
         can_prev = not mp._looping and (self._queue_index > 0)
         menu.add_separator()
         menu.add_command(label="Next",
@@ -1362,9 +1396,7 @@ class SongBrowser(tk.Tk):
                          command=self._queue_prev)
         menu.add_separator()
         menu.add_command(label="View Queue",
-                         state="normal" if self._queue else "disabled",
                          command=self._open_queue_window)
-        menu.add_command(label="Open Playlist", command=self._open_playlist)
         menu.tk_popup(event.x_root, event.y_root)
 
     def _open_queue_window(self):
@@ -1389,6 +1421,16 @@ class SongBrowser(tk.Tk):
             if self._media_player._looping and self._media_player.playing_song:
                 self._play_audio(self._media_player.playing_song)
                 return
+            if self._shuffle_queue and len(self._queue) >= 2:
+                candidates = [i for i in range(len(self._queue)) if i != self._queue_index]
+                next_idx = random.choice(candidates)
+                if next_idx == self._last_shuffle_index and len(candidates) > 1:
+                    candidates.remove(next_idx)
+                    next_idx = random.choice(candidates)
+                self._last_shuffle_index = next_idx
+                self._queue_index = next_idx
+                self._play_audio(self._queue[next_idx])
+                return
             next_idx = self._queue_index + 1
             if 0 <= next_idx < len(self._queue):
                 self._queue_index = next_idx
@@ -1412,7 +1454,7 @@ class SongBrowser(tk.Tk):
         icon = "⏸" if paused else "▶"
         song = self._media_player.playing_song
         name = (song.display_name or song.song_name or "Unknown") if song else ""
-        loop_suffix = " 🔁" if self._media_player._looping else ""
+        loop_suffix = " 🔁" if self._media_player._looping else (" 🔀" if self._shuffle_queue else "")
         self._player_name_label.config(text=f"{icon}  {name}{loop_suffix}")
 
         e_min, e_sec = divmod(int(elapsed), 60)
