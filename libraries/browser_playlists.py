@@ -229,7 +229,7 @@ class BrowserPlaylistsMixin:
         path = self.tk.splitlist(event.data)[0]
         if Path(path).suffix.lower() not in {".bplist", ".json"}:
             return
-        self._load_playlist_from_path(path)
+        self._load_playlist_to_queue(path, anchor=self)
 
     def _open_playlist(self) -> None:
         import tkinter.filedialog as fd
@@ -239,7 +239,7 @@ class BrowserPlaylistsMixin:
         )
         if not path:
             return
-        self._load_playlist_from_path(path)
+        self._load_playlist_to_queue(path, anchor=self)
 
     def _load_playlist_from_path(self, path: str) -> None:
         try:
