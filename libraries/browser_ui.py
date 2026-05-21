@@ -52,9 +52,93 @@ class BrowserUIMixin:
                 continue
         return None
 
+    @staticmethod
+    def _both_handlers_registered() -> bool:
+        try:
+            import winreg
+            for protocol in ("beatsaver", "bsplaylist"):
+                winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, protocol))
+            return True
+        except (ImportError, FileNotFoundError, OSError):
+            return False
+
     def _open_mod_assistant(self):
         if self._mod_assistant_path:
             subprocess.Popen([str(self._mod_assistant_path)])
+
+    def _download_mod_assistant(self):
+        import threading
+        import urllib.request
+        from tkinter import filedialog
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".exe",
+            initialfile="ModAssistant.exe",
+            filetypes=[("Executable", "*.exe")],
+            title="Save Mod Assistant",
+        )
+        if not path:
+            return
+
+        save_path = Path(path)
+        url = "https://github.com/bsmg/ModAssistant/releases/latest/download/ModAssistant.exe"
+
+        def do_download():
+            try:
+                self.after(0, lambda: self.status_bar.config(text="Downloading Mod Assistant…"))
+
+                def report(block_num, block_size, total_size):
+                    if total_size > 0:
+                        pct = min(100, int(block_num * block_size * 100 / total_size))
+                        self.after(0, lambda p=pct: self.status_bar.config(
+                            text=f"Downloading Mod Assistant… {p}%"
+                        ))
+
+                urllib.request.urlretrieve(url, save_path, reporthook=report)
+                self.after(0, lambda: self._on_mod_assistant_downloaded(save_path))
+            except Exception as exc:
+                self.after(0, lambda e=exc: self.status_bar.config(
+                    text=f"Download failed: {e}"
+                ))
+
+        threading.Thread(target=do_download, daemon=True).start()
+
+    def _on_mod_assistant_downloaded(self, save_path: Path):
+        import threading
+        from tkinter import messagebox
+
+        self.status_bar.config(text="Mod Assistant downloaded.")
+        messagebox.showinfo(
+            "Mod Assistant Downloaded",
+            "Accept the EULA and enable one-click installs for Playlists and BeatSaver "
+            "under the Options page.",
+        )
+        self._mod_assistant_path = save_path
+        proc = subprocess.Popen([str(save_path)])
+        threading.Thread(
+            target=self._watch_mod_assistant_close, args=(proc, save_path), daemon=True
+        ).start()
+
+    def _watch_mod_assistant_close(self, proc, save_path: Path):
+        proc.wait()
+        if not self._both_handlers_registered():
+            self.after(0, lambda: self._on_protocols_not_registered(save_path))
+
+    def _on_protocols_not_registered(self, save_path: Path):
+        import threading
+        from tkinter import messagebox
+
+        messagebox.showwarning(
+            "One-Click Installs Not Enabled",
+            "The required one-click install settings aren't enabled.\n\n"
+            "Open Mod Assistant and enable one-click installs for BeatSaver and "
+            "Playlists in the Options page.",
+        )
+        if messagebox.askyesno("Try Again?", "Open Mod Assistant and try again?"):
+            proc = subprocess.Popen([str(save_path)])
+            threading.Thread(
+                target=self._watch_mod_assistant_close, args=(proc, save_path), daemon=True
+            ).start()
 
     def _build_menubar(self):
         menubar = tk.Menu(self)
@@ -62,9 +146,11 @@ class BrowserUIMixin:
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Open Playlist…", command=self._open_playlist)
         self._mod_assistant_path = self._find_mod_assistant()
+        file_menu.add_separator()
         if self._mod_assistant_path:
-            file_menu.add_separator()
             file_menu.add_command(label="Open Mod Assistant", command=self._open_mod_assistant)
+        else:
+            file_menu.add_command(label="Download Mod Assistant", command=self._download_mod_assistant)
         menubar.add_cascade(label="File", menu=file_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)
