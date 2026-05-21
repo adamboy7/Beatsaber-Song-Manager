@@ -121,8 +121,15 @@ class BrowserUIMixin:
 
     def _watch_mod_assistant_close(self, proc, save_path: Path):
         proc.wait()
-        if not self._both_handlers_registered():
+        if self._both_handlers_registered():
+            self.after(0, self._on_protocols_registered)
+        else:
             self.after(0, lambda: self._on_protocols_not_registered(save_path))
+
+    def _on_protocols_registered(self):
+        self._file_menu.entryconfigure("Download Mod Assistant",
+                                       label="Open Mod Assistant",
+                                       command=self._open_mod_assistant)
 
     def _on_protocols_not_registered(self, save_path: Path):
         import threading
@@ -143,15 +150,15 @@ class BrowserUIMixin:
     def _build_menubar(self):
         menubar = tk.Menu(self)
 
-        file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="Open Playlist…", command=self._open_playlist)
+        self._file_menu = tk.Menu(menubar, tearoff=0)
+        self._file_menu.add_command(label="Open Playlist…", command=self._open_playlist)
         self._mod_assistant_path = self._find_mod_assistant()
-        file_menu.add_separator()
+        self._file_menu.add_separator()
         if self._mod_assistant_path:
-            file_menu.add_command(label="Open Mod Assistant", command=self._open_mod_assistant)
+            self._file_menu.add_command(label="Open Mod Assistant", command=self._open_mod_assistant)
         else:
-            file_menu.add_command(label="Download Mod Assistant", command=self._download_mod_assistant)
-        menubar.add_cascade(label="File", menu=file_menu)
+            self._file_menu.add_command(label="Download Mod Assistant", command=self._download_mod_assistant)
+        menubar.add_cascade(label="File", menu=self._file_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)
         self._favorites_only_var = tk.BooleanVar(value=False)
