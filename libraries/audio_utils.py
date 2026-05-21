@@ -1,12 +1,20 @@
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+
+def _local_dir() -> Path:
+    # When frozen by PyInstaller, look next to the EXE, not in the temp bundle.
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).parent.parent
 
 
 def find_ffmpeg() -> str | None:
     """Return path to ffmpeg: checks script directory first, then PATH."""
-    local = Path(__file__).parent.parent / "ffmpeg.exe"
+    local = _local_dir() / "ffmpeg.exe"
     if local.exists():
         return str(local)
     return shutil.which("ffmpeg")
@@ -14,7 +22,7 @@ def find_ffmpeg() -> str | None:
 
 def find_ffplay() -> str | None:
     """Return path to ffplay: checks script directory first, then PATH."""
-    local = Path(__file__).parent.parent / "ffplay.exe"
+    local = _local_dir() / "ffplay.exe"
     if local.exists():
         return str(local)
     return shutil.which("ffplay")
@@ -22,7 +30,7 @@ def find_ffplay() -> str | None:
 
 def find_ffprobe() -> str | None:
     """Return path to ffprobe: checks script directory first, then PATH."""
-    local = Path(__file__).parent.parent / "ffprobe.exe"
+    local = _local_dir() / "ffprobe.exe"
     if local.exists():
         return str(local)
     return shutil.which("ffprobe")
@@ -37,6 +45,7 @@ def get_audio_duration(path: Path) -> float | None:
         result = subprocess.run(
             [ffprobe, "-v", "quiet", "-print_format", "json", "-show_streams", str(path)],
             capture_output=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         data = json.loads(result.stdout.decode("utf-8", errors="replace"))
         for stream in data.get("streams", []):

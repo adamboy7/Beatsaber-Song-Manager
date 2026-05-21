@@ -110,6 +110,7 @@ class MediaPlayer:
                     [ffplay, "-nodisp", "-autoexit", str(song.audio_path)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 self.playing_song = song
                 self._play_start = time.time()

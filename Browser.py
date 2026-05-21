@@ -15,6 +15,7 @@ Sub-windows (QueueWindow, PlaylistArtWindow) live in their own
 library modules.
 """
 
+import sys
 import tkinter as tk
 from tkinter import messagebox
 from tkinterdnd2 import TkinterDnD
@@ -49,7 +50,7 @@ class SongBrowser(
     BrowserPaginationMixin,
     TkinterDnD.Tk,
 ):
-    def __init__(self, custom_levels: Path):
+    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None):
         super().__init__()
         self.custom_levels = custom_levels
         self.songs: list[SongInfo] = []
@@ -111,6 +112,7 @@ class SongBrowser(
         self._playlist_art_window: PlaylistArtWindow | None = None
         self._pending_playlist_entries: list[dict] | None = None
         self._pending_playlist_queue: list[dict] = []
+        self._startup_playlist: Path | None = startup_playlist
 
         self._install_manager = InstallManager(
             custom_levels,
@@ -160,7 +162,13 @@ def main():
             return
         custom_levels = Path(path_str)
 
-    app = SongBrowser(custom_levels)
+    playlist_path: Path | None = None
+    if len(sys.argv) > 1:
+        candidate = Path(sys.argv[1])
+        if candidate.suffix.lower() in {".bplist", ".json"} and candidate.is_file():
+            playlist_path = candidate
+
+    app = SongBrowser(custom_levels, startup_playlist=playlist_path)
     app.mainloop()
 
 

@@ -1,5 +1,24 @@
+import contextlib
 import shutil
+import subprocess
 from pathlib import Path
+
+
+@contextlib.contextmanager
+def _no_console_window():
+    """Temporarily patch subprocess.Popen to suppress Windows console windows."""
+    _orig = subprocess.Popen
+
+    class _Quiet(_orig):
+        def __init__(self, *args, **kwargs):
+            kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
+            super().__init__(*args, **kwargs)
+
+    subprocess.Popen = _Quiet
+    try:
+        yield
+    finally:
+        subprocess.Popen = _orig
 
 from libraries.song_data import SongInfo
 
@@ -62,5 +81,6 @@ def replace_audio(audio_path: Path, new_path: str, ffmpeg_path: str) -> None:
                 f"Detail: {e}"
             ) from e
         AudioSegment.converter = ffmpeg_path
-        audio = AudioSegment.from_file(new_path)
-        audio.export(str(audio_path), format="ogg")
+        with _no_console_window():
+            audio = AudioSegment.from_file(new_path)
+            audio.export(str(audio_path), format="ogg")

@@ -123,6 +123,10 @@ class BrowserPlaylistsMixin:
         self.status_bar.config(text=f"{len(songs)} songs found  •  {self.player_data_status}")
         self._render_list()
 
+        if self._startup_playlist is not None:
+            path, self._startup_playlist = self._startup_playlist, None
+            self._load_playlist_to_queue(str(path), anchor=self)
+
     # ── View filters ──────────────────────────────────────────────────────────
 
     def _is_favorite(self, song: SongInfo) -> bool:
