@@ -43,6 +43,11 @@ def _ask_overwrite_or_append(parent: tk.Misc, anchor: tk.Misc | None = None) -> 
     dlg.resizable(False, False)
     dlg.transient(parent)
     dlg.grab_set()
+    try:
+        _warn_icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Warning.png")
+        dlg.iconphoto(False, _warn_icon)
+    except Exception:
+        pass
 
     tk.Label(
         dlg,
