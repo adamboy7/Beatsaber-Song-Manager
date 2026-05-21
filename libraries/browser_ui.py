@@ -261,6 +261,7 @@ class BrowserUIMixin:
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.bind("<F5>", self._refresh)
         self.bind("<space>", self._on_space)
+        self.bind("<Escape>", self._deselect_all)
 
         # Pagination controls
         self.pagination_frame = tk.Frame(self, bg=BG_COLOR)
@@ -559,12 +560,41 @@ class BrowserUIMixin:
                     except Exception:
                         pass
 
+    def _deselect_all(self, _event=None):
+        page_start = self.page * self.page_size
+        for i in self.selected_indices:
+            li = i - page_start
+            if 0 <= li < len(self._row_frames):
+                self._recolor_row(self._row_frames[li], ITEM_BG)
+        self.selected_indices.clear()
+        self._selected_folders.clear()
+        self.selected_index = None
+        self.status_bar.config(text="")
+
     def _select(self, idx: int, shift_held: bool = False):
         self.canvas.focus_set()
         page_start = self.page * self.page_size
         local_idx = idx - page_start
 
-        if shift_held:
+        if shift_held and len(self.selected_indices) == 1:
+            anchor = next(iter(self.selected_indices))
+            lo, hi = min(anchor, idx), max(anchor, idx)
+            for i in self.selected_indices:
+                li = i - page_start
+                if 0 <= li < len(self._row_frames):
+                    self._recolor_row(self._row_frames[li], ITEM_BG)
+            self.selected_indices = set(range(lo, hi + 1))
+            self._selected_folders = {
+                str(self.filtered[i].folder)
+                for i in self.selected_indices
+                if i < len(self.filtered)
+            }
+            self.selected_index = idx
+            for i in self.selected_indices:
+                li = i - page_start
+                if 0 <= li < len(self._row_frames):
+                    self._recolor_row(self._row_frames[li], SELECTED_BG)
+        elif shift_held:
             if idx in self.selected_indices:
                 self.selected_indices.discard(idx)
                 self._selected_folders.discard(str(self.filtered[idx].folder))

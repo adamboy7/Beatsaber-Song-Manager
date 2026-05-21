@@ -398,7 +398,11 @@ class QueueWindow(tk.Toplevel):
     # ── Selection & Delete ───────────────────────────────────────────────────
 
     def _on_click(self, event: tk.Event, idx: int):
-        if event.state & 0x1:
+        if event.state & 0x1 and len(self._selected) == 1:
+            anchor = next(iter(self._selected))
+            lo, hi = min(anchor, idx), max(anchor, idx)
+            self._selected = set(range(lo, hi + 1))
+        elif event.state & 0x1:
             if idx in self._selected:
                 self._selected.discard(idx)
             else:
