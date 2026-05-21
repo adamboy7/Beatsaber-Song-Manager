@@ -15,6 +15,9 @@ Sub-windows (QueueWindow, PlaylistArtWindow) live in their own
 library modules.
 """
 
+import argparse
+import json
+import random
 import sys
 import tkinter as tk
 from tkinter import messagebox
@@ -143,6 +146,33 @@ class SongBrowser(
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(description="Beat Saber Song Manager")
+    parser.add_argument("playlist", nargs="?", help="Playlist file (.bplist / .json)")
+    parser.add_argument("--shuffle", action="store_true", help="Shuffle playlist order and write back to file (headless)")
+    args = parser.parse_args()
+
+    playlist_path: Path | None = None
+    if args.playlist:
+        candidate = Path(args.playlist)
+        if candidate.suffix.lower() in {".bplist", ".json"} and candidate.is_file():
+            playlist_path = candidate
+
+    if args.shuffle:
+        if playlist_path is None:
+            print("--shuffle requires a valid .bplist or .json playlist file.")
+            sys.exit(1)
+        with open(playlist_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        songs = data.get("songs")
+        if not isinstance(songs, list):
+            print("Playlist has no 'songs' array.")
+            sys.exit(1)
+        random.shuffle(songs)
+        with open(playlist_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        print(f"Shuffled {len(songs)} songs in {playlist_path.name}")
+        sys.exit(0)
+
     # Try to find custom levels automatically
     custom_levels = find_beatsaber_custom_levels()
 
@@ -161,12 +191,6 @@ def main():
         if not path_str:
             return
         custom_levels = Path(path_str)
-
-    playlist_path: Path | None = None
-    if len(sys.argv) > 1:
-        candidate = Path(sys.argv[1])
-        if candidate.suffix.lower() in {".bplist", ".json"} and candidate.is_file():
-            playlist_path = candidate
 
     app = SongBrowser(custom_levels, startup_playlist=playlist_path)
     app.mainloop()
