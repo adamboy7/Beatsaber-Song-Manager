@@ -33,7 +33,7 @@ from libraries.queue_window import QueueWindow
 from libraries.playlist_art_window import PlaylistArtWindow
 
 
-def _ask_overwrite_or_append(parent: tk.Misc) -> str:
+def _ask_overwrite_or_append(parent: tk.Misc, anchor: tk.Misc | None = None) -> str:
     """3-button dialog for non-empty queue drop. Returns 'overwrite', 'append', or ''."""
     result: dict[str, str] = {"choice": ""}
 
@@ -73,6 +73,12 @@ def _ask_overwrite_or_append(parent: tk.Misc) -> str:
             bd=0, padx=14, pady=6,
             command=lambda v=val: choose(v),
         ).pack(side="left", padx=4)
+
+    dlg.update_idletasks()
+    target = anchor or parent
+    x = target.winfo_rootx() + (target.winfo_width()  - dlg.winfo_width())  // 2
+    y = target.winfo_rooty() + (target.winfo_height() - dlg.winfo_height()) // 2
+    dlg.geometry(f"+{x}+{y}")
 
     dlg.wait_window()
     return result["choice"]
@@ -326,12 +332,12 @@ class BrowserPlaylistsMixin:
         self._pending_playlist_queue = installable[:]
         self._install_next_playlist_song()
 
-    def _load_playlist_to_queue(self, path: str) -> None:
+    def _load_playlist_to_queue(self, path: str, anchor: tk.Misc | None = None) -> None:
         """Entry point for Queue-window DnD drops. Prompts when queue is non-empty."""
         if not self._queue:
             self._load_playlist_from_path(path)
             return
-        choice = _ask_overwrite_or_append(self)
+        choice = _ask_overwrite_or_append(self, anchor=anchor)
         if choice == "overwrite":
             self._load_playlist_from_path(path)
         elif choice == "append":

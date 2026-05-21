@@ -121,7 +121,7 @@ class QueueWindow(tk.Toplevel):
         path = self.tk.splitlist(event.data)[0]
         if Path(path).suffix.lower() not in {".bplist", ".json"}:
             return
-        self._browser._load_playlist_to_queue(path)
+        self._browser._load_playlist_to_queue(path, anchor=self)
 
     def _on_close(self):
         if self._tick_id:
