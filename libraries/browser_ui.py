@@ -262,6 +262,7 @@ class BrowserUIMixin:
         self.bind("<F5>", self._refresh)
         self.bind("<space>", self._on_space)
         self.bind("<Escape>", self._deselect_all)
+        self.bind("<Control-a>", self._select_all)
 
         # Pagination controls
         self.pagination_frame = tk.Frame(self, bg=BG_COLOR)
@@ -570,6 +571,17 @@ class BrowserUIMixin:
         self._selected_folders.clear()
         self.selected_index = None
         self.status_bar.config(text="")
+
+    def _select_all(self, _event=None):
+        self.selected_indices = set(range(len(self.filtered)))
+        self._selected_folders = {str(s.folder) for s in self.filtered}
+        self.selected_index = len(self.filtered) - 1 if self.filtered else None
+        page_start = self.page * self.page_size
+        for li, row in enumerate(self._row_frames):
+            self._recolor_row(row, SELECTED_BG)
+        n = len(self.filtered)
+        self.status_bar.config(text=f"{n} song{'s' if n != 1 else ''} selected")
+        return "break"
 
     def _select(self, idx: int, shift_held: bool = False):
         self.canvas.focus_set()
