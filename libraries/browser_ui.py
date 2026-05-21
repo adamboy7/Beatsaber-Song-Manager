@@ -9,12 +9,16 @@ and per-song row building / hover / selection bookkeeping.
 from __future__ import annotations
 
 import datetime
+import json
+import os
 import shlex
 import subprocess
+import threading
+import urllib.request
 import webbrowser
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from PIL import Image, ImageTk
 
 from libraries.constants import (
@@ -56,6 +60,151 @@ class BrowserUIMixin:
         if self._mod_assistant_path:
             subprocess.Popen([str(self._mod_assistant_path)])
 
+    @staticmethod
+    def _register_mod_assistant_protocols(exe: Path) -> None:
+        import winreg
+        names = {"beatsaver": "URL:Beat Saver", "bsplaylist": "URL:Beat Saber Playlist"}
+        try:
+            for protocol, display in names.items():
+                key = winreg.CreateKey(winreg.HKEY_CLASSES_ROOT, protocol)
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, display)
+                winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
+                winreg.CloseKey(key)
+                cmd_key = winreg.CreateKey(winreg.HKEY_CLASSES_ROOT, rf"{protocol}\shell\open\command")
+                winreg.SetValueEx(cmd_key, "", 0, winreg.REG_SZ, f'"{exe}" "%1"')
+                winreg.CloseKey(cmd_key)
+        except PermissionError:
+            BrowserUIMixin._elevate_registry_write(exe)
+
+    @staticmethod
+    def _elevate_registry_write(exe: Path) -> None:
+        import ctypes
+        import sys
+
+        cmd_value = f'"{exe}" "%1"'
+        pairs = repr([("beatsaver", "URL:Beat Saver"), ("bsplaylist", "URL:Beat Saber Playlist")])
+        script = "\n".join([
+            "import winreg",
+            f"for p, d in {pairs}:",
+            "    k = winreg.CreateKey(winreg.HKEY_CLASSES_ROOT, p)",
+            "    winreg.SetValueEx(k, '', 0, winreg.REG_SZ, d)",
+            "    winreg.SetValueEx(k, 'URL Protocol', 0, winreg.REG_SZ, '')",
+            "    winreg.CloseKey(k)",
+            r"    ck = winreg.CreateKey(winreg.HKEY_CLASSES_ROOT, p + r'\shell\open\command')",
+            f"    winreg.SetValueEx(ck, '', 0, winreg.REG_SZ, {repr(cmd_value)})",
+            "    winreg.CloseKey(ck)",
+        ])
+        tmp = Path(os.environ.get("TEMP", ".")) / "_ma_register.py"
+        tmp.write_text(script, encoding="utf-8")
+
+        class SHELLEXECUTEINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", ctypes.c_ulong),
+                ("fMask", ctypes.c_ulong),
+                ("hwnd", ctypes.c_void_p),
+                ("lpVerb", ctypes.c_wchar_p),
+                ("lpFile", ctypes.c_wchar_p),
+                ("lpParameters", ctypes.c_wchar_p),
+                ("lpDirectory", ctypes.c_wchar_p),
+                ("nShow", ctypes.c_int),
+                ("hInstApp", ctypes.c_void_p),
+                ("lpIDList", ctypes.c_void_p),
+                ("lpClass", ctypes.c_wchar_p),
+                ("hkeyClass", ctypes.c_void_p),
+                ("dwHotKey", ctypes.c_ulong),
+                ("hIconOrMonitor", ctypes.c_void_p),
+                ("hProcess", ctypes.c_void_p),
+            ]
+
+        sei = SHELLEXECUTEINFO()
+        sei.cbSize = ctypes.sizeof(sei)
+        sei.fMask = 0x00000040  # SEE_MASK_NOCLOSEPROCESS
+        sei.lpVerb = "runas"
+        sei.lpFile = sys.executable
+        sei.lpParameters = f'"{tmp}"'
+        sei.nShow = 0  # SW_HIDE
+
+        if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei)):
+            err = ctypes.GetLastError()
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise PermissionError(
+                "UAC prompt was cancelled." if err == 1223
+                else f"Failed to launch elevated process (error {err})."
+            )
+
+        ctypes.windll.kernel32.WaitForSingleObject(sei.hProcess, 0xFFFFFFFF)
+        exit_code = ctypes.c_ulong(0)
+        ctypes.windll.kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(exit_code))
+        ctypes.windll.kernel32.CloseHandle(sei.hProcess)
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        if exit_code.value != 0:
+            raise RuntimeError(f"Elevated registry write failed (exit code {exit_code.value}).")
+
+    def _pick_mod_assistant_dir(self) -> "Path | None":
+        from tkinter import filedialog
+        folder = filedialog.askdirectory(
+            title="Choose folder for ModAssistant.exe",
+            initialdir=Path(os.environ.get("LOCALAPPDATA", "~")) / "ModAssistant",
+        )
+        return Path(folder) if folder else None
+
+    def _download_mod_assistant(self, file_menu: tk.Menu, menu_index: int, dest_dir: Path) -> None:
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/bsmg/ModAssistant/releases/latest",
+                headers={"User-Agent": "BeatSaberSongManager"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read())
+            url = next(
+                (a["browser_download_url"] for a in data.get("assets", [])
+                 if a["name"] == "ModAssistant.exe"),
+                None,
+            )
+            if url is None:
+                raise RuntimeError("ModAssistant.exe not found in latest release assets.")
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / "ModAssistant.exe"
+            tmp = dest.with_suffix(".tmp")
+            urllib.request.urlretrieve(url, tmp)
+            tmp.replace(dest)
+            self._register_mod_assistant_protocols(dest)
+            self.after(0, lambda: self._on_ma_download_success(file_menu, menu_index, dest))
+        except Exception as exc:
+            msg = str(exc)
+            self.after(0, lambda: self._on_ma_download_error(file_menu, menu_index, msg))
+
+    def _start_ma_download_thread(self, file_menu: tk.Menu, menu_index: int) -> None:
+        dest_dir = self._pick_mod_assistant_dir()
+        if dest_dir is None:
+            return
+        file_menu.entryconfigure(menu_index, label="Downloading…", state="disabled")
+        threading.Thread(
+            target=self._download_mod_assistant,
+            args=(file_menu, menu_index, dest_dir),
+            daemon=True,
+        ).start()
+
+    def _on_ma_download_success(self, file_menu: tk.Menu, menu_index: int, exe: Path) -> None:
+        self._mod_assistant_path = exe
+        file_menu.entryconfigure(
+            menu_index, label="Open Mod Assistant",
+            state="normal", command=self._open_mod_assistant,
+        )
+
+    def _on_ma_download_error(self, file_menu: tk.Menu, menu_index: int, message: str) -> None:
+        file_menu.entryconfigure(
+            menu_index, label="Download Mod Assistant", state="normal",
+            command=lambda idx=menu_index, m=file_menu: self._start_ma_download_thread(m, idx),
+        )
+        messagebox.showerror("Download Failed", message)
+
     def _build_menubar(self):
         menubar = tk.Menu(self)
 
@@ -65,6 +214,14 @@ class BrowserUIMixin:
         if self._mod_assistant_path:
             file_menu.add_separator()
             file_menu.add_command(label="Open Mod Assistant", command=self._open_mod_assistant)
+        else:
+            file_menu.add_separator()
+            file_menu.add_command(label="Download Mod Assistant")
+            _ma_index = file_menu.index("end")
+            file_menu.entryconfigure(
+                _ma_index,
+                command=lambda idx=_ma_index, m=file_menu: self._start_ma_download_thread(m, idx),
+            )
         menubar.add_cascade(label="File", menu=file_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)
