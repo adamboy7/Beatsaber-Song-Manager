@@ -27,7 +27,7 @@ from PIL import ImageTk
 
 from libraries.constants import BG_COLOR, WINDOW_TITLE
 from libraries.steam_paths import find_beatsaber_custom_levels
-from libraries.song_data import SongInfo
+from libraries.song_data import SongInfo, load_songs, load_song_hashes
 from libraries.player_data import (
     find_player_data, load_favorites, load_player_stats,
 )
@@ -174,14 +174,41 @@ def main():
             sys.exit(1)
         with open(playlist_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        songs = data.get("songs")
-        if not isinstance(songs, list):
+        playlist_songs = data.get("songs")
+        if not isinstance(playlist_songs, list):
             print("Playlist has no 'songs' array.")
             sys.exit(1)
-        random.shuffle(songs)
+
+        if args.randomAdd:
+            n = args.randomAdd
+            custom_levels = find_beatsaber_custom_levels()
+            if custom_levels is None:
+                print("--randomAdd requires Beat Saber to be found automatically.")
+                sys.exit(1)
+            library = load_songs(custom_levels)
+            hashes = load_song_hashes(custom_levels)
+            for song in library:
+                song.song_hash = hashes.get(song.folder.name, "")
+            existing = {(e.get("hash") or "").upper() for e in playlist_songs}
+            candidates = [s for s in library if s.song_hash and s.song_hash.upper() not in existing]
+            picks = (
+                random.sample(candidates, n)
+                if n <= len(candidates)
+                else random.choices(candidates, k=n)
+            )
+            for song in picks:
+                playlist_songs.append({
+                    "key": song.song_id,
+                    "hash": song.song_hash,
+                    "songName": song.display_name,
+                })
+            print(f"Added {len(picks)} random song(s) to {playlist_path.name}")
+
+        random.shuffle(playlist_songs)
+        data["songs"] = playlist_songs
         with open(playlist_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-        print(f"Shuffled {len(songs)} songs in {playlist_path.name}")
+        print(f"Shuffled {len(playlist_songs)} songs in {playlist_path.name}")
         sys.exit(0)
 
     # Try to find custom levels automatically
