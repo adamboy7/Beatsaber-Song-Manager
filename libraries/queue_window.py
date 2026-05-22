@@ -16,6 +16,7 @@ import tkinter as tk
 from PIL import Image, ImageTk
 from tkinterdnd2 import DND_FILES
 
+from libraries.audio_utils import get_audio_duration
 from libraries.constants import (
     ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
     SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR, SCROLLBAR_BG,
@@ -40,6 +41,7 @@ class QueueWindow(tk.Toplevel):
         self._dragging: bool = False
         self._drag_start_y: int = 0
         self._thumbnails: dict[str, ImageTk.PhotoImage] = {}
+        self._durations: dict[str, float | None] = {}
         self._row_frames: list[tk.Frame] = []
         self._tick_id: str | None = None
         self._last_queue_len: int = -1
@@ -200,9 +202,10 @@ class QueueWindow(tk.Toplevel):
             font=("Segoe UI", 10, "bold"),
             bg=bg, fg=TEXT_COLOR, anchor="w",
         ).pack(fill="x")
-        if song.author_line:
+        subtitle = self._subtitle(song)
+        if subtitle:
             tk.Label(
-                text_frame, text=song.author_line,
+                text_frame, text=subtitle,
                 font=("Segoe UI", 8),
                 bg=bg, fg=SUBTEXT_COLOR, anchor="w",
             ).pack(fill="x")
@@ -304,6 +307,19 @@ class QueueWindow(tk.Toplevel):
         if not mp._looping:
             mp.toggle_loop()
         b._show_player_bar(song)
+
+    def _subtitle(self, song: "SongInfo") -> str:
+        key = str(song.folder)
+        if key not in self._durations:
+            self._durations[key] = get_audio_duration(song.audio_path) if song.audio_path else None
+        dur = self._durations[key]
+        parts = []
+        if song.author:
+            parts.append(song.author)
+        if dur is not None:
+            m, s = divmod(int(dur), 60)
+            parts.append(f"{m}:{s:02d}")
+        return "  •  ".join(parts)
 
     def _load_thumb(self, song: "SongInfo") -> ImageTk.PhotoImage:
         key = str(song.folder)
