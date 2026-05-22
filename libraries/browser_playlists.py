@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import json
 import base64
+import random
 import threading
 import tkinter as tk
 from tkinter import messagebox
@@ -126,6 +127,17 @@ class BrowserPlaylistsMixin:
         if self._startup_playlist is not None:
             path, self._startup_playlist = self._startup_playlist, None
             self._load_playlist_to_queue(str(path), anchor=self)
+
+        if self._startup_random is not None:
+            count, self._startup_random = self._startup_random, None
+            playable = [s for s in songs if s.audio_path]
+            if playable:
+                picks = (
+                    random.sample(playable, count)
+                    if count <= len(playable)
+                    else random.choices(playable, k=count)
+                )
+                self._play_queue(picks)
 
     # ── View filters ──────────────────────────────────────────────────────────
 

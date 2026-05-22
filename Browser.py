@@ -53,7 +53,7 @@ class SongBrowser(
     BrowserPaginationMixin,
     TkinterDnD.Tk,
 ):
-    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None):
+    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None, startup_random: int | None = None):
         super().__init__()
         self.custom_levels = custom_levels
         self.songs: list[SongInfo] = []
@@ -116,6 +116,7 @@ class SongBrowser(
         self._pending_playlist_entries: list[dict] | None = None
         self._pending_playlist_queue: list[dict] = []
         self._startup_playlist: Path | None = startup_playlist
+        self._startup_random: int | None = startup_random
 
         self._install_manager = InstallManager(
             custom_levels,
@@ -146,9 +147,19 @@ class SongBrowser(
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 def main():
+    # Normalize --randomadd (any casing) to --randomAdd before parsing
+    normalized = []
+    for a in sys.argv:
+        flag, sep, val = a.partition("=")
+        if flag.lower() == "--randomadd":
+            a = f"--randomAdd{sep}{val}"
+        normalized.append(a)
+    sys.argv = normalized
+
     parser = argparse.ArgumentParser(description="Beat Saber Song Manager")
     parser.add_argument("playlist", nargs="?", help="Playlist file (.bplist / .json)")
     parser.add_argument("--shuffle", action="store_true", help="Shuffle playlist order and write back to file (headless)")
+    parser.add_argument("--randomAdd", type=int, metavar="N", help="Load library and add N random songs to queue on startup")
     args = parser.parse_args()
 
     playlist_path: Path | None = None
@@ -192,7 +203,7 @@ def main():
             return
         custom_levels = Path(path_str)
 
-    app = SongBrowser(custom_levels, startup_playlist=playlist_path)
+    app = SongBrowser(custom_levels, startup_playlist=playlist_path, startup_random=args.randomAdd)
     app.mainloop()
 
 
