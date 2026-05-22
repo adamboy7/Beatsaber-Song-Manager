@@ -16,6 +16,8 @@ library modules.
 """
 
 import argparse
+import base64
+import io
 import json
 import random
 import sys
@@ -210,6 +212,52 @@ def main():
             json.dump(data, f, indent=2)
         print(f"Shuffled {len(playlist_songs)} songs in {playlist_path.name}")
         sys.exit(0)
+
+    # Headless: --randomAdd N with a playlist path that doesn't exist yet → create it and exit
+    if args.randomAdd and args.playlist:
+        candidate = Path(args.playlist)
+        if not candidate.is_file() and candidate.suffix.lower() in {".bplist", ".json"}:
+            custom_levels = find_beatsaber_custom_levels()
+            if custom_levels is None:
+                print("--randomAdd requires Beat Saber to be found automatically.")
+                sys.exit(1)
+            library = load_songs(custom_levels)
+            hashes = load_song_hashes(custom_levels)
+            for song in library:
+                song.song_hash = hashes.get(song.folder.name, "")
+            candidates = [s for s in library if s.song_hash]
+            n = args.randomAdd
+            picks = (
+                random.sample(candidates, n)
+                if n <= len(candidates)
+                else random.choices(candidates, k=n)
+            )
+            image_data = ""
+            for song in picks:
+                if song.cover_path and song.cover_path.exists():
+                    try:
+                        from PIL import Image
+                        buf = io.BytesIO()
+                        Image.open(song.cover_path).convert("RGB").save(buf, format="JPEG")
+                        image_data = base64.b64encode(buf.getvalue()).decode("ascii")
+                    except Exception:
+                        pass
+                    break
+            playlist = {
+                "playlistTitle": candidate.stem,
+                "playlistAuthor": "",
+                "image": image_data,
+                "customData": {},
+                "songs": [
+                    {"key": s.song_id, "hash": s.song_hash, "songName": s.display_name}
+                    for s in picks
+                ],
+            }
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            with open(candidate, "w", encoding="utf-8") as f:
+                json.dump(playlist, f, indent=2)
+            print(f"Created '{candidate.name}' with {len(picks)} random song(s).")
+            sys.exit(0)
 
     # Try to find custom levels automatically
     custom_levels = find_beatsaber_custom_levels()
