@@ -17,6 +17,7 @@ Includes:
 
 from __future__ import annotations
 
+import random
 import re
 import threading
 import tkinter as tk
@@ -69,6 +70,53 @@ def _song_matches_tags(
             if value == "n" and is_fav:
                 return False
     return True
+
+
+def filter_songs(
+    songs: list, query: str, player_stats: dict, favorite_ids: set
+) -> list:
+    """Filter songs using the same search/tag logic as the GUI search box."""
+    tags, plain = _parse_tags(query)
+    plain_lower = plain.lower()
+    return [
+        s for s in songs
+        if (
+            (not plain_lower or (
+                plain_lower in s.display_name.lower()
+                or plain_lower in s.author.lower()
+                or plain_lower in s.mapper.lower()
+                or plain_lower in s.song_id.lower()
+            ))
+            and (not tags or _song_matches_tags(s, tags, player_stats, favorite_ids))
+        )
+    ]
+
+
+def pick_random_songs(filtered: list | None, unfiltered: list, n: int) -> list:
+    """Pick n songs prioritising filtered results, then supplementing from unfiltered.
+
+    Priority order (no repeats until pool is exhausted):
+    1. Random sample from filtered (up to n)
+    2. Random sample from unfiltered songs not already picked
+    3. Random choices (with repeats) from unfiltered only when even step 2 is exhausted
+    If filtered is None or empty, treats unfiltered as the sole pool.
+    """
+    pool = filtered if filtered else unfiltered
+    if n <= len(pool):
+        return random.sample(pool, n)
+    picks = random.sample(pool, len(pool))
+    remaining = n - len(picks)
+    if pool is not unfiltered:
+        picked_set = {s.folder for s in picks}
+        supplement = [s for s in unfiltered if s.folder not in picked_set]
+        if remaining <= len(supplement):
+            picks += random.sample(supplement, remaining)
+            return picks
+        picks += supplement
+        remaining -= len(supplement)
+    if remaining:
+        picks += random.choices(unfiltered, k=remaining)
+    return picks
 
 
 class BrowserPaginationMixin:
@@ -287,18 +335,7 @@ class BrowserPaginationMixin:
         if not raw_query:
             self.filtered = self.songs[:]
         else:
-            self.filtered = [
-                s for s in self.songs
-                if (
-                    (not plain_lower or (
-                        plain_lower in s.display_name.lower()
-                        or plain_lower in s.author.lower()
-                        or plain_lower in s.mapper.lower()
-                        or plain_lower in s.song_id.lower()
-                    ))
-                    and (not tags or _song_matches_tags(s, tags, self.player_stats, self.favorite_ids))
-                )
-            ]
+            self.filtered = filter_songs(self.songs, raw_query, self.player_stats, self.favorite_ids)
         self.filtered = self._apply_view_filters(self.filtered)
         self.selected_indices = {
             i for i, s in enumerate(self.filtered)

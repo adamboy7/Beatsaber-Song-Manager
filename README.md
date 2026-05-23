@@ -155,3 +155,63 @@ The player responds to system media keys while the app is running:
 | `Enter` | Confirm pending song install (when install row is shown) |
 
 ---
+
+## Command Line Interface
+
+`Browser.py` accepts optional arguments for headless playlist operations and startup behaviour.
+
+```
+python Browser.py [playlist] [--shuffle] [--randomAdd N] [--filter "QUERY"]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `playlist` | Path to a `.bplist` or `.json` playlist file (optional) |
+| `--shuffle` | **Headless.** Shuffle the songs in the given playlist file in place and exit. Requires `playlist`. |
+| `--randomAdd N` | Add `N` random songs from your library. Behaviour depends on context — see below. |
+| `--filter "QUERY"` | Narrow the `--randomAdd` candidate pool using the same search tag syntax as the GUI search box (e.g. `"{mapper}:noodle"`). See [Search Tags](#search-tags) for the full tag reference. |
+
+### `--randomAdd` behaviour
+
+| Command | Effect |
+|---------|--------|
+| `python Browser.py --randomAdd 10` | Opens the GUI and pre-populates the queue with 10 random songs. |
+| `python Browser.py --randomAdd 10 new.bplist` | **Headless.** Creates `new.bplist` with 10 random songs and exits (file must not already exist). |
+| `python Browser.py --shuffle --randomAdd 5 existing.bplist` | **Headless.** Adds 5 random songs to `existing.bplist`, shuffles the full list, writes it back, and exits. |
+| `python Browser.py --shuffle existing.bplist` | **Headless.** Shuffles `existing.bplist` in place and exits. |
+
+`--randomAdd` avoids duplicates when adding to an existing playlist (matched by song hash).
+
+### `--filter` pick priority
+
+When `--filter` is combined with `--randomAdd N`, the N slots are filled in priority order — no repeats until a pool is fully exhausted:
+
+1. **Filtered songs first** — random picks from the songs matching your filter (no repeats).
+2. **Unfiltered supplement** — if filtered results < N, the remaining slots are filled from the rest of the library (also no repeats).
+3. **Repeats as last resort** — only if even the full unfiltered library cannot fill N slots.
+
+If the filter matches zero songs a warning is printed and all N picks come from the full library. If the library is empty entirely, a warning is printed and the operation exits.
+
+### `--filter` examples
+
+```
+python Browser.py --randomAdd 10 playlist.bplist --filter "{mapper}:noodle"
+```
+Queue 10 songs mapped by Noodle (supplement with other songs if fewer than 10 noodle maps exist).
+
+```
+python Browser.py --randomAdd 20 new.bplist --filter "{unplayed}:y"
+```
+Create a new playlist of 20 unplayed songs.
+
+```
+python Browser.py --shuffle --randomAdd 5 existing.bplist --filter "{favorite}:y {unplayed}:y"
+```
+Add 5 unplayed favorites to an existing playlist, then shuffle it.
+
+```
+python Browser.py --randomAdd 15 --filter "{artist}:camellia"
+```
+Open the GUI and pre-load 15 Camellia songs into the queue.
+
+---

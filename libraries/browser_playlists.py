@@ -131,12 +131,16 @@ class BrowserPlaylistsMixin:
         if self._startup_random is not None:
             count, self._startup_random = self._startup_random, None
             playable = [s for s in songs if s.audio_path]
-            if playable:
-                picks = (
-                    random.sample(playable, count)
-                    if count <= len(playable)
-                    else random.choices(playable, k=count)
-                )
+            if not playable:
+                print("Warning: no playable songs found in library.")
+            else:
+                from libraries.browser_pagination import filter_songs, pick_random_songs
+                filtered_playable = None
+                if self._startup_filter:
+                    filtered_playable = filter_songs(playable, self._startup_filter, self.player_stats, self.favorite_ids)
+                    if not filtered_playable:
+                        print("Warning: filter matched no songs; falling back to unfiltered picks.")
+                picks = pick_random_songs(filtered_playable, playable, count)
                 self._play_queue(picks)
 
     # ── View filters ──────────────────────────────────────────────────────────

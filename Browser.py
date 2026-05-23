@@ -42,7 +42,7 @@ from libraries.browser_ui import BrowserUIMixin
 from libraries.browser_playback import BrowserPlaybackMixin
 from libraries.browser_playlists import BrowserPlaylistsMixin
 from libraries.browser_actions import BrowserActionsMixin
-from libraries.browser_pagination import BrowserPaginationMixin
+from libraries.browser_pagination import BrowserPaginationMixin, filter_songs, pick_random_songs
 
 PAGE_SIZE = 50
 
@@ -55,7 +55,7 @@ class SongBrowser(
     BrowserPaginationMixin,
     TkinterDnD.Tk,
 ):
-    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None, startup_random: int | None = None):
+    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None, startup_random: int | None = None, startup_filter: str | None = None):
         super().__init__()
         self.custom_levels = custom_levels
         self.songs: list[SongInfo] = []
@@ -119,6 +119,7 @@ class SongBrowser(
         self._pending_playlist_queue: list[dict] = []
         self._startup_playlist: Path | None = startup_playlist
         self._startup_random: int | None = startup_random
+        self._startup_filter: str | None = startup_filter
 
         self._install_manager = InstallManager(
             custom_levels,
@@ -148,6 +149,13 @@ class SongBrowser(
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
+def _load_player_data_headless():
+    pd, _ = find_player_data()
+    if pd:
+        return load_player_stats(pd), load_favorites(pd)
+    return {}, set()
+
+
 def main():
     # Normalize --randomadd (any casing) to --randomAdd before parsing
     normalized = []
@@ -162,6 +170,7 @@ def main():
     parser.add_argument("playlist", nargs="?", help="Playlist file (.bplist / .json)")
     parser.add_argument("--shuffle", action="store_true", help="Shuffle playlist order and write back to file (headless)")
     parser.add_argument("--randomAdd", type=int, metavar="N", help="Load library and add N random songs to queue on startup")
+    parser.add_argument("--filter", metavar="QUERY", help="Narrow --randomAdd candidates using search tags, e.g. '{mapper}:noodle'")
     args = parser.parse_args()
 
     playlist_path: Path | None = None
@@ -192,19 +201,24 @@ def main():
             for song in library:
                 song.song_hash = hashes.get(song.folder.name, "")
             existing = {(e.get("hash") or "").upper() for e in playlist_songs}
-            candidates = [s for s in library if s.song_hash and s.song_hash.upper() not in existing]
-            picks = (
-                random.sample(candidates, n)
-                if n <= len(candidates)
-                else random.choices(candidates, k=n)
-            )
-            for song in picks:
-                playlist_songs.append({
-                    "key": song.song_id,
-                    "hash": song.song_hash,
-                    "songName": song.display_name,
-                })
-            print(f"Added {len(picks)} random song(s) to {playlist_path.name}")
+            all_candidates = [s for s in library if s.song_hash and s.song_hash.upper() not in existing]
+            if not all_candidates:
+                print("Warning: no songs found in library; skipping randomAdd.")
+            else:
+                filtered_candidates = None
+                if args.filter:
+                    ps, fi = _load_player_data_headless()
+                    filtered_candidates = filter_songs(all_candidates, args.filter, ps, fi)
+                    if not filtered_candidates:
+                        print("Warning: filter matched no songs; falling back to unfiltered picks.")
+                picks = pick_random_songs(filtered_candidates, all_candidates, n)
+                for song in picks:
+                    playlist_songs.append({
+                        "key": song.song_id,
+                        "hash": song.song_hash,
+                        "songName": song.display_name,
+                    })
+                print(f"Added {len(picks)} random song(s) to {playlist_path.name}")
 
         random.shuffle(playlist_songs)
         data["songs"] = playlist_songs
@@ -225,13 +239,18 @@ def main():
             hashes = load_song_hashes(custom_levels)
             for song in library:
                 song.song_hash = hashes.get(song.folder.name, "")
-            candidates = [s for s in library if s.song_hash]
+            all_candidates = [s for s in library if s.song_hash]
+            if not all_candidates:
+                print("Warning: no songs with hashes found in library.")
+                sys.exit(1)
+            filtered_candidates = None
+            if args.filter:
+                ps, fi = _load_player_data_headless()
+                filtered_candidates = filter_songs(all_candidates, args.filter, ps, fi)
+                if not filtered_candidates:
+                    print("Warning: filter matched no songs; falling back to unfiltered picks.")
             n = args.randomAdd
-            picks = (
-                random.sample(candidates, n)
-                if n <= len(candidates)
-                else random.choices(candidates, k=n)
-            )
+            picks = pick_random_songs(filtered_candidates, all_candidates, n)
             image_data = ""
             for song in picks:
                 if song.cover_path and song.cover_path.exists():
@@ -278,7 +297,7 @@ def main():
             return
         custom_levels = Path(path_str)
 
-    app = SongBrowser(custom_levels, startup_playlist=playlist_path, startup_random=args.randomAdd)
+    app = SongBrowser(custom_levels, startup_playlist=playlist_path, startup_random=args.randomAdd, startup_filter=args.filter)
     app.mainloop()
 
 
