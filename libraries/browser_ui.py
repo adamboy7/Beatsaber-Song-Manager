@@ -9,6 +9,7 @@ and per-song row building / hover / selection bookkeeping.
 from __future__ import annotations
 
 import datetime
+import os
 import shlex
 import subprocess
 import webbrowser
@@ -147,6 +148,26 @@ class BrowserUIMixin:
                 target=self._watch_mod_assistant_close, args=(proc, save_path), daemon=True
             ).start()
 
+    def _add_folder_menu_items(self):
+        custom_songs = getattr(self, "custom_levels", None)
+        bs_install = custom_songs.parent.parent if custom_songs else None
+        appdata = Path.home() / "AppData" / "LocalLow" / "Hyperbolic Magnetism" / "Beat Saber"
+
+        def _open(p: Path):
+            os.startfile(p)
+
+        for label, path in (
+            ("Open Custom Songs Folder", custom_songs),
+            ("Open Beat Saber AppData",  appdata),
+            ("Open Beat Saber Folder",   bs_install),
+        ):
+            valid = path is not None and path.is_dir()
+            self._file_menu.add_command(
+                label=label,
+                command=(lambda p=path: _open(p)) if valid else None,
+                state="normal" if valid else "disabled",
+            )
+
     def _build_menubar(self):
         menubar = tk.Menu(self)
 
@@ -158,6 +179,10 @@ class BrowserUIMixin:
             self._file_menu.add_command(label="Open Mod Assistant", command=self._open_mod_assistant)
         else:
             self._file_menu.add_command(label="Download Mod Assistant", command=self._download_mod_assistant)
+
+        self._file_menu.add_separator()
+        self._add_folder_menu_items()
+
         menubar.add_cascade(label="File", menu=self._file_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)

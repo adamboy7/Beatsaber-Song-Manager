@@ -173,10 +173,10 @@ class QueueWindow(tk.Toplevel):
             self._build_row(i, song)
 
     def _row_bg(self, idx: int) -> str:
-        if idx == self._browser._queue_index:
-            return _QUEUE_PLAYING_BG
         if idx in self._selected:
             return SELECTED_BG
+        if idx == self._browser._queue_index:
+            return _QUEUE_PLAYING_BG
         return ITEM_BG
 
     def _build_row(self, idx: int, song: "SongInfo"):
@@ -622,10 +622,10 @@ class QueueWindow(tk.Toplevel):
         for i, row in enumerate(self._row_frames):
             if self._dragging and i == self._drag_source:
                 continue
-            elif i == playing_idx:
-                bg = _QUEUE_PLAYING_BG
             elif i in self._selected:
                 bg = SELECTED_BG
+            elif i == playing_idx:
+                bg = _QUEUE_PLAYING_BG
             else:
                 bg = ITEM_BG
             self._recolor_row(row, i, bg)
