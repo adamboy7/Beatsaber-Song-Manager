@@ -78,6 +78,7 @@ class PlaylistArtWindow(tk.Toplevel):
             activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0,
         )
         menu.add_command(label="Replace…", command=self._replace_art)
+        menu.add_command(label="Save as…", command=self._save_art)
         menu.add_command(label="Reset", command=self._reset_art)
         menu.tk_popup(event.x_root, event.y_root)
 
@@ -109,6 +110,31 @@ class PlaylistArtWindow(tk.Toplevel):
             messagebox.showerror("Error", f"Could not load image:\n{e}", parent=self)
             return
         self.refresh()
+
+    def _save_art(self):
+        import tkinter.filedialog as fd
+        b64 = self._browser._playlist_art_b64
+        if not b64:
+            messagebox.showinfo("No image", "There is no image to save.", parent=self)
+            return
+        path = fd.asksaveasfilename(
+            title="Save Image As",
+            defaultextension=".jpg",
+            filetypes=[
+                ("JPEG", "*.jpg *.jpeg"),
+                ("PNG", "*.png"),
+                ("All files", "*.*"),
+            ],
+            parent=self,
+        )
+        if not path:
+            return
+        try:
+            img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+            fmt = "PNG" if Path(path).suffix.lower() == ".png" else "JPEG"
+            img.save(path, format=fmt)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not save image:\n{e}", parent=self)
 
     def _replace_art(self):
         import tkinter.filedialog as fd
