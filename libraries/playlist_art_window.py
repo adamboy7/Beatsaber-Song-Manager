@@ -79,7 +79,7 @@ class PlaylistArtWindow(tk.Toplevel):
         )
         menu.add_command(label="Replace…", command=self._replace_art)
         menu.add_command(label="Save as…", command=self._save_art)
-        menu.add_command(label="Reset", command=self._reset_art)
+        menu.add_command(label="Clear Art", command=self._reset_art)
         menu.tk_popup(event.x_root, event.y_root)
 
     def _reset_art(self):

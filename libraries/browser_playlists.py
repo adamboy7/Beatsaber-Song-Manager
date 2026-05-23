@@ -128,20 +128,27 @@ class BrowserPlaylistsMixin:
             path, self._startup_playlist = self._startup_playlist, None
             self._load_playlist_to_queue(str(path), anchor=self)
 
-        if self._startup_random is not None:
-            count, self._startup_random = self._startup_random, None
+        if self._startup_random_groups:
+            groups, self._startup_random_groups = self._startup_random_groups, []
             playable = [s for s in songs if s.audio_path]
             if not playable:
                 print("Warning: no playable songs found in library.")
             else:
                 from libraries.browser_pagination import filter_songs, pick_random_songs
-                filtered_playable = None
-                if self._startup_filter:
-                    filtered_playable = filter_songs(playable, self._startup_filter, self.player_stats, self.favorite_ids)
-                    if not filtered_playable:
-                        print("Warning: filter matched no songs; falling back to unfiltered picks.")
-                picks = pick_random_songs(filtered_playable, playable, count)
-                self._play_queue(picks)
+                all_picks: list = []
+                excluded: set = set()
+                for count, filter_str in groups:
+                    candidates = [s for s in playable if s.folder not in excluded]
+                    filtered = None
+                    if filter_str:
+                        filtered = filter_songs(candidates, filter_str, self.player_stats, self.favorite_ids)
+                        if not filtered:
+                            print(f"Warning: filter '{filter_str}' matched no songs; falling back to unfiltered picks.")
+                    picks = pick_random_songs(filtered, candidates, count)
+                    all_picks.extend(picks)
+                    excluded.update(s.folder for s in picks)
+                if all_picks:
+                    self._play_queue(all_picks)
 
     # ── View filters ──────────────────────────────────────────────────────────
 

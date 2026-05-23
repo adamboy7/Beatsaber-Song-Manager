@@ -161,15 +161,14 @@ The player responds to system media keys while the app is running:
 `Browser.py` accepts optional arguments for headless playlist operations and startup behaviour.
 
 ```
-python Browser.py [playlist] [--shuffle] [--randomAdd N] [--filter "QUERY"]
+python Browser.py [playlist] [--shuffle] [--randomAdd N [filter...]] ...
 ```
 
 | Argument | Description |
 |----------|-------------|
 | `playlist` | Path to a `.bplist` or `.json` playlist file (optional) |
 | `--shuffle` | **Headless.** Shuffle the songs in the given playlist file in place and exit. Requires `playlist`. |
-| `--randomAdd N` | Add `N` random songs from your library. Behaviour depends on context — see below. |
-| `--filter "QUERY"` | Narrow the `--randomAdd` candidate pool using the same search tag syntax as the GUI search box (e.g. `"{mapper}:noodle"`). See [Search Tags](#search-tags) for the full tag reference. |
+| `--randomAdd N [filter...]` | Add `N` random songs from your library, optionally narrowed by one or more search tags (see [Search Tags](#search-tags)). Can be used multiple times to build composite picks. |
 
 ### `--randomAdd` behaviour
 
@@ -180,38 +179,43 @@ python Browser.py [playlist] [--shuffle] [--randomAdd N] [--filter "QUERY"]
 | `python Browser.py --shuffle --randomAdd 5 existing.bplist` | **Headless.** Adds 5 random songs to `existing.bplist`, shuffles the full list, writes it back, and exits. |
 | `python Browser.py --shuffle existing.bplist` | **Headless.** Shuffles `existing.bplist` in place and exits. |
 
-`--randomAdd` avoids duplicates when adding to an existing playlist (matched by song hash).
+`--randomAdd` avoids duplicates when adding to an existing playlist (matched by song hash). When multiple `--randomAdd` groups are used, each group's picks are excluded from subsequent groups so there is no overlap.
 
-### `--filter` pick priority
+### Pick priority
 
-When `--filter` is combined with `--randomAdd N`, the N slots are filled in priority order — no repeats until a pool is fully exhausted:
+Each `--randomAdd` group fills its N slots in priority order — no repeats until a pool is fully exhausted:
 
-1. **Filtered songs first** — random picks from the songs matching your filter (no repeats).
-2. **Unfiltered supplement** — if filtered results < N, the remaining slots are filled from the rest of the library (also no repeats).
+1. **Filtered songs first** — random picks from songs matching the inline filters (no repeats).
+2. **Unfiltered supplement** — if filtered results < N, remaining slots are filled from the rest of the library (also no repeats).
 3. **Repeats as last resort** — only if even the full unfiltered library cannot fill N slots.
 
-If the filter matches zero songs a warning is printed and all N picks come from the full library. If the library is empty entirely, a warning is printed and the operation exits.
+If the filter matches zero songs a warning is printed and all N picks come from the full library.
 
-### `--filter` examples
-
-```
-python Browser.py --randomAdd 10 playlist.bplist --filter "{mapper}:noodle"
-```
-Queue 10 songs mapped by Noodle (supplement with other songs if fewer than 10 noodle maps exist).
+### Examples
 
 ```
-python Browser.py --randomAdd 20 new.bplist --filter "{unplayed}:y"
+python Browser.py --randomAdd 10 "{mapper}:Fefy" playlist.bplist
+```
+Add 10 songs mapped by Fefy to a playlist (supplements with other songs if fewer than 10 exist).
+
+```
+python Browser.py --randomAdd 20 "{unplayed}:y" new.bplist
 ```
 Create a new playlist of 20 unplayed songs.
 
 ```
-python Browser.py --shuffle --randomAdd 5 existing.bplist --filter "{favorite}:y {unplayed}:y"
+python Browser.py --shuffle --randomAdd 5 "{favorite}:y" "{unplayed}:y" existing.bplist
 ```
 Add 5 unplayed favorites to an existing playlist, then shuffle it.
 
 ```
-python Browser.py --randomAdd 15 --filter "{artist}:camellia"
+python Browser.py --randomAdd 15 "{artist}:camellia"
 ```
 Open the GUI and pre-load 15 Camellia songs into the queue.
+
+```
+python Browser.py --randomAdd 5 "{artist}:Miku" --randomAdd 5 "{artist}:Teto" new.bplist
+```
+Create a playlist with 5 Miku songs and 5 Teto songs, with no overlap between groups.
 
 ---

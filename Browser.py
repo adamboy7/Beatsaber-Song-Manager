@@ -55,7 +55,7 @@ class SongBrowser(
     BrowserPaginationMixin,
     TkinterDnD.Tk,
 ):
-    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None, startup_random: int | None = None, startup_filter: str | None = None):
+    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None, startup_random_groups: list[tuple[int, str | None]] | None = None):
         super().__init__()
         self.custom_levels = custom_levels
         self.songs: list[SongInfo] = []
@@ -118,8 +118,7 @@ class SongBrowser(
         self._pending_playlist_entries: list[dict] | None = None
         self._pending_playlist_queue: list[dict] = []
         self._startup_playlist: Path | None = startup_playlist
-        self._startup_random: int | None = startup_random
-        self._startup_filter: str | None = startup_filter
+        self._startup_random_groups: list[tuple[int, str | None]] = startup_random_groups or []
 
         self._install_manager = InstallManager(
             custom_levels,
@@ -169,9 +168,21 @@ def main():
     parser = argparse.ArgumentParser(description="Beat Saber Song Manager")
     parser.add_argument("playlist", nargs="?", help="Playlist file (.bplist / .json)")
     parser.add_argument("--shuffle", action="store_true", help="Shuffle playlist order and write back to file (headless)")
-    parser.add_argument("--randomAdd", type=int, metavar="N", help="Load library and add N random songs to queue on startup")
-    parser.add_argument("--filter", metavar="QUERY", help="Narrow --randomAdd candidates using search tags, e.g. '{mapper}:noodle'")
+    parser.add_argument("--randomAdd", nargs='+', action='append', metavar=("N", "FILTER"), help="Add N random songs (optional inline filters). May be used multiple times.")
     args = parser.parse_args()
+
+    def _parse_random_groups(raw_groups):
+        if not raw_groups:
+            return []
+        groups = []
+        for parts in raw_groups:
+            count = int(parts[0])
+            filters = [p.strip(',') for p in parts[1:] if p.strip(',')]
+            filter_str = ' '.join(filters) if filters else None
+            groups.append((count, filter_str))
+        return groups
+
+    random_groups = _parse_random_groups(args.randomAdd)
 
     playlist_path: Path | None = None
     if args.playlist:
@@ -190,8 +201,7 @@ def main():
             print("Playlist has no 'songs' array.")
             sys.exit(1)
 
-        if args.randomAdd:
-            n = args.randomAdd
+        if random_groups:
             custom_levels = find_beatsaber_custom_levels()
             if custom_levels is None:
                 print("--randomAdd requires Beat Saber to be found automatically.")
@@ -201,24 +211,29 @@ def main():
             for song in library:
                 song.song_hash = hashes.get(song.folder.name, "")
             existing = {(e.get("hash") or "").upper() for e in playlist_songs}
-            all_candidates = [s for s in library if s.song_hash and s.song_hash.upper() not in existing]
-            if not all_candidates:
+            remaining_candidates = [s for s in library if s.song_hash and s.song_hash.upper() not in existing]
+            if not remaining_candidates:
                 print("Warning: no songs found in library; skipping randomAdd.")
             else:
-                filtered_candidates = None
-                if args.filter:
-                    ps, fi = _load_player_data_headless()
-                    filtered_candidates = filter_songs(all_candidates, args.filter, ps, fi)
-                    if not filtered_candidates:
-                        print("Warning: filter matched no songs; falling back to unfiltered picks.")
-                picks = pick_random_songs(filtered_candidates, all_candidates, n)
-                for song in picks:
-                    playlist_songs.append({
-                        "key": song.song_id,
-                        "hash": song.song_hash,
-                        "songName": song.display_name,
-                    })
-                print(f"Added {len(picks)} random song(s) to {playlist_path.name}")
+                ps, fi = _load_player_data_headless()
+                total_added = 0
+                for count, filter_str in random_groups:
+                    filtered_candidates = None
+                    if filter_str:
+                        filtered_candidates = filter_songs(remaining_candidates, filter_str, ps, fi)
+                        if not filtered_candidates:
+                            print(f"Warning: filter '{filter_str}' matched no songs; falling back to unfiltered picks.")
+                    picks = pick_random_songs(filtered_candidates, remaining_candidates, count)
+                    for song in picks:
+                        playlist_songs.append({
+                            "key": song.song_id,
+                            "hash": song.song_hash,
+                            "songName": song.display_name,
+                        })
+                    picked_folders = {s.folder for s in picks}
+                    remaining_candidates = [s for s in remaining_candidates if s.folder not in picked_folders]
+                    total_added += len(picks)
+                print(f"Added {total_added} random song(s) to {playlist_path.name}")
 
         random.shuffle(playlist_songs)
         data["songs"] = playlist_songs
@@ -228,7 +243,7 @@ def main():
         sys.exit(0)
 
     # Headless: --randomAdd N with a playlist path that doesn't exist yet → create it and exit
-    if args.randomAdd and args.playlist:
+    if random_groups and args.playlist:
         candidate = Path(args.playlist)
         if not candidate.is_file() and candidate.suffix.lower() in {".bplist", ".json"}:
             custom_levels = find_beatsaber_custom_levels()
@@ -239,20 +254,24 @@ def main():
             hashes = load_song_hashes(custom_levels)
             for song in library:
                 song.song_hash = hashes.get(song.folder.name, "")
-            all_candidates = [s for s in library if s.song_hash]
-            if not all_candidates:
+            remaining_candidates = [s for s in library if s.song_hash]
+            if not remaining_candidates:
                 print("Warning: no songs with hashes found in library.")
                 sys.exit(1)
-            filtered_candidates = None
-            if args.filter:
-                ps, fi = _load_player_data_headless()
-                filtered_candidates = filter_songs(all_candidates, args.filter, ps, fi)
-                if not filtered_candidates:
-                    print("Warning: filter matched no songs; falling back to unfiltered picks.")
-            n = args.randomAdd
-            picks = pick_random_songs(filtered_candidates, all_candidates, n)
+            ps, fi = _load_player_data_headless()
+            all_picks = []
+            for count, filter_str in random_groups:
+                filtered_candidates = None
+                if filter_str:
+                    filtered_candidates = filter_songs(remaining_candidates, filter_str, ps, fi)
+                    if not filtered_candidates:
+                        print(f"Warning: filter '{filter_str}' matched no songs; falling back to unfiltered picks.")
+                picks = pick_random_songs(filtered_candidates, remaining_candidates, count)
+                all_picks.extend(picks)
+                picked_folders = {s.folder for s in picks}
+                remaining_candidates = [s for s in remaining_candidates if s.folder not in picked_folders]
             image_data = ""
-            for song in picks:
+            for song in all_picks:
                 if song.cover_path and song.cover_path.exists():
                     try:
                         from PIL import Image
@@ -269,13 +288,13 @@ def main():
                 "customData": {},
                 "songs": [
                     {"key": s.song_id, "hash": s.song_hash, "songName": s.display_name}
-                    for s in picks
+                    for s in all_picks
                 ],
             }
             candidate.parent.mkdir(parents=True, exist_ok=True)
             with open(candidate, "w", encoding="utf-8") as f:
                 json.dump(playlist, f, indent=2)
-            print(f"Created '{candidate.name}' with {len(picks)} random song(s).")
+            print(f"Created '{candidate.name}' with {len(all_picks)} random song(s).")
             sys.exit(0)
 
     # Try to find custom levels automatically
@@ -297,7 +316,7 @@ def main():
             return
         custom_levels = Path(path_str)
 
-    app = SongBrowser(custom_levels, startup_playlist=playlist_path, startup_random=args.randomAdd, startup_filter=args.filter)
+    app = SongBrowser(custom_levels, startup_playlist=playlist_path, startup_random_groups=random_groups)
     app.mainloop()
 
 
