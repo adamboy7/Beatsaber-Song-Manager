@@ -207,6 +207,13 @@ class BrowserActionsMixin:
                              command=lambda: self._copy(f"https://beatsaver.com/maps/{song.song_id}"),
                              state="normal" if song.song_id else "disabled")
             menu.add_command(label="Copy Name", command=lambda: self._copy(song.display_name))
+            menu.add_separator()
+            menu.add_command(label="More from This Artist",
+                             command=lambda: self.search_var.set(f"{{artist}}:{song.author}"),
+                             state="normal" if song.author else "disabled")
+            menu.add_command(label="More from This Mapper",
+                             command=lambda: self.search_var.set(f"{{mapper}}:{song.mapper}"),
+                             state="normal" if song.mapper else "disabled")
         menu.add_separator()
         menu.add_command(label="Open Folder…",
                          command=lambda: os.startfile(song.folder))
