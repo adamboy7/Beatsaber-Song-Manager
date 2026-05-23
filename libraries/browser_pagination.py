@@ -324,6 +324,7 @@ class BrowserPaginationMixin:
             self._thumbnails.clear()
             self.page = 0
             self._render_list()
+            self._update_search_icon_color()
             return
 
         self._pending_install_id = None
@@ -350,10 +351,18 @@ class BrowserPaginationMixin:
             self.status_bar.config(text=f"{len(self.filtered)} songs shown  •  {tag_summary}")
         else:
             self.status_bar.config(text=f"{len(self.filtered)} songs shown")
+        self._update_search_icon_color()
 
     def _on_search_enter(self, *_):
         if self._pending_install_id:
             self._trigger_install(self._pending_install_id)
+
+    def _update_search_icon_color(self) -> None:
+        from libraries.constants import SUBTEXT_COLOR
+        query = self.search_var.get().strip()
+        tags, _ = _parse_tags(query)
+        fav_active = self._favorites_only or any(t == "favorite" and v == "y" for t, v in tags)
+        self.search_icon_label.config(fg="#FFD700" if fav_active else SUBTEXT_COLOR)
 
     def _trigger_install(self, song_id: str):
         self._install_manager.trigger(song_id)

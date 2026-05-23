@@ -209,8 +209,9 @@ class BrowserUIMixin:
         search_frame = tk.Frame(self, bg=BG_COLOR)
         search_frame.pack(fill="x", padx=16, pady=(0, 8))
 
-        tk.Label(search_frame, text="🔍", bg=BG_COLOR, fg=SUBTEXT_COLOR,
-                 font=("Segoe UI", 11)).pack(side="left")
+        self.search_icon_label = tk.Label(search_frame, text="🔍", bg=BG_COLOR, fg=SUBTEXT_COLOR,
+                 font=("Segoe UI", 11))
+        self.search_icon_label.pack(side="left")
 
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", self._on_search)
@@ -226,6 +227,7 @@ class BrowserUIMixin:
         )
         search_entry.pack(side="left", fill="x", expand=True, ipady=4)
         search_entry.bind("<Return>", self._on_search_enter)
+        search_entry.bind("<Control-a>", lambda e: (search_entry.select_range(0, "end"), "break")[1])
         self.search_entry = search_entry
 
         # Path label
