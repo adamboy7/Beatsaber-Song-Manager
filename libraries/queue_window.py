@@ -9,7 +9,9 @@ to-reorder logic.
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
+from tkinter import messagebox
 from typing import TYPE_CHECKING
 
 import tkinter as tk
@@ -17,8 +19,9 @@ from PIL import Image, ImageTk
 from tkinterdnd2 import DND_FILES
 
 from libraries.audio_utils import get_audio_duration
+from libraries.browser_pagination import filter_songs, pick_random_songs
 from libraries.constants import (
-    ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
+    ACCENT_COLOR, BG_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
     SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR, SCROLLBAR_BG,
 )
 from libraries.song_data import SongInfo
@@ -57,11 +60,15 @@ class QueueWindow(tk.Toplevel):
 
         header = tk.Frame(self, bg="#0d0d1a")
         header.pack(fill="x", padx=12, pady=(10, 4))
-        tk.Label(
+        self._header_label = tk.Label(
             header, text="Queue",
             font=("Segoe UI", 13, "bold"),
             bg="#0d0d1a", fg=TEXT_COLOR,
-        ).pack(side="left")
+            cursor="hand2",
+        )
+        self._header_label.pack(side="left")
+        self._header_label.bind("<Button-3>", self._on_header_right_click)
+        self._header_label.bind("<Button-1>", self._on_header_left_click)
         tk.Label(
             header, text="  drag to reorder  •  shift+click to select  •  ctrl+a  •  del to remove",
             font=("Segoe UI", 8),
@@ -226,6 +233,153 @@ class QueueWindow(tk.Toplevel):
             w.bind("<MouseWheel>",      self._on_mousewheel)
 
     # ── Context Menu ─────────────────────────────────────────────────────────
+
+    def _on_header_left_click(self, _event: tk.Event):
+        total = len(self._row_frames)
+        if total and self._selected == set(range(total)):
+            self._deselect_all()
+        else:
+            self._select_all()
+
+    def _on_header_right_click(self, event: tk.Event):
+        queue = self._browser._queue
+        menu = tk.Menu(
+            self, tearoff=0,
+            bg="#1e1e1e", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0,
+        )
+        menu.add_command(
+            label="Shuffle Order",
+            state="normal" if len(queue) > 1 else "disabled",
+            command=self._shuffle_queue_order,
+        )
+        menu.add_command(label="Add Random Song…", command=self._show_add_random_dialog)
+        menu.add_separator()
+        menu.add_command(
+            label="Clear Queue",
+            foreground="#ff4444",
+            activeforeground="#ff4444",
+            state="normal" if queue else "disabled",
+            command=self._confirm_clear_queue,
+        )
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _shuffle_queue_order(self):
+        b = self._browser
+        queue = b._queue
+        if len(queue) < 2:
+            return
+        curr = b._queue_index
+        playing = queue[curr] if 0 <= curr < len(queue) else None
+        random.shuffle(queue)
+        if playing is not None:
+            b._queue_index = next(
+                (i for i, s in enumerate(queue) if s is playing), -1
+            )
+        self.refresh()
+
+    def _show_add_random_dialog(self):
+        result: dict = {"query": None, "n": None}
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Add Random Song")
+        dlg.configure(bg=BG_COLOR)
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+
+        pad = {"padx": 12, "pady": 6}
+
+        filter_frame = tk.Frame(dlg, bg=BG_COLOR)
+        filter_frame.pack(fill="x", **pad)
+        tk.Label(filter_frame, text="Filter:", bg=BG_COLOR, fg=TEXT_COLOR,
+                 font=("Segoe UI", 9), width=7, anchor="w").pack(side="left")
+        filter_var = tk.StringVar()
+        filter_entry = tk.Entry(
+            filter_frame, textvariable=filter_var,
+            bg="#1e1e1e", fg=TEXT_COLOR, insertbackground=TEXT_COLOR,
+            relief="flat", font=("Segoe UI", 9),
+        )
+        filter_entry.pack(side="left", fill="x", expand=True)
+
+        tk.Label(
+            dlg,
+            text="  Supports plain text, {artist}:, {mapper}:, {title}:, {unplayed}:y, {favorite}:y",
+            bg=BG_COLOR, fg=SUBTEXT_COLOR, font=("Segoe UI", 7), anchor="w",
+        ).pack(fill="x", padx=12)
+
+        bottom_frame = tk.Frame(dlg, bg=BG_COLOR)
+        bottom_frame.pack(fill="x", padx=12, pady=(4, 10))
+
+        tk.Label(bottom_frame, text="Count:", bg=BG_COLOR, fg=TEXT_COLOR,
+                 font=("Segoe UI", 9)).pack(side="left")
+        count_var = tk.StringVar(value="1")
+        tk.Spinbox(
+            bottom_frame, from_=1, to=999, textvariable=count_var,
+            bg="#1e1e1e", fg=TEXT_COLOR, buttonbackground="#1e1e1e",
+            insertbackground=TEXT_COLOR, relief="flat", font=("Segoe UI", 9),
+            width=6,
+        ).pack(side="left", padx=(4, 0))
+
+        def _ok(_event=None):
+            try:
+                n = max(1, int(count_var.get()))
+            except ValueError:
+                n = 1
+            result["query"] = filter_var.get().strip()
+            result["n"] = n
+            dlg.destroy()
+
+        def _cancel(_event=None):
+            dlg.destroy()
+
+        tk.Button(
+            bottom_frame, text="Cancel", command=_cancel,
+            bg="#1e1e1e", fg=TEXT_COLOR, activebackground="#333",
+            activeforeground=TEXT_COLOR, relief="flat", font=("Segoe UI", 9),
+        ).pack(side="right", padx=(4, 0))
+        tk.Button(
+            bottom_frame, text="Add", command=_ok,
+            bg=ACCENT_COLOR, fg=TEXT_COLOR, activebackground="#7a00cc",
+            activeforeground=TEXT_COLOR, relief="flat", font=("Segoe UI", 9, "bold"),
+        ).pack(side="right")
+
+        dlg.bind("<Return>", _ok)
+        dlg.bind("<Escape>", _cancel)
+        filter_entry.focus_set()
+        self.wait_window(dlg)
+
+        if result["n"] is not None:
+            self._add_random_songs(result["query"] or "", result["n"])
+
+    def _add_random_songs(self, query: str, n: int):
+        b = self._browser
+        all_songs = b.songs
+        queue_folders = {str(s.folder) for s in b._queue}
+
+        filtered_not_in_queue = None
+        if query:
+            filtered = filter_songs(all_songs, query, b.player_stats, b.favorite_ids)
+            filtered_not_in_queue = [s for s in filtered if str(s.folder) not in queue_folders]
+
+        all_not_in_queue = [s for s in all_songs if str(s.folder) not in queue_folders]
+        unfiltered_pool = all_not_in_queue if all_not_in_queue else all_songs
+
+        picks = pick_random_songs(filtered_not_in_queue, unfiltered_pool, n)
+        if picks:
+            b._add_to_queue(picks)
+
+    def _confirm_clear_queue(self):
+        if not messagebox.askyesno(
+            "Clear Queue",
+            "Stop playback and clear the entire queue?",
+            icon="warning",
+            default="no",
+        ):
+            return
+        self._browser._queue.clear()
+        self._browser._stop_audio_keep_queue()
+        self.refresh()
 
     def _on_right_click(self, event: tk.Event, idx: int, song: "SongInfo"):
         queue = self._browser._queue
