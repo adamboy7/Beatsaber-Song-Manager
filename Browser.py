@@ -21,6 +21,7 @@ import io
 import json
 import random
 import sys
+import threading
 import tkinter as tk
 from tkinter import messagebox
 from tkinterdnd2 import TkinterDnD
@@ -167,8 +168,36 @@ def main():
         normalized.append(a)
     sys.argv = normalized
 
-    parser = argparse.ArgumentParser(description="Beat Saber Song Manager")
+    parser = argparse.ArgumentParser(
+        description="Beat Saber Song Manager",
+        epilog=(
+            "Headless examples:\n"
+            "  Browser.py playlist.bplist --install\n"
+            "      Install every missing song in playlist.bplist via Mod Assistant\n"
+            "      and exit.  Requires Mod Assistant with playlist one-click installs\n"
+            "      enabled (bsplaylist:// protocol handler).\n"
+            "\n"
+            "  Browser.py playlist.bplist --shuffle\n"
+            "      Shuffle the playlist in-place and exit.\n"
+            "\n"
+            "  Browser.py playlist.bplist --randomAdd 10 \"stars>5\"\n"
+            "      Append 10 random songs matching the filter and exit.\n"
+            "\n"
+            "  Browser.py new.bplist --randomAdd 20\n"
+            "      Create new.bplist with 20 random songs and exit."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("playlist", nargs="?", help="Playlist file (.bplist / .json)")
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        help=(
+            "Headless: hand PLAYLIST to Mod Assistant via bsplaylist://, wait for "
+            "all missing songs to download, then exit.  Exit code 0 on success, 1 "
+            "on failure or if the bsplaylist:// handler is not registered."
+        ),
+    )
     parser.add_argument("--shuffle", action="store_true", help="Shuffle playlist order and write back to file (headless)")
     parser.add_argument("--randomAdd", nargs='+', action='append', metavar=("N", "FILTER"), help="Add N random songs (optional inline filters). May be used multiple times.")
     args = parser.parse_args()
@@ -191,6 +220,47 @@ def main():
         candidate = Path(args.playlist)
         if candidate.suffix.lower() in {".bplist", ".json"} and candidate.is_file():
             playlist_path = candidate
+
+    if args.install:
+        if playlist_path is None:
+            print("--install requires a valid .bplist or .json playlist file.")
+            sys.exit(1)
+        if not PlaylistInstaller.has_handler():
+            print(
+                "bsplaylist:// handler not found — install Mod Assistant and "
+                "enable playlist one-click installs, then retry."
+            )
+            sys.exit(1)
+        custom_levels = find_beatsaber_custom_levels()
+        if custom_levels is None:
+            print("Beat Saber not found automatically; cannot determine CustomLevels path.")
+            sys.exit(1)
+        with open(playlist_path, "r", encoding="utf-8") as f:
+            _pl_data = json.load(f)
+        expected_keys = [
+            (e.get("key") or e.get("id") or "")
+            for e in _pl_data.get("songs", [])
+        ]
+
+        _done = threading.Event()
+        _success: list[bool] = [False]
+
+        def _headless_after(ms, callback):
+            threading.Timer(ms / 1000, callback).start()
+
+        def _on_complete(success: bool):
+            _success[0] = success
+            _done.set()
+
+        installer = PlaylistInstaller(
+            custom_levels,
+            _headless_after,
+            print,
+            _on_complete,
+        )
+        installer.install(playlist_path, expected_keys)
+        _done.wait()
+        sys.exit(0 if _success[0] else 1)
 
     if args.shuffle:
         if playlist_path is None:
