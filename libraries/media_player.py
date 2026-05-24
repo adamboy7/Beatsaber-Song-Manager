@@ -1,5 +1,7 @@
 import os
 import time
+import ctypes
+import ctypes.wintypes
 import subprocess
 from tkinter import messagebox
 
@@ -7,9 +9,57 @@ from libraries.audio_utils import find_ffplay, get_audio_duration
 from libraries.song_data import SongInfo
 
 
+def _create_kill_on_close_job():
+    """Create a Windows Job Object that kills all assigned processes when the handle closes."""
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+
+        class _BASIC(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", ctypes.wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", ctypes.wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", ctypes.wintypes.DWORD),
+                ("SchedulingClass", ctypes.wintypes.DWORD),
+            ]
+
+        class _IO(ctypes.Structure):
+            _fields_ = [(f, ctypes.c_uint64) for f in (
+                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount",
+            )]
+
+        class _EXT(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BASIC),
+                ("IoInfo", _IO),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        info = _EXT()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            kernel32.CloseHandle(job)
+            return None
+        return job
+    except Exception:
+        return None
+
+
 class MediaPlayer:
     def __init__(self):
         self._audio_proc: subprocess.Popen | None = None
+        self._job = _create_kill_on_close_job()
         self._audio_paused: bool = False
         self._stopped: bool = False
         self._looping: bool = False
@@ -130,6 +180,15 @@ class MediaPlayer:
                 stderr=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
+            if self._job:
+                try:
+                    kernel32 = ctypes.WinDLL("kernel32")
+                    h = kernel32.OpenProcess(0x1F0FFF, False, self._audio_proc.pid)
+                    if h:
+                        kernel32.AssignProcessToJobObject(self._job, h)
+                        kernel32.CloseHandle(h)
+                except Exception:
+                    pass
             self.playing_song = song
             self._play_start = time.time() - seek
             self._pause_start = None
