@@ -459,6 +459,8 @@ class BrowserUIMixin:
 
         if self._pending_install_id:
             self._build_install_row(self._pending_install_id)
+        elif self._pending_playlist_url:
+            self._build_install_playlist_row(self._pending_playlist_url)
 
         page_start = self.page * self.page_size
         for local_idx, song in enumerate(self.filtered[page_start:page_start + self.page_size]):
@@ -471,6 +473,44 @@ class BrowserUIMixin:
 
         self._update_pagination_controls()
         self._update_scroll()
+
+    def _build_install_playlist_row(self, url: str):
+        row = tk.Frame(self.list_frame, bg=HOVER_BG, cursor="hand2")
+        row.pack(fill="x", pady=1)
+
+        icon_lbl = tk.Label(row, text="⬇", font=("Segoe UI", 20),
+                            bg=HOVER_BG, fg=ACCENT_COLOR, width=4)
+        icon_lbl.pack(side="left", padx=8, pady=6)
+
+        text_frame = tk.Frame(row, bg=HOVER_BG)
+        text_frame.pack(side="left", fill="both", expand=True, padx=4, pady=6)
+
+        title_lbl = tk.Label(
+            text_frame,
+            text="Click to install playlist…",
+            font=("Segoe UI", 11, "bold"),
+            bg=HOVER_BG, fg=ACCENT_COLOR,
+            anchor="w", cursor="hand2",
+        )
+        title_lbl.pack(fill="x")
+
+        sub_lbl = tk.Label(
+            text_frame,
+            text="Downloads playlist file and opens via Mod Assistant  •  or press Enter",
+            font=("Segoe UI", 9),
+            bg=HOVER_BG, fg=SUBTEXT_COLOR,
+            anchor="w",
+        )
+        sub_lbl.pack(fill="x")
+
+        sep = tk.Frame(self.list_frame, bg=SEPARATOR_COLOR, height=1)
+        sep.pack(fill="x")
+
+        for w in [row, icon_lbl, text_frame, title_lbl, sub_lbl]:
+            w.bind("<Button-1>",   lambda _, u=url: self._install_playlist_from_url(u))
+            w.bind("<Enter>",      lambda _, r=row: self._recolor_row(r, SELECTED_BG))
+            w.bind("<Leave>",      lambda _, r=row: self._recolor_row(r, HOVER_BG))
+            w.bind("<MouseWheel>", self._on_mousewheel)
 
     def _build_row(self, idx: int, song: SongInfo):
         # Row container

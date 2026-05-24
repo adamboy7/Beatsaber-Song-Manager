@@ -348,6 +348,11 @@ class BrowserPaginationMixin:
             return m.group(1).lower()
         return None
 
+    def _extract_playlist_url(self, query: str) -> str | None:
+        """Return the inner HTTP URL if query is a bsplaylist:// one-click URL, else None."""
+        m = re.match(r'^bsplaylist://playlist/(https?://\S+)', query.strip(), re.IGNORECASE)
+        return m.group(1) if m else None
+
     def _on_search(self, *_):
         query = self.search_var.get().strip()
 
@@ -375,6 +380,21 @@ class BrowserPaginationMixin:
             self._update_search_icon_color()
             return
 
+        playlist_url = self._extract_playlist_url(query)
+        if playlist_url:
+            self._pending_playlist_url = playlist_url
+            self._pending_install_id = None
+            self.filtered = []
+            self._thumbnails.clear()
+            self.page = 0
+            self._render_list()
+            self.status_bar.config(
+                text="Playlist URL detected — press Enter or click to install via Mod Assistant."
+            )
+            self._update_search_icon_color()
+            return
+
+        self._pending_playlist_url = None
         self._pending_install_id = None
         self._install_manager.cancel()
         raw_query = self.search_var.get().strip()
@@ -402,7 +422,9 @@ class BrowserPaginationMixin:
         self._update_search_icon_color()
 
     def _on_search_enter(self, *_):
-        if self._pending_install_id:
+        if self._pending_playlist_url:
+            self._install_playlist_from_url(self._pending_playlist_url)
+        elif self._pending_install_id:
             self._trigger_install(self._pending_install_id)
 
     def _update_search_icon_color(self) -> None:

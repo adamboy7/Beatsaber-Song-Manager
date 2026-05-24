@@ -67,6 +67,8 @@ class SongBrowser(
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
         self._pending_install_id: str | None = None
+        self._pending_playlist_url: str | None = None
+        self._pending_playlist_temp_path: Path | None = None
         self.page: int = 0
         self.page_size: int = PAGE_SIZE
 

@@ -16,8 +16,11 @@ from __future__ import annotations
 import io
 import json
 import base64
+import os
 import random
+import tempfile
 import threading
+import urllib.request
 import tkinter as tk
 from tkinter import messagebox
 from tkinterdnd2 import DND_FILES
@@ -420,6 +423,55 @@ class BrowserPlaylistsMixin:
         song_id = entry.get("key") or entry.get("id")
         self._install_manager.trigger(song_id)
 
+    def _install_playlist_from_url(self, url: str) -> None:
+        """Download a remote .bplist and install via Mod Assistant."""
+        self._pending_playlist_url = url
+        self.status_bar.config(text="Downloading playlist…")
+
+        def _download():
+            try:
+                filename = url.rstrip("/").split("/")[-1]
+                if not filename.lower().endswith((".bplist", ".json")):
+                    filename += ".bplist"
+                fd, tmp_str = tempfile.mkstemp(suffix="_" + filename)
+                os.close(fd)
+                tmp_path = Path(tmp_str)
+                urllib.request.urlretrieve(url, tmp_path)
+                self.after(0, lambda: self._on_playlist_url_downloaded(tmp_path))
+            except Exception as e:
+                self.after(0, lambda: self.status_bar.config(text=f"Download failed: {e}"))
+
+        threading.Thread(target=_download, daemon=True).start()
+
+    def _on_playlist_url_downloaded(self, tmp_path: Path) -> None:
+        """Parse the downloaded .bplist and hand it to Mod Assistant."""
+        try:
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            self.status_bar.config(text=f"Could not parse playlist: {e}")
+            tmp_path.unlink(missing_ok=True)
+            return
+
+        entries = data.get("songs", [])
+        installable = [e for e in entries if e.get("key") or e.get("id")]
+        expected_keys = [(e.get("key") or e.get("id") or "") for e in installable]
+
+        self._pending_playlist_temp_path = tmp_path
+
+        if not PlaylistInstaller.has_handler():
+            self.status_bar.config(
+                text="bsplaylist:// handler not found — install Mod Assistant."
+            )
+            tmp_path.unlink(missing_ok=True)
+            self._pending_playlist_temp_path = None
+            return
+
+        launched = self._playlist_installer.install(tmp_path, expected_keys)
+        if not launched:
+            tmp_path.unlink(missing_ok=True)
+            self._pending_playlist_temp_path = None
+
     def _on_playlist_install_complete(self, success: bool) -> None:
         """Called by PlaylistInstaller once Mod Assistant has finished
         (or timed out / been cancelled). Reload songs and queue everything
@@ -428,6 +480,15 @@ class BrowserPlaylistsMixin:
             self.status_bar.config(
                 text="Playlist install did not complete — queuing what's available."
             )
+        if self._pending_playlist_temp_path:
+            try:
+                self._pending_playlist_temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            self._pending_playlist_temp_path = None
+        if self._pending_playlist_url:
+            self._pending_playlist_url = None
+            self.search_var.set("")
         # Trigger a song-library reload; _after_install_load then calls
         # _check_pending_playlist which will queue the songs.
         self._on_install_complete_reload()
