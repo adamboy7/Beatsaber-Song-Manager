@@ -254,9 +254,19 @@ class BrowserActionsMixin:
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
         if self._player_bar_visible:
-            menu.add_command(label="Add to Queue",
-                             command=lambda: self._add_to_queue([song]),
-                             state="normal" if song.audio_path else "disabled")
+            queue_empty = not self._queue
+            if queue_empty:
+                menu.add_command(label="Play",
+                                 command=lambda: self._add_to_queue([song]),
+                                 state="normal" if song.audio_path else "disabled")
+            elif shift_held:
+                menu.add_command(label="Play",
+                                 command=lambda: self._add_to_queue_and_jump([song]),
+                                 state="normal" if song.audio_path else "disabled")
+            else:
+                menu.add_command(label="Add to Queue",
+                                 command=lambda: self._add_to_queue([song]),
+                                 state="normal" if song.audio_path else "disabled")
         else:
             menu.add_command(label="Play Audio",
                              command=lambda: self._play_queue([song]),

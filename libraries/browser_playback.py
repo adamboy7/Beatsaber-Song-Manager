@@ -105,6 +105,17 @@ class BrowserPlaybackMixin:
             self._play_audio(self._queue[self._queue_index])
         self._notify_queue_window()
 
+    def _add_to_queue_and_jump(self, songs: list[SongInfo]) -> None:
+        """Append songs to the queue and immediately jump to the first one."""
+        playable = [s for s in songs if s.audio_path]
+        if not playable:
+            return
+        insert_index = len(self._queue)
+        self._queue.extend(playable)
+        self._queue_index = insert_index
+        self._play_audio(self._queue[insert_index])
+        self._notify_queue_window()
+
     def _queue_next(self) -> None:
         if self._media_player._looping:
             return
