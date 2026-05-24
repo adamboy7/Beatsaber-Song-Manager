@@ -200,12 +200,16 @@ class BrowserUIMixin:
         options_menu = tk.Menu(menubar, tearoff=0)
         self._keep_player_visible_var = tk.BooleanVar(value=True)
         self._loop_queue_var = tk.BooleanVar(value=False)
+        self._shuffle_queue_var = tk.BooleanVar(value=False)
         options_menu.add_checkbutton(label="Show Media Player",
                                      variable=self._keep_player_visible_var,
                                      command=self._toggle_keep_player_visible)
         options_menu.add_checkbutton(label="Loop Queue",
                                      variable=self._loop_queue_var,
                                      command=self._toggle_loop_queue)
+        options_menu.add_checkbutton(label="Shuffle",
+                                     variable=self._shuffle_queue_var,
+                                     command=self._toggle_shuffle_queue)
         menubar.add_cascade(label="Options", menu=options_menu)
 
         self.config(menu=menubar)

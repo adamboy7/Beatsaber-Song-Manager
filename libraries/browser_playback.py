@@ -46,6 +46,7 @@ class BrowserPlaybackMixin:
         self._shuffle_queue = not self._shuffle_queue
         if not self._shuffle_queue:
             self._last_shuffle_index = None
+        self._shuffle_queue_var.set(self._shuffle_queue)
 
     def _on_space(self, *_):
         if self.focus_get() is self.search_entry:
