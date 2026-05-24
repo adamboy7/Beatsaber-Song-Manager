@@ -49,6 +49,8 @@ class QueueWindow(tk.Toplevel):
         self._tick_id: str | None = None
         self._last_queue_len: int = -1
         self._last_queue_index: int = -2
+        self._last_stopped: bool = False
+        self._last_paused: bool = False
 
         self.title("Playback Queue")
         self.configure(bg="#0d0d1a")
@@ -141,11 +143,15 @@ class QueueWindow(tk.Toplevel):
     def _tick(self):
         new_len = len(self._browser._queue)
         new_idx = self._browser._queue_index
+        new_stopped = self._browser._media_player._stopped
+        new_paused = self._browser._media_player._audio_paused
         if new_len != self._last_queue_len:
             self.refresh()
-        elif new_idx != self._last_queue_index:
+        elif new_idx != self._last_queue_index or new_stopped != self._last_stopped or new_paused != self._last_paused:
             self._update_row_colors()
             self._last_queue_index = new_idx
+            self._last_stopped = new_stopped
+            self._last_paused = new_paused
         self._tick_id = self.after(300, self._tick)
 
     # ── Build / Refresh ──────────────────────────────────────────────────────
@@ -187,11 +193,21 @@ class QueueWindow(tk.Toplevel):
         row.pack(fill="x")
         self._row_frames.append(row)
 
+        stopped = self._browser._media_player._stopped
+        paused = self._browser._media_player._audio_paused
+        if is_playing and stopped:
+            row_icon, row_fg = "■", SUBTEXT_COLOR
+        elif is_playing and paused:
+            row_icon, row_fg = "▌▌", ACCENT_COLOR
+        elif is_playing:
+            row_icon, row_fg = "▶", ACCENT_COLOR
+        else:
+            row_icon, row_fg = str(idx + 1), SUBTEXT_COLOR
         num_lbl = tk.Label(
             row,
-            text="▶" if is_playing else str(idx + 1),
+            text=row_icon,
             font=("Segoe UI", 9, "bold"),
-            bg=bg, fg=ACCENT_COLOR if is_playing else SUBTEXT_COLOR,
+            bg=bg, fg=row_fg,
             width=3, anchor="center",
         )
         num_lbl.pack(side="left", padx=(8, 4), pady=6)
@@ -287,6 +303,12 @@ class QueueWindow(tk.Toplevel):
         dlg.resizable(False, False)
         dlg.transient(self)
         dlg.grab_set()
+        try:
+            _rand_icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Random.png")
+            dlg.iconphoto(False, _rand_icon)
+            dlg._rand_icon = _rand_icon
+        except Exception:
+            pass
 
         pad = {"padx": 12, "pady": 6}
 
@@ -377,8 +399,7 @@ class QueueWindow(tk.Toplevel):
             default="no",
         ):
             return
-        self._browser._queue.clear()
-        self._browser._stop_audio_keep_queue()
+        self._browser._stop_player()
         self.refresh()
 
     def _on_right_click(self, event: tk.Event, idx: int, song: "SongInfo"):
@@ -651,10 +672,17 @@ class QueueWindow(tk.Toplevel):
         if children:
             try:
                 is_playing = (idx == self._browser._queue_index)
-                children[0].config(
-                    text="▶" if is_playing else str(idx + 1),
-                    fg=ACCENT_COLOR if is_playing else SUBTEXT_COLOR,
-                )
+                stopped = self._browser._media_player._stopped
+                paused = self._browser._media_player._audio_paused
+                if is_playing and stopped:
+                    icon, fg = "■", SUBTEXT_COLOR
+                elif is_playing and paused:
+                    icon, fg = "▌▌", ACCENT_COLOR
+                elif is_playing:
+                    icon, fg = "▶", ACCENT_COLOR
+                else:
+                    icon, fg = str(idx + 1), SUBTEXT_COLOR
+                children[0].config(text=icon, fg=fg)
             except tk.TclError:
                 pass
 

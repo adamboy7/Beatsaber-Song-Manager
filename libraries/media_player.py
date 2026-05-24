@@ -11,6 +11,7 @@ class MediaPlayer:
     def __init__(self):
         self._audio_proc: subprocess.Popen | None = None
         self._audio_paused: bool = False
+        self._stopped: bool = False
         self._looping: bool = False
         self.playing_song: SongInfo | None = None
         self._kb_listener = None
@@ -45,6 +46,8 @@ class MediaPlayer:
         self._looping = not self._looping
 
     def toggle_pause(self) -> None:
+        if self._stopped:
+            return
         if not self._audio_proc or self._audio_proc.poll() is not None:
             self._audio_paused = False
             return
@@ -75,11 +78,23 @@ class MediaPlayer:
             elapsed -= time.time() - self._pause_start
         return max(0.0, elapsed)
 
+    def stop_keep_song(self) -> None:
+        """Stop audio but remember the current song and queue position."""
+        if self._audio_proc and self._audio_proc.poll() is None:
+            self._audio_proc.terminate()
+        self._audio_proc = None
+        self._audio_paused = False
+        self._stopped = True
+        self._play_start = None
+        self._pause_start = None
+        self._paused_total = 0.0
+
     def stop(self) -> None:
         if self._audio_proc and self._audio_proc.poll() is None:
             self._audio_proc.terminate()
         self._audio_proc = None
         self._audio_paused = False
+        self._stopped = False
         self.playing_song = None
         self._play_start = None
         self._pause_start = None
@@ -102,6 +117,7 @@ class MediaPlayer:
         if not song.audio_path:
             messagebox.showwarning("Play Audio", "This song has no audio file.")
             return
+        self._stopped = False
         self.stop()
         ffplay = find_ffplay()
         if ffplay:

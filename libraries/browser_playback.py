@@ -115,7 +115,7 @@ class BrowserPlaybackMixin:
             return
         self._stop_idle_animation()
         name = song.display_name or song.song_name or "Unknown"
-        self._player_name_label.config(text=f"⏹  {name}")
+        self._player_name_label.config(text=f"■  {name}")
         if duration:
             d_min, d_sec = divmod(int(duration), 60)
             self._player_time_label.config(text=f"{d_min}:{d_sec:02d} / {d_min}:{d_sec:02d}")
@@ -150,7 +150,7 @@ class BrowserPlaybackMixin:
         frame = self._idle_anim_frame % n
         window = (_IDLE_BRAILLE * 2)[frame:frame + 4]
         self._player_name_label.config(
-            text=f"⏹  Add a song to Queue to begin  {window}"
+            text=f"■  Add a song to Queue to begin  {window}"
         )
         self._idle_anim_frame += 1
         self._idle_anim_id = self.after(150, self._tick_idle_anim)
@@ -160,7 +160,23 @@ class BrowserPlaybackMixin:
             self.after_cancel(self._idle_anim_id)
             self._idle_anim_id = None
 
+    def _stop_playback(self):
+        """Stop audio but keep queue and remember position. Disables play/pause resume."""
+        if self._player_tick_id:
+            self.after_cancel(self._player_tick_id)
+            self._player_tick_id = None
+        song = self._media_player.playing_song
+        self._media_player.stop_keep_song()
+        if self._keep_player_visible:
+            if song:
+                name = song.display_name or song.song_name or "Unknown"
+                loop_suffix = " 🔁" if self._media_player._looping else (" 🔀" if self._shuffle_queue else "")
+                self._player_name_label.config(text=f"■  {name}{loop_suffix}")
+            else:
+                self._show_player_bar_idle(None, None)
+
     def _stop_player(self):
+        """Fully stop playback and clear the queue."""
         if self._player_tick_id:
             self.after_cancel(self._player_tick_id)
             self._player_tick_id = None
@@ -174,24 +190,39 @@ class BrowserPlaybackMixin:
         self._notify_queue_window()
 
     def _stop_audio_keep_queue(self):
+        """Stop audio and lose queue position (e.g. playing song was deleted)."""
         if self._player_tick_id:
             self.after_cancel(self._player_tick_id)
             self._player_tick_id = None
         self._media_player.stop()
-        self._hide_player_bar()
+        if self._keep_player_visible:
+            self._show_player_bar_idle(None, None)
+        else:
+            self._hide_player_bar()
         self._queue_index = -1
 
     def _show_player_context_menu(self, event: tk.Event):
         mp = self._media_player
+        stopped = mp._stopped
         paused = mp._audio_paused
-        play_label = "Pause" if not paused else "Play"
+
+        if stopped and 0 <= self._queue_index < len(self._queue):
+            play_label = "Play"
+            play_cmd = lambda: self._play_audio(self._queue[self._queue_index])
+        elif paused:
+            play_label = "Play"
+            play_cmd = mp.toggle_pause
+        else:
+            play_label = "Pause"
+            play_cmd = mp.toggle_pause
 
         loop_var = tk.BooleanVar(value=mp._looping)
 
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0)
-        menu.add_command(label=play_label, command=mp.toggle_pause)
-        menu.add_command(label="Stop", command=self._stop_player)
+        menu.add_command(label=play_label, command=play_cmd)
+        menu.add_command(label="Stop", command=self._stop_playback,
+                         state="disabled" if stopped else "normal")
         shuffle_var = tk.BooleanVar(value=self._shuffle_queue)
         can_shuffle = len(self._queue) >= 2
         menu.add_checkbutton(
@@ -226,10 +257,14 @@ class BrowserPlaybackMixin:
         self._player_tick_id = self.after(500, self._tick_player)
 
     def _tick_player(self):
-        proc = self._media_player._audio_proc
+        mp = self._media_player
+        if mp._stopped:
+            self._player_tick_id = None
+            return
+        proc = mp._audio_proc
         if proc is None or proc.poll() is not None:
-            if self._media_player._looping and self._media_player.playing_song:
-                self._play_audio(self._media_player.playing_song)
+            if mp._looping and mp.playing_song:
+                self._play_audio(mp.playing_song)
                 return
             if self._shuffle_queue and len(self._queue) >= 2:
                 candidates = [i for i in range(len(self._queue)) if i != self._queue_index]
@@ -250,21 +285,21 @@ class BrowserPlaybackMixin:
                 self._queue_index = 0
                 self._play_audio(self._queue[0])
                 return
-            last_song = self._media_player.playing_song
-            last_duration = self._media_player.song_duration
-            self._media_player.stop()
+            last_song = mp.playing_song
+            last_duration = mp.song_duration
+            mp.stop()
             self._show_player_bar_idle(last_song, last_duration)
             self._player_tick_id = None
             return
 
-        elapsed = self._media_player.elapsed_seconds() or 0.0
-        duration = self._media_player.song_duration
-        paused = self._media_player._audio_paused
+        elapsed = mp.elapsed_seconds() or 0.0
+        duration = mp.song_duration
+        paused = mp._audio_paused
 
-        icon = "⏸" if paused else "▶"
-        song = self._media_player.playing_song
+        icon = "▌▌" if paused else "▶"
+        song = mp.playing_song
         name = (song.display_name or song.song_name or "Unknown") if song else ""
-        loop_suffix = " 🔁" if self._media_player._looping else (" 🔀" if self._shuffle_queue else "")
+        loop_suffix = " 🔁" if mp._looping else (" 🔀" if self._shuffle_queue else "")
         self._player_name_label.config(text=f"{icon}  {name}{loop_suffix}")
 
         e_min, e_sec = divmod(int(elapsed), 60)
