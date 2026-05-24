@@ -205,24 +205,32 @@ class BrowserPlaybackMixin:
         mp = self._media_player
         stopped = mp._stopped
         paused = mp._audio_paused
+        queue_empty = not self._queue
 
         if stopped and 0 <= self._queue_index < len(self._queue):
             play_label = "Play"
             play_cmd = lambda: self._play_audio(self._queue[self._queue_index])
+            play_state = "normal"
         elif paused:
             play_label = "Play"
             play_cmd = mp.toggle_pause
+            play_state = "normal"
+        elif queue_empty:
+            play_label = "Pause"
+            play_cmd = mp.toggle_pause
+            play_state = "disabled"
         else:
             play_label = "Pause"
             play_cmd = mp.toggle_pause
+            play_state = "normal"
 
         loop_var = tk.BooleanVar(value=mp._looping)
 
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0)
-        menu.add_command(label=play_label, command=play_cmd)
+        menu.add_command(label=play_label, command=play_cmd, state=play_state)
         menu.add_command(label="Stop", command=self._stop_playback,
-                         state="disabled" if stopped else "normal")
+                         state="disabled" if (stopped or queue_empty) else "normal")
         shuffle_var = tk.BooleanVar(value=self._shuffle_queue)
         can_shuffle = len(self._queue) >= 2
         menu.add_checkbutton(

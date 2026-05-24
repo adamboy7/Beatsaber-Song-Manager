@@ -404,12 +404,18 @@ class QueueWindow(tk.Toplevel):
 
     def _on_right_click(self, event: tk.Event, idx: int, song: "SongInfo"):
         queue = self._browser._queue
+        b = self._browser
+        mp = b._media_player
+        is_active = (idx == b._queue_index and not mp._stopped)
         menu = tk.Menu(
             self, tearoff=0,
             bg="#1e1e1e", fg=TEXT_COLOR,
             activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0,
         )
-        menu.add_command(label="Play",      command=lambda: self._play_from_queue(idx, song))
+        if is_active:
+            menu.add_command(label="Stop", command=b._stop_playback)
+        else:
+            menu.add_command(label="Play", command=lambda: self._play_from_queue(idx, song))
         menu.add_command(label="View Song", command=lambda: self._view_song(song))
         menu.add_separator()
         menu.add_command(
