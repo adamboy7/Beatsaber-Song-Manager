@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import random
 import tkinter as tk
+from tkinter import messagebox
 
 from libraries.constants import ACCENT_COLOR, TEXT_COLOR
 from libraries.song_data import SongInfo
@@ -42,11 +43,34 @@ class BrowserPlaybackMixin:
     def _toggle_loop_queue(self):
         self._loop_queue = self._loop_queue_var.get()
 
+    def _toggle_loop(self):
+        self._media_player.toggle_loop()
+        self._loop_var.set(self._media_player._looping)
+        self._update_status_icon()
+
     def _toggle_shuffle_queue(self):
         self._shuffle_queue = not self._shuffle_queue
         if not self._shuffle_queue:
             self._last_shuffle_index = None
         self._shuffle_queue_var.set(self._shuffle_queue)
+
+    def _update_status_icon(self):
+        mp = self._media_player
+        looping = mp._looping
+        shuffling = self._shuffle_queue
+        self._loop_var.set(looping)
+        if looping and shuffling:
+            self._loop_icon_label.config(image=self._img_loop)
+            self._shuffle_icon_label.config(image=self._img_shuffle)
+        elif looping:
+            self._loop_icon_label.config(image=self._img_status_blank)
+            self._shuffle_icon_label.config(image=self._img_loop)
+        elif shuffling:
+            self._loop_icon_label.config(image=self._img_status_blank)
+            self._shuffle_icon_label.config(image=self._img_shuffle)
+        else:
+            self._loop_icon_label.config(image=self._img_status_blank)
+            self._shuffle_icon_label.config(image=self._img_status_blank)
 
     def _on_space(self, *_):
         if self.focus_get() is self.search_entry:
@@ -141,8 +165,8 @@ class BrowserPlaybackMixin:
     def _show_player_bar(self, song: SongInfo):
         self._stop_idle_animation()
         name = song.display_name or song.song_name or "Unknown"
-        loop_suffix = " 🔁" if self._media_player._looping else (" 🔀" if self._shuffle_queue else "")
-        self._player_name_label.config(text=f"▶  {name}{loop_suffix}")
+        self._player_name_label.config(text=f"▶  {name}")
+        self._update_status_icon()
         self._player_time_label.config(text="0:00")
         self._player_progress["value"] = 0
         if self._keep_player_visible:
@@ -185,10 +209,20 @@ class BrowserPlaybackMixin:
         if self._keep_player_visible:
             if song:
                 name = song.display_name or song.song_name or "Unknown"
-                loop_suffix = " 🔁" if self._media_player._looping else (" 🔀" if self._shuffle_queue else "")
-                self._player_name_label.config(text=f"■  {name}{loop_suffix}")
+                self._player_name_label.config(text=f"■  {name}")
+                self._update_status_icon()
             else:
                 self._show_player_bar_idle(None, None)
+
+    def _confirm_clear_queue(self):
+        if not messagebox.askyesno(
+            "Clear Queue",
+            "Stop playback and clear the entire queue?",
+            icon="warning",
+            default="no",
+        ):
+            return
+        self._stop_player()
 
     def _stop_player(self):
         """Fully stop playback and clear the queue."""
@@ -243,6 +277,9 @@ class BrowserPlaybackMixin:
 
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0)
+        menu.add_command(label="View Queue",
+                         command=self._open_queue_window)
+        menu.add_separator()
         menu.add_command(label=play_label, command=play_cmd, state=play_state)
         menu.add_command(label="Stop", command=self._stop_playback,
                          state="disabled" if (stopped or queue_empty) else "normal")
@@ -255,7 +292,7 @@ class BrowserPlaybackMixin:
             state="normal" if can_shuffle else "disabled",
         )
         menu.add_checkbutton(
-            label="Loop", variable=loop_var, command=mp.toggle_loop,
+            label="Loop", variable=loop_var, command=self._toggle_loop,
             selectcolor=ACCENT_COLOR,
         )
         can_next = not mp._looping and (
@@ -275,8 +312,15 @@ class BrowserPlaybackMixin:
                          state="normal" if can_prev else "disabled",
                          command=self._queue_prev)
         menu.add_separator()
-        menu.add_command(label="View Queue",
-                         command=self._open_queue_window)
+        if queue_empty:
+            menu.add_command(label="Clear Queue", state="disabled")
+        else:
+            menu.add_command(
+                label="Clear Queue",
+                foreground="#ff4444",
+                activeforeground="#ff4444",
+                command=self._confirm_clear_queue,
+            )
         menu.tk_popup(event.x_root, event.y_root)
 
     # ── Periodic tick ─────────────────────────────────────────────────────────
@@ -329,8 +373,8 @@ class BrowserPlaybackMixin:
         icon = "▌▌" if paused else "▶"
         song = mp.playing_song
         name = (song.display_name or song.song_name or "Unknown") if song else ""
-        loop_suffix = " 🔁" if mp._looping else (" 🔀" if self._shuffle_queue else "")
-        self._player_name_label.config(text=f"{icon}  {name}{loop_suffix}")
+        self._player_name_label.config(text=f"{icon}  {name}")
+        self._update_status_icon()
 
         e_min, e_sec = divmod(int(elapsed), 60)
         if duration:

@@ -71,6 +71,17 @@ class QueueWindow(tk.Toplevel):
         self._header_label.pack(side="left")
         self._header_label.bind("<Button-3>", self._on_header_right_click)
         self._header_label.bind("<Button-1>", self._on_header_left_click)
+        _assets = Path(__file__).parent.parent
+        self._img_play = tk.PhotoImage(file=_assets / "Play.png")
+        self._img_pause = tk.PhotoImage(file=_assets / "Pause.png")
+        self._play_btn = tk.Button(
+            header, image=self._img_play,
+            bg="#0d0d1a", activebackground=ACCENT_COLOR,
+            relief="flat", bd=0, padx=3, pady=0,
+            cursor="hand2",
+            command=self._on_play_btn_click,
+        )
+        self._play_btn.pack(side="left", padx=(6, 0))
         self._next_btn = tk.Button(
             header, text="Next ▶",
             font=("Segoe UI", 8),
@@ -167,6 +178,7 @@ class QueueWindow(tk.Toplevel):
             self._last_stopped = new_stopped
             self._last_paused = new_paused
         self._refresh_nav_btns()
+        self._refresh_play_btn()
         self._tick_id = self.after(300, self._tick)
 
     def _refresh_nav_btns(self):
@@ -190,6 +202,27 @@ class QueueWindow(tk.Toplevel):
             fg=TEXT_COLOR if can_prev else SUBTEXT_COLOR,
         )
 
+    def _on_play_btn_click(self, _event=None):
+        b = self._browser
+        mp = b._media_player
+        if not b._queue:
+            return
+        if mp._stopped:
+            b._play_audio(b._queue[b._queue_index])
+        else:
+            mp.toggle_pause()
+
+    def _refresh_play_btn(self):
+        b = self._browser
+        mp = b._media_player
+        has_queue = bool(b._queue)
+        is_playing = has_queue and not mp._stopped and not mp._audio_paused
+        self._play_btn.config(
+            image=self._img_pause if is_playing else self._img_play,
+            state="normal" if has_queue else "disabled",
+            cursor="hand2" if has_queue else "",
+        )
+
     # ── Build / Refresh ──────────────────────────────────────────────────────
 
     def refresh(self):
@@ -210,11 +243,13 @@ class QueueWindow(tk.Toplevel):
                 anchor="center",
             ).pack(pady=30)
             self._refresh_nav_btns()
+            self._refresh_play_btn()
             return
 
         for i, song in enumerate(queue):
             self._build_row(i, song)
         self._refresh_nav_btns()
+        self._refresh_play_btn()
 
     def _row_bg(self, idx: int) -> str:
         if idx in self._selected:
@@ -548,12 +583,6 @@ class QueueWindow(tk.Toplevel):
             command=lambda: self._move_to_bottom(idx),
         )
         menu.add_separator()
-        loop_var = tk.BooleanVar(value=mp._looping)
-        menu.add_checkbutton(
-            label="Loop", variable=loop_var,
-            command=lambda: self._loop_song(idx, song),
-            selectcolor=ACCENT_COLOR,
-        )
         shuffle_var = tk.BooleanVar(value=b._shuffle_queue)
         can_shuffle = len(queue) >= 2
         menu.add_checkbutton(
@@ -561,6 +590,12 @@ class QueueWindow(tk.Toplevel):
             command=b._toggle_shuffle_queue,
             selectcolor=ACCENT_COLOR,
             state="normal" if can_shuffle else "disabled",
+        )
+        loop_var = tk.BooleanVar(value=mp._looping)
+        menu.add_checkbutton(
+            label="Loop", variable=loop_var,
+            command=lambda: self._loop_song(idx, song),
+            selectcolor=ACCENT_COLOR,
         )
         menu.tk_popup(event.x_root, event.y_root)
 

@@ -201,15 +201,19 @@ class BrowserUIMixin:
         self._keep_player_visible_var = tk.BooleanVar(value=True)
         self._loop_queue_var = tk.BooleanVar(value=False)
         self._shuffle_queue_var = tk.BooleanVar(value=False)
+        self._loop_var = tk.BooleanVar(value=False)
         options_menu.add_checkbutton(label="Show Media Player",
                                      variable=self._keep_player_visible_var,
                                      command=self._toggle_keep_player_visible)
-        options_menu.add_checkbutton(label="Loop Queue",
+        options_menu.add_checkbutton(label="Repeat Queue",
                                      variable=self._loop_queue_var,
                                      command=self._toggle_loop_queue)
         options_menu.add_checkbutton(label="Shuffle",
                                      variable=self._shuffle_queue_var,
                                      command=self._toggle_shuffle_queue)
+        options_menu.add_checkbutton(label="Loop",
+                                     variable=self._loop_var,
+                                     command=self._toggle_loop)
         menubar.add_cascade(label="Options", menu=options_menu)
 
         self.config(menu=menubar)
@@ -351,6 +355,22 @@ class BrowserUIMixin:
             anchor="e",
         )
         self._player_time_label.pack(side="right")
+        _assets = Path(__file__).parent.parent
+        self._img_loop = tk.PhotoImage(file=_assets / "Loop.png")
+        self._img_shuffle = tk.PhotoImage(file=_assets / "Shuffle.png")
+        self._img_status_blank = ImageTk.PhotoImage(
+            Image.new("RGBA", (20, 20), (0, 0, 0, 0))
+        )
+        self._shuffle_icon_label = tk.Label(
+            player_top, image=self._img_status_blank,
+            bg="#0d0d1a",
+        )
+        self._shuffle_icon_label.pack(side="right", padx=(0, 4))
+        self._loop_icon_label = tk.Label(
+            player_top, image=self._img_status_blank,
+            bg="#0d0d1a",
+        )
+        self._loop_icon_label.pack(side="right", padx=(0, 2))
 
         style = ttk.Style()
         style.theme_use("default")
@@ -375,6 +395,8 @@ class BrowserUIMixin:
             self._player_bar_frame,
             self._player_name_label,
             self._player_time_label,
+            self._loop_icon_label,
+            self._shuffle_icon_label,
             self._player_progress,
         ):
             _w.bind("<Button-3>", self._show_player_context_menu)
