@@ -514,6 +514,7 @@ class BrowserPlaylistsMixin:
 
     def _open_queue_window(self):
         if self._queue_window and self._queue_window.winfo_exists():
+            self._queue_window.deiconify()
             self._queue_window.lift()
             self._queue_window.focus_force()
             return
