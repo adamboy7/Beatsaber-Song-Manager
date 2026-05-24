@@ -77,6 +77,25 @@ class BrowserPlaybackMixin:
             return
         self._media_player.toggle_pause()
 
+    def _on_player_play_btn_click(self, _event=None):
+        mp = self._media_player
+        if not self._queue:
+            return
+        if mp._stopped:
+            self._play_audio(self._queue[self._queue_index])
+        else:
+            mp.toggle_pause()
+
+    def _refresh_player_play_btn(self):
+        mp = self._media_player
+        has_queue = bool(self._queue)
+        is_playing = has_queue and not mp._stopped and not mp._audio_paused
+        self._player_play_btn.config(
+            image=self._img_pause_bar if is_playing else self._img_play_bar,
+            state="normal" if has_queue else "disabled",
+            cursor="hand2" if has_queue else "",
+        )
+
     def _toggle_mute(self) -> None:
         if self._vol_muted:
             self._vol_muted = False
@@ -272,6 +291,7 @@ class BrowserPlaybackMixin:
             self._hide_player_bar()
         self._queue.clear()
         self._queue_index = -1
+        self._refresh_player_play_btn()
         self._notify_queue_window()
 
     def _stop_audio_keep_queue(self):
@@ -399,6 +419,7 @@ class BrowserPlaybackMixin:
             last_duration = mp.song_duration
             mp.stop()
             self._show_player_bar_idle(last_song, last_duration)
+            self._refresh_player_play_btn()
             self._player_tick_id = None
             return
 
@@ -411,6 +432,7 @@ class BrowserPlaybackMixin:
         name = (song.display_name or song.song_name or "Unknown") if song else ""
         self._player_name_label.config(text=f"{icon}  {name}")
         self._update_status_icon()
+        self._refresh_player_play_btn()
 
         e_min, e_sec = divmod(int(elapsed), 60)
         if duration:
