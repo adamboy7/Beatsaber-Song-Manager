@@ -118,23 +118,23 @@ class QueueWindow(tk.Toplevel):
         )
         self._play_btn.pack(side="left", padx=(6, 0))
         self._next_btn = tk.Button(
-            header, text="Next ▶",
-            font=("Segoe UI", 8),
+            header, text="⏭",
+            font=("Segoe UI", 14),
             bg="#0d0d1a", fg=TEXT_COLOR,
             activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-            relief="flat", bd=0, padx=6,
+            relief="flat", bd=0, padx=4,
             command=browser._queue_next,
         )
         self._next_btn.pack(side="right")
         self._back_btn = tk.Button(
-            header, text="◀ Back",
-            font=("Segoe UI", 8),
+            header, text="⏮",
+            font=("Segoe UI", 14),
             bg="#0d0d1a", fg=TEXT_COLOR,
             activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-            relief="flat", bd=0, padx=6,
+            relief="flat", bd=0, padx=4,
             command=browser._queue_prev,
         )
-        self._back_btn.pack(side="right", padx=(0, 4))
+        self._back_btn.pack(side="right", padx=(0, 2))
 
         container = tk.Frame(self, bg="#0d0d1a")
         container.pack(fill="both", expand=True)

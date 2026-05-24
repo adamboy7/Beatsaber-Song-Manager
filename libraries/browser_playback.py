@@ -60,17 +60,17 @@ class BrowserPlaybackMixin:
         shuffling = self._shuffle_queue
         self._loop_var.set(looping)
         if looping and shuffling:
-            self._loop_icon_label.config(image=self._img_loop)
-            self._shuffle_icon_label.config(image=self._img_shuffle)
+            self._loop_icon_label.config(text="🔁")
+            self._shuffle_icon_label.config(text="🔀")
         elif looping:
-            self._loop_icon_label.config(image=self._img_status_blank)
-            self._shuffle_icon_label.config(image=self._img_loop)
+            self._loop_icon_label.config(text="")
+            self._shuffle_icon_label.config(text="🔁")
         elif shuffling:
-            self._loop_icon_label.config(image=self._img_status_blank)
-            self._shuffle_icon_label.config(image=self._img_shuffle)
+            self._loop_icon_label.config(text="")
+            self._shuffle_icon_label.config(text="🔀")
         else:
-            self._loop_icon_label.config(image=self._img_status_blank)
-            self._shuffle_icon_label.config(image=self._img_status_blank)
+            self._loop_icon_label.config(text="")
+            self._shuffle_icon_label.config(text="")
 
     def _on_space(self, *_):
         if self.focus_get() is self.search_entry:
@@ -91,9 +91,26 @@ class BrowserPlaybackMixin:
         has_queue = bool(self._queue)
         is_playing = has_queue and not mp._stopped and not mp._audio_paused
         self._player_play_btn.config(
-            image=self._img_pause_bar if is_playing else self._img_play_bar,
+            text="⏸" if is_playing else "▶",
             state="normal" if has_queue else "disabled",
             cursor="hand2" if has_queue else "",
+        )
+        if mp._looping or not self._queue:
+            can_next = can_prev = False
+        else:
+            can_next = (
+                self._queue_index + 1 < len(self._queue)
+                or (self._shuffle_queue and len(self._queue) >= 2)
+                or self._loop_queue
+            )
+            can_prev = self._queue_index > 0 or self._loop_queue
+        self._player_next_btn.config(
+            state="normal" if can_next else "disabled",
+            fg=TEXT_COLOR if can_next else "#555577",
+        )
+        self._player_back_btn.config(
+            state="normal" if can_prev else "disabled",
+            fg=TEXT_COLOR if can_prev else "#555577",
         )
 
     def _toggle_mute(self) -> None:

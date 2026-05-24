@@ -355,22 +355,16 @@ class BrowserUIMixin:
             anchor="e",
         )
         self._player_time_label.pack(side="right")
-        _assets = Path(__file__).parent.parent
-        self._img_loop = tk.PhotoImage(file=_assets / "Loop.png")
-        self._img_shuffle = tk.PhotoImage(file=_assets / "Shuffle.png")
-        self._img_status_blank = ImageTk.PhotoImage(
-            Image.new("RGBA", (20, 20), (0, 0, 0, 0))
-        )
-        self._img_play_bar = tk.PhotoImage(file=_assets / "Play.png")
-        self._img_pause_bar = tk.PhotoImage(file=_assets / "Pause.png")
         self._shuffle_icon_label = tk.Label(
-            player_top, image=self._img_status_blank,
-            bg="#0d0d1a",
+            player_top, text="",
+            font=("Segoe UI", 10), width=2,
+            bg="#0d0d1a", fg=ACCENT_COLOR,
         )
         self._shuffle_icon_label.pack(side="right", padx=(0, 4))
         self._loop_icon_label = tk.Label(
-            player_top, image=self._img_status_blank,
-            bg="#0d0d1a",
+            player_top, text="",
+            font=("Segoe UI", 10), width=2,
+            bg="#0d0d1a", fg=ACCENT_COLOR,
         )
         self._loop_icon_label.pack(side="right", padx=(0, 2))
 
@@ -395,7 +389,7 @@ class BrowserUIMixin:
 
         # Volume slider row
         volume_row = tk.Frame(self._player_bar_frame, bg="#0d0d1a")
-        volume_row.pack(fill="x", padx=10, pady=(0, 5))
+        volume_row.pack(fill="x", padx=(10, 0), pady=(0, 5))
 
         self._vol_icon_label = tk.Label(
             volume_row, text="🔊",
@@ -424,14 +418,38 @@ class BrowserUIMixin:
         self._vol_canvas.bind("<Configure>", lambda _: self._draw_vol_canvas())
         self._vol_canvas.bind("<MouseWheel>", lambda e: "break")
 
+        self._player_next_btn = tk.Button(
+            volume_row, text="⏭",
+            font=("Segoe UI", 14),
+            bg="#0d0d1a", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=0, padx=2, pady=0,
+            cursor="hand2",
+            command=self._queue_next,
+        )
+        self._player_next_btn.pack(side="right")
+
         self._player_play_btn = tk.Button(
-            volume_row, image=self._img_play_bar,
-            bg="#0d0d1a", activebackground=ACCENT_COLOR,
+            volume_row, text="▶",
+            font=("Segoe UI", 14),
+            bg="#0d0d1a", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
             relief="flat", bd=0, padx=3, pady=0,
             cursor="hand2",
             command=self._on_player_play_btn_click,
         )
-        self._player_play_btn.pack(side="right", padx=(6, 0))
+        self._player_play_btn.pack(side="right", padx=(4, 4))
+
+        self._player_back_btn = tk.Button(
+            volume_row, text="⏮",
+            font=("Segoe UI", 14),
+            bg="#0d0d1a", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=0, padx=2, pady=0,
+            cursor="hand2",
+            command=self._queue_prev,
+        )
+        self._player_back_btn.pack(side="right", padx=(6, 0))
 
         self._volume_label = tk.Label(
             volume_row, text="75%", width=4,
@@ -450,7 +468,9 @@ class BrowserUIMixin:
             self._player_progress,
             volume_row,
             self._volume_label,
+            self._player_back_btn,
             self._player_play_btn,
+            self._player_next_btn,
         ):
             _w.bind("<Button-3>", self._show_player_context_menu)
 
