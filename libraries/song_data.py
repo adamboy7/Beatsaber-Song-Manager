@@ -5,12 +5,30 @@ import datetime
 from pathlib import Path
 
 
+_TAGS_FILE = "tags.json"
+
+
+def _load_custom_tags(folder: Path) -> frozenset[str]:
+    try:
+        data = json.loads((folder / _TAGS_FILE).read_text(encoding="utf-8"))
+        return frozenset(str(t) for t in data.get("tags", []))
+    except Exception:
+        return frozenset()
+
+
+def save_custom_tags(folder: Path, tags: frozenset | set) -> None:
+    (folder / _TAGS_FILE).write_text(
+        json.dumps({"tags": sorted(tags)}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 class SongInfo:
     __slots__ = (
         "folder", "song_id", "display_name",
         "song_name", "sub_name", "author",
         "mapper", "bpm", "cover_path", "audio_path", "created_at",
-        "diff_labels", "difficulties", "song_hash",
+        "diff_labels", "difficulties", "song_hash", "custom_tags",
     )
 
     def __init__(self, folder: Path):
@@ -27,6 +45,7 @@ class SongInfo:
         self.diff_labels: dict[int, str] = {}
         self.difficulties: set[int] = set()
         self.song_hash: str = ""
+        self.custom_tags: frozenset[str] = frozenset()
         # Use st_birthtime (Windows/macOS) with st_ctime as fallback
         stat = folder.stat()
         self.created_at: float = getattr(stat, "st_birthtime", stat.st_ctime)
@@ -124,6 +143,8 @@ class SongInfo:
                 self.diff_labels = {**other_labels, **standard_labels}
             except Exception:
                 pass
+
+        self.custom_tags = _load_custom_tags(self.folder)
 
         # Build display name
         if self.song_name:

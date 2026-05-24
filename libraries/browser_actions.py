@@ -16,8 +16,8 @@ import shutil
 import tkinter as tk
 from tkinter import messagebox
 
-from libraries.constants import ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR
-from libraries.song_data import SongInfo
+from libraries.constants import ACCENT_COLOR, BG_COLOR, TEXT_COLOR, SUBTEXT_COLOR
+from libraries.song_data import SongInfo, save_custom_tags
 from libraries.asset_editor import bak_files
 from libraries.favorites import add_to_favorites, remove_from_favorites
 from libraries.song_operations import (
@@ -292,6 +292,8 @@ class BrowserActionsMixin:
                                  command=lambda: self._restore_files(song))
             menu.add_command(label="Edit Info",
                              command=lambda: self._edit_song_info(song))
+            menu.add_command(label="Custom Tags…",
+                             command=lambda: self._show_custom_tags_dialog([song]))
         else:
             menu.add_command(label="Copy Link",
                              command=lambda: self._copy(f"https://beatsaver.com/maps/{song.song_id}"),
@@ -353,9 +355,159 @@ class BrowserActionsMixin:
                          command=lambda: self._share_playlist(songs),
                          state="normal")
         menu.add_separator()
+        if shift_held:
+            menu.add_command(label="Custom Tags…",
+                             command=lambda: self._show_custom_tags_dialog(songs))
+            menu.add_separator()
         is_deletable = not any_favorited or shift_held
         menu.add_command(label="Delete",
                          command=lambda: self._delete_songs(songs, shift_held),
                          state="normal" if is_deletable else "disabled",
                          foreground="#ff5555" if is_deletable else SUBTEXT_COLOR)
         menu.tk_popup(event.x_root, event.y_root)
+
+    # ── Custom tags dialog ────────────────────────────────────────────────────
+
+    def _show_custom_tags_dialog(self, songs: list[SongInfo]):
+        n = len(songs)
+        multi = n > 1
+
+        # Build initial tag state: {tag_name: count_of_songs_with_tag}
+        all_tags: dict[str, int] = {}
+        for song in songs:
+            for t in song.custom_tags:
+                all_tags[t] = all_tags.get(t, 0) + 1
+
+        # Track changes as net additions/removals
+        added: set[str] = set()
+        removed: set[str] = set()
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Custom Tags" if not multi else f"Custom Tags — {n} songs")
+        dlg.configure(bg=BG_COLOR)
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        tk.Label(dlg, text="Tags:", font=("Segoe UI", 10, "bold"),
+                 bg=BG_COLOR, fg=TEXT_COLOR, anchor="w").pack(
+            fill="x", padx=16, pady=(14, 4))
+
+        # Scrollable tag list
+        list_frame = tk.Frame(dlg, bg="#1e1e1e", bd=1, relief="flat")
+        list_frame.pack(fill="both", expand=True, padx=16)
+
+        canvas = tk.Canvas(list_frame, bg="#1e1e1e", highlightthickness=0, width=320, height=160)
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg="#1e1e1e")
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_inner_resize(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(inner_id, width=canvas.winfo_width())
+
+        inner.bind("<Configure>", _on_inner_resize)
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(inner_id, width=e.width))
+
+        tag_rows: dict[str, tk.Frame] = {}
+
+        def _add_tag_row(tag: str, count: int):
+            row = tk.Frame(inner, bg="#1e1e1e")
+            row.pack(fill="x", pady=1, padx=4)
+            label_text = tag if not multi else f"{tag}  ({count}/{n})"
+            tk.Label(row, text=label_text, font=("Segoe UI", 10),
+                     bg="#1e1e1e", fg=TEXT_COLOR, anchor="w").pack(side="left", fill="x", expand=True)
+            def _remove(t=tag):
+                added.discard(t)
+                removed.add(t)
+                row.destroy()
+                tag_rows.pop(t, None)
+                canvas.update_idletasks()
+                canvas.configure(scrollregion=canvas.bbox("all"))
+            tk.Button(row, text="×", font=("Segoe UI", 10, "bold"),
+                      bg="#1e1e1e", fg="#ff5555",
+                      activebackground="#2a0033", activeforeground="#ff5555",
+                      relief="flat", bd=0, padx=6,
+                      command=_remove).pack(side="right")
+            tag_rows[tag] = row
+
+        for tag in sorted(all_tags):
+            _add_tag_row(tag, all_tags[tag])
+
+        # Add tag entry
+        add_frame = tk.Frame(dlg, bg=BG_COLOR)
+        add_frame.pack(fill="x", padx=16, pady=(10, 4))
+        tk.Label(add_frame, text="Add tag:", font=("Segoe UI", 10),
+                 bg=BG_COLOR, fg=TEXT_COLOR).pack(side="left")
+        entry = tk.Entry(add_frame, font=("Segoe UI", 10),
+                         bg="#1e1e1e", fg=TEXT_COLOR,
+                         insertbackground=TEXT_COLOR,
+                         relief="flat", bd=4, width=22)
+        entry.pack(side="left", padx=(6, 4))
+
+        def _do_add(_event=None):
+            raw = entry.get().strip()
+            if not raw:
+                return
+            # Reject whitespace-containing tags (can't be searched via {custom}:tag)
+            if " " in raw:
+                messagebox.showwarning("Custom Tags", "Tag names cannot contain spaces.", parent=dlg)
+                return
+            tag = raw
+            if tag in tag_rows:
+                entry.delete(0, "end")
+                return
+            removed.discard(tag)
+            added.add(tag)
+            all_tags[tag] = n
+            _add_tag_row(tag, n)
+            canvas.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            entry.delete(0, "end")
+
+        tk.Button(add_frame, text="Add", font=("Segoe UI", 10),
+                  bg=ACCENT_COLOR, fg=TEXT_COLOR,
+                  activebackground="#a01d90", activeforeground=TEXT_COLOR,
+                  relief="flat", padx=10, pady=3,
+                  command=_do_add).pack(side="left")
+        entry.bind("<Return>", _do_add)
+
+        # Save / Cancel
+        btn_frame = tk.Frame(dlg, bg=BG_COLOR)
+        btn_frame.pack(pady=(8, 16))
+
+        def _save(_event=None):
+            for song in songs:
+                existing = set(song.custom_tags)
+                existing -= removed
+                existing |= added
+                save_custom_tags(song.folder, existing)
+                song.custom_tags = frozenset(existing)
+            dlg.destroy()
+            self._render_list()
+
+        def _cancel(_event=None):
+            dlg.destroy()
+
+        tk.Button(btn_frame, text="Save", font=("Segoe UI", 10),
+                  bg=ACCENT_COLOR, fg=TEXT_COLOR,
+                  activebackground="#a01d90", activeforeground=TEXT_COLOR,
+                  relief="flat", padx=14, pady=5,
+                  command=_save).pack(side="left", padx=6)
+        tk.Button(btn_frame, text="Cancel", font=("Segoe UI", 10),
+                  bg="#333333", fg=TEXT_COLOR,
+                  activebackground="#444444", activeforeground=TEXT_COLOR,
+                  relief="flat", padx=14, pady=5,
+                  command=_cancel).pack(side="left", padx=6)
+
+        dlg.bind("<Escape>", _cancel)
+
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{x}+{y}")
+        entry.focus_set()
+        dlg.wait_window()

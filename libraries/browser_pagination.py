@@ -39,7 +39,7 @@ _DIFF_NAME_TO_INT = {
 
 _BPM_OP_RE = re.compile(r'^(<=|>=|<|>|==|=)(\d+(?:\.\d+)?)$')
 
-_KNOWN_TAGS = {"artist", "mapper", "title", "unplayed", "favorite", "fullcombo", "fc", "bpm", "difficulty"}
+_KNOWN_TAGS = {"artist", "mapper", "title", "unplayed", "favorite", "fullcombo", "fc", "bpm", "difficulty", "custom"}
 _YN_TAGS    = {"unplayed", "favorite", "fullcombo", "fc"}
 
 
@@ -116,6 +116,9 @@ def _song_matches_tags(
         elif tag == "difficulty":
             diff_int = _DIFF_NAME_TO_INT.get(value)
             if diff_int is not None and diff_int not in song.difficulties:
+                return False
+        elif tag == "custom":
+            if not any(value == t.lower() for t in song.custom_tags):
                 return False
     return True
 
