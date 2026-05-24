@@ -115,14 +115,11 @@ class BrowserPlaylistsMixin:
 
     def _on_loaded(self, songs: list[SongInfo]):
         self.songs = songs
-        self.filtered = self._apply_view_filters(songs[:])
-        self.page = 0
         self._selected_folders.clear()
         self.selected_indices.clear()
         self.selected_index = None
         self.count_label.config(text=f"({len(songs)} songs)")
-        self.status_bar.config(text=f"{len(songs)} songs found  •  {self.player_data_status}")
-        self._render_list()
+        self._on_search()  # re-applies search bar contents; resolves _pending_install_id
 
         if self._startup_playlist is not None:
             path, self._startup_playlist = self._startup_playlist, None
