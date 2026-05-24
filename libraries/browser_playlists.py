@@ -172,7 +172,7 @@ class BrowserPlaylistsMixin:
 
     # ── Playlist export ───────────────────────────────────────────────────────
 
-    def _share_playlist(self, songs: list[SongInfo]) -> None:
+    def _share_playlist(self, songs: list[SongInfo], parent: tk.Misc | None = None) -> None:
         invalid = [s for s in songs if not s.song_hash]
         valid = [s for s in songs if s.song_hash]
 
@@ -201,6 +201,7 @@ class BrowserPlaylistsMixin:
             title="Save Playlist",
             filetypes=[("Beat Saber Playlist", "*.bplist"), ("All files", "*.*")],
             defaultextension=".bplist",
+            parent=parent or self,
         )
         if not save_path:
             return

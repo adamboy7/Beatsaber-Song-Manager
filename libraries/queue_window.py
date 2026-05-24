@@ -116,7 +116,7 @@ class QueueWindow(tk.Toplevel):
         self.bind("<BackSpace>", self._delete_selected)
         self.bind("<Escape>", self._deselect_all)
         self.bind("<Control-a>", self._select_all)
-        self.bind("<Control-s>", lambda _e: self._browser._share_playlist(list(self._browser._queue)) if self._browser._queue else None)
+        self.bind("<Control-s>", lambda _e: self._browser._share_playlist(list(self._browser._queue), parent=self) if self._browser._queue else None)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._setup_dnd()
@@ -305,7 +305,7 @@ class QueueWindow(tk.Toplevel):
         menu.add_command(
             label="Save Queue",
             state="normal" if queue else "disabled",
-            command=lambda: self._browser._share_playlist(list(queue)),
+            command=lambda: self._browser._share_playlist(list(queue), parent=self),
         )
         menu.add_separator()
         menu.add_command(

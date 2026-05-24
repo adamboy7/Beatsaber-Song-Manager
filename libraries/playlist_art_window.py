@@ -10,6 +10,7 @@ actions to override the art.
 from __future__ import annotations
 
 import io
+import json
 import base64
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -48,6 +49,8 @@ class PlaylistArtWindow(tk.Toplevel):
         self._lbl.dnd_bind('<<DropEnter>>', self._on_drop_enter)
         self._lbl.dnd_bind('<<DropLeave>>', self._on_drop_leave)
 
+        self.bind("<Control-s>", self._save_queue_as_playlist)
+
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.refresh()
 
@@ -78,7 +81,7 @@ class PlaylistArtWindow(tk.Toplevel):
             activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0,
         )
         menu.add_command(label="Replace…", command=self._replace_art)
-        menu.add_command(label="Save as…", command=self._save_art)
+        menu.add_command(label="Save Image…", command=self._save_art)
         menu.add_command(label="Clear Art", command=self._reset_art)
         menu.tk_popup(event.x_root, event.y_root)
 
@@ -157,3 +160,62 @@ class PlaylistArtWindow(tk.Toplevel):
             messagebox.showerror("Error", f"Could not load image:\n{e}", parent=self)
             return
         self.refresh()
+
+    def _save_queue_as_playlist(self, _event=None):
+        import tkinter.filedialog as fd
+        b = self._browser
+        if not b._queue:
+            messagebox.showinfo("Queue Empty", "Add at least one song to the queue first.", parent=self)
+            return
+
+        songs = list(b._queue)
+        invalid = [s for s in songs if not s.song_hash]
+        valid = [s for s in songs if s.song_hash]
+
+        if invalid:
+            names = "\n".join(f"  • {s.display_name}" for s in invalid)
+            if not valid:
+                messagebox.showerror(
+                    "Cannot Create Playlist",
+                    "None of the queued songs have a hash — they may not have been "
+                    "loaded by Beat Saber yet.\n\n" + names,
+                    parent=self,
+                )
+                return
+            if not messagebox.askyesno(
+                "Invalid Songs",
+                f"{len(invalid)} song(s) have no hash and will be skipped:\n\n"
+                + names
+                + f"\n\nContinue with the remaining {len(valid)} song(s)?",
+                parent=self,
+            ):
+                return
+
+        save_path = fd.asksaveasfilename(
+            title="Save Playlist",
+            filetypes=[("Beat Saber Playlist", "*.bplist"), ("All files", "*.*")],
+            defaultextension=".bplist",
+            parent=self,
+        )
+        if not save_path:
+            return
+
+        playlist = {
+            "playlistTitle": Path(save_path).stem,
+            "playlistAuthor": "",
+            "image": b._playlist_art_b64 or "",
+            "customData": {},
+            "songs": [
+                {"key": s.song_id, "hash": s.song_hash, "songName": s.display_name}
+                for s in valid
+            ],
+        }
+
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(playlist, f, indent=2)
+
+        messagebox.showinfo(
+            "Playlist Saved",
+            f"Saved {len(valid)} songs to {Path(save_path).name}",
+            parent=self,
+        )
