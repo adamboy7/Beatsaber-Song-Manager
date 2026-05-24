@@ -496,7 +496,20 @@ class QueueWindow(tk.Toplevel):
             command=lambda: self._move_to_bottom(idx),
         )
         menu.add_separator()
-        menu.add_command(label="Loop", command=lambda: self._loop_song(idx, song))
+        loop_var = tk.BooleanVar(value=mp._looping)
+        menu.add_checkbutton(
+            label="Loop", variable=loop_var,
+            command=lambda: self._loop_song(idx, song),
+            selectcolor=ACCENT_COLOR,
+        )
+        shuffle_var = tk.BooleanVar(value=b._shuffle_queue)
+        can_shuffle = len(queue) >= 2
+        menu.add_checkbutton(
+            label="Shuffle", variable=shuffle_var,
+            command=b._toggle_shuffle_queue,
+            selectcolor=ACCENT_COLOR,
+            state="normal" if can_shuffle else "disabled",
+        )
         menu.add_separator()
         menu.add_command(
             label="Save Queue",
@@ -552,8 +565,7 @@ class QueueWindow(tk.Toplevel):
         if b._queue_index != idx:
             b._queue_index = idx
             b._play_audio(song)
-        if not mp._looping:
-            mp.toggle_loop()
+        mp.toggle_loop()
         b._show_player_bar(song)
 
     def _subtitle(self, song: "SongInfo") -> str:
