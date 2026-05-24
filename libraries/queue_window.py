@@ -318,6 +318,14 @@ class QueueWindow(tk.Toplevel):
             if r:
                 self._add_random_songs(*r)
         menu.add_command(label="Add Random Song…", command=_open_add_random)
+        b = self._browser
+        mp = b._media_player
+        is_playing = queue and not mp._stopped
+        menu.add_command(
+            label="Stop",
+            state="normal" if is_playing else "disabled",
+            command=b._stop_playback,
+        )
         menu.add_separator()
         menu.add_command(
             label="Clear Queue",
