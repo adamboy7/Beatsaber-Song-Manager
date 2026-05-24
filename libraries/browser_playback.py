@@ -285,6 +285,7 @@ class BrowserPlaybackMixin:
                 self._update_status_icon()
             else:
                 self._show_player_bar_idle(None, None)
+        self._refresh_player_play_btn()
 
     def _confirm_clear_queue(self):
         if not messagebox.askyesno(
