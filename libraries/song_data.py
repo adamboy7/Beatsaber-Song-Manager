@@ -10,7 +10,7 @@ class SongInfo:
         "folder", "song_id", "display_name",
         "song_name", "sub_name", "author",
         "mapper", "bpm", "cover_path", "audio_path", "created_at",
-        "diff_labels", "song_hash",
+        "diff_labels", "difficulties", "song_hash",
     )
 
     def __init__(self, folder: Path):
@@ -25,6 +25,7 @@ class SongInfo:
         self.cover_path: Path | None = None
         self.audio_path: Path | None = None
         self.diff_labels: dict[int, str] = {}
+        self.difficulties: set[int] = set()
         self.song_hash: str = ""
         # Use st_birthtime (Windows/macOS) with st_ctime as fallback
         stat = folder.stat()
@@ -95,6 +96,7 @@ class SongInfo:
                         diff_int = _DIFF_STR_TO_INT.get(bm.get("difficulty", ""))
                         if diff_int is None:
                             continue
+                        self.difficulties.add(diff_int)
                         custom = bm.get("customData", {})
                         label = custom.get("difficultyLabel", "").strip()
                         if not label:
@@ -110,6 +112,7 @@ class SongInfo:
                             diff_int = _DIFF_STR_TO_INT.get(bm.get("_difficulty", ""))
                             if diff_int is None:
                                 continue
+                            self.difficulties.add(diff_int)
                             custom = bm.get("_customData", bm.get("customData", {}))
                             label = custom.get("_difficultyLabel", custom.get("difficultyLabel", "")).strip()
                             if not label:

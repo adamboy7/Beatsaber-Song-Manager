@@ -32,6 +32,29 @@ from libraries.song_data import SongInfo, load_songs, load_song_hashes
 
 _TAG_RE = re.compile(r'\{(\w+)\}:(\S+)', re.IGNORECASE)
 
+_DIFF_NAME_TO_INT = {
+    "easy": 0, "normal": 1, "hard": 2, "expert": 3, "expertplus": 4,
+    "0": 0, "1": 1, "2": 2, "3": 3, "4": 4,
+}
+
+_BPM_OP_RE = re.compile(r'^(<=|>=|<|>|==|=)(\d+(?:\.\d+)?)$')
+
+_KNOWN_TAGS = {"artist", "mapper", "title", "unplayed", "favorite", "fullcombo", "fc", "bpm", "difficulty"}
+_YN_TAGS    = {"unplayed", "favorite", "fullcombo", "fc"}
+
+
+def _has_invalid_tags(tags: list[tuple[str, str]]) -> bool:
+    for tag, value in tags:
+        if tag not in _KNOWN_TAGS:
+            return True
+        if tag in _YN_TAGS and value not in ("y", "n"):
+            return True
+        if tag == "bpm" and not _BPM_OP_RE.match(value):
+            return True
+        if tag == "difficulty" and value not in _DIFF_NAME_TO_INT:
+            return True
+    return False
+
 
 def _parse_tags(query: str) -> tuple[list[tuple[str, str]], str]:
     tags: list[tuple[str, str]] = []
@@ -68,6 +91,31 @@ def _song_matches_tags(
             if value == "y" and not is_fav:
                 return False
             if value == "n" and is_fav:
+                return False
+        elif tag in ("fullcombo", "fc"):
+            stats = get_song_stats(song, player_stats)
+            is_fc = any(d.full_combo for d in stats.values()) if stats else False
+            if value == "y" and not is_fc:
+                return False
+            if value == "n" and is_fc:
+                return False
+        elif tag == "bpm":
+            m = _BPM_OP_RE.match(value)
+            if m:
+                op, num = m.group(1), float(m.group(2))
+                bpm = song.bpm
+                passes = (
+                    bpm <= num if op == "<=" else
+                    bpm >= num if op == ">=" else
+                    bpm <  num if op == "<"  else
+                    bpm >  num if op == ">"  else
+                    bpm == num
+                )
+                if not passes:
+                    return False
+        elif tag == "difficulty":
+            diff_int = _DIFF_NAME_TO_INT.get(value)
+            if diff_int is not None and diff_int not in song.difficulties:
                 return False
     return True
 
@@ -361,8 +409,13 @@ class BrowserPaginationMixin:
         from libraries.constants import SUBTEXT_COLOR
         query = self.search_var.get().strip()
         tags, _ = _parse_tags(query)
-        fav_active = self._favorites_only or any(t == "favorite" and v == "y" for t, v in tags)
-        self.search_icon_label.config(fg="#FFD700" if fav_active else SUBTEXT_COLOR)
+        if _has_invalid_tags(tags):
+            color = "#ff5555"
+        elif self._favorites_only or any(t == "favorite" and v == "y" for t, v in tags):
+            color = "#FFD700"
+        else:
+            color = SUBTEXT_COLOR
+        self.search_icon_label.config(fg=color)
 
     def _trigger_install(self, song_id: str):
         self._install_manager.trigger(song_id)

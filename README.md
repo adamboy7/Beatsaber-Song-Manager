@@ -92,6 +92,10 @@ All tags use the syntax `{tag}:value` and are **case-insensitive**. Multiple tag
 | `{unplayed}:n` | `n` | Show only songs that have been played at least once |
 | `{favorite}:y` | `y` | Show only favorited songs |
 | `{favorite}:n` | `n` | Show only non-favorited songs |
+| `{fullcombo}:y` / `{fc}:y` | `y` | Show only songs with a full combo on at least one difficulty |
+| `{fullcombo}:n` / `{fc}:n` | `n` | Show only songs with no full combo on any difficulty |
+| `{bpm}:OP N` | `<=`, `>=`, `<`, `>`, `=`, `==` followed by a number | Filter by BPM — use two tags for a range (e.g. `{bpm}:>=150 {bpm}:<=200`) |
+| `{difficulty}:NAME` | `easy`, `normal`, `hard`, `expert`, `expertplus` or `0`–`4` | Show only songs that include the specified difficulty |
 
 ### Examples
 
@@ -114,6 +118,21 @@ All songs with "escape" in the title.
 camellia
 ```
 Plain-text search across title, artist, mapper, and song ID.
+
+```
+{bpm}:>=150 {bpm}:<=200
+```
+Songs between 150 and 200 BPM.
+
+```
+{difficulty}:expertplus {fullcombo}:n
+```
+Expert+ songs without a full combo.
+
+```
+{difficulty}:4 {favorite}:y
+```
+Favorited Expert+ songs (using the numeric shorthand for difficulty).
 
 > **Note:** The **View** menu also has quick toggles for **Favorites Only** and **Hide Favorites** that work independently of the search bar.
 
