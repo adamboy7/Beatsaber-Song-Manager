@@ -389,7 +389,46 @@ class BrowserUIMixin:
             mode="determinate",
             maximum=100,
         )
-        self._player_progress.pack(fill="x", padx=10, pady=(0, 5))
+        self._player_progress.pack(fill="x", padx=10, pady=(0, 2))
+
+        # Volume slider row
+        volume_row = tk.Frame(self._player_bar_frame, bg="#0d0d1a")
+        volume_row.pack(anchor="w", padx=10, pady=(0, 5))
+
+        self._vol_icon_label = tk.Label(
+            volume_row, text="🔊",
+            bg="#0d0d1a", fg=SUBTEXT_COLOR,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        )
+        self._vol_icon_label.pack(side="left")
+        self._vol_icon_label.bind("<Button-1>", lambda _: self._toggle_mute())
+        self._vol_muted: bool = False
+        self._vol_pre_mute: int = 75
+        self._vol_drag_start: int = 75
+
+        self._volume_var = tk.IntVar(value=75)
+        self._vol_canvas = tk.Canvas(
+            volume_row,
+            width=160,
+            height=20,
+            bg="#0d0d1a",
+            highlightthickness=0,
+            cursor="hand2",
+        )
+        self._vol_canvas.pack(side="left", padx=(6, 6))
+        self._vol_canvas.bind("<Button-1>", self._vol_canvas_press)
+        self._vol_canvas.bind("<B1-Motion>", self._vol_canvas_set)
+        self._vol_canvas.bind("<Configure>", lambda _: self._draw_vol_canvas())
+        self._vol_canvas.bind("<MouseWheel>", lambda e: "break")
+
+        self._volume_label = tk.Label(
+            volume_row, text="75%", width=4,
+            bg="#0d0d1a", fg=SUBTEXT_COLOR,
+            font=("Segoe UI", 8),
+            anchor="e",
+        )
+        self._volume_label.pack(side="right")
 
         for _w in (
             self._player_bar_frame,
@@ -398,6 +437,8 @@ class BrowserUIMixin:
             self._loop_icon_label,
             self._shuffle_icon_label,
             self._player_progress,
+            volume_row,
+            self._volume_label,
         ):
             _w.bind("<Button-3>", self._show_player_context_menu)
 
@@ -415,6 +456,44 @@ class BrowserUIMixin:
             pady=4,
         )
         self.status_bar.pack(fill="x", padx=16, pady=(0, 6))
+
+    # ── Volume canvas slider ──────────────────────────────────────────────────
+
+    def _draw_vol_canvas(self) -> None:
+        c = self._vol_canvas
+        c.delete("all")
+        w = c.winfo_width()
+        if w < 2:
+            return
+        pad = 6
+        cy = c.winfo_height() // 2
+        level = self._volume_var.get()
+        ball_x = pad + level / 100 * (w - 2 * pad)
+        c.create_line(pad, cy, w - pad, cy, fill="#2a2a3a", width=2, capstyle="round")
+        if level > 0:
+            c.create_line(pad, cy, ball_x, cy, fill=ACCENT_COLOR, width=2, capstyle="round")
+        c.create_oval(ball_x - 5, cy - 5, ball_x + 5, cy + 5, fill=ACCENT_COLOR, outline="")
+
+    def _vol_canvas_press(self, event: tk.Event) -> None:
+        self._vol_drag_start = self._volume_var.get()
+        self._vol_canvas_set(event)
+
+    def _vol_canvas_set(self, event: tk.Event) -> None:
+        c = self._vol_canvas
+        pad = 6
+        track_w = max(1, c.winfo_width() - 2 * pad)
+        level = max(0, min(100, int(round((event.x - pad) / track_w * 100))))
+        self._volume_var.set(level)
+        if level == 0 and not self._vol_muted:
+            if self._vol_drag_start > 0:
+                self._vol_pre_mute = self._vol_drag_start
+            self._vol_muted = True
+            self._vol_icon_label.config(text="🔇")
+        elif level > 0 and self._vol_muted:
+            self._vol_muted = False
+            self._vol_icon_label.config(text="🔊")
+        self._draw_vol_canvas()
+        self._on_volume_change(level)
 
     # ── Thumbnails / list rendering ───────────────────────────────────────────
 

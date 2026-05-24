@@ -20,6 +20,7 @@ class MediaPlayer:
         self._pause_start: float | None = None
         self._paused_total: float = 0.0
         self.song_duration: float | None = None
+        self._volume: int = 75
 
     def start_media_keys(self, after_fn, on_stop=None, on_next=None, on_prev=None) -> None:
         from pynput import keyboard as pynput_kb
@@ -113,28 +114,58 @@ class MediaPlayer:
         else:
             self.stop()
 
+    def _launch_ffplay(self, song: SongInfo, seek: float = 0.0) -> bool:
+        """Launch ffplay for song, optionally seeking. Returns True on success."""
+        ffplay = find_ffplay()
+        if not ffplay:
+            return False
+        cmd = [ffplay, "-nodisp", "-autoexit", "-volume", str(self._volume)]
+        if seek > 0.5:
+            cmd += ["-ss", f"{seek:.2f}"]
+        cmd.append(str(song.audio_path))
+        try:
+            self._audio_proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            self.playing_song = song
+            self._play_start = time.time() - seek
+            self._pause_start = None
+            self._paused_total = 0.0
+            return True
+        except Exception as exc:
+            messagebox.showerror("Play Audio Failed", str(exc))
+            return False
+
+    def set_volume(self, level: int) -> None:
+        """Set volume 0-100. Restarts current song at its current position if actively playing."""
+        level = max(0, min(100, level))
+        self._volume = level
+        if (not self._audio_paused and not self._stopped
+                and self._audio_proc and self._audio_proc.poll() is None
+                and self.playing_song):
+            elapsed = self.elapsed_seconds() or 0.0
+            # Don't restart if very near the end
+            if self.song_duration and elapsed > self.song_duration - 0.5:
+                return
+            song = self.playing_song
+            duration = self.song_duration
+            self._audio_proc.terminate()
+            self._audio_proc = None
+            self._audio_paused = False
+            self._launch_ffplay(song, elapsed)
+            self.song_duration = duration
+
     def play(self, song: SongInfo) -> None:
         if not song.audio_path:
             messagebox.showwarning("Play Audio", "This song has no audio file.")
             return
         self._stopped = False
         self.stop()
-        ffplay = find_ffplay()
-        if ffplay:
-            try:
-                self._audio_proc = subprocess.Popen(
-                    [ffplay, "-nodisp", "-autoexit", str(song.audio_path)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-                self.playing_song = song
-                self._play_start = time.time()
-                self._pause_start = None
-                self._paused_total = 0.0
-                self.song_duration = get_audio_duration(song.audio_path)
-            except Exception as exc:
-                messagebox.showerror("Play Audio Failed", str(exc))
+        if self._launch_ffplay(song):
+            self.song_duration = get_audio_duration(song.audio_path)
         else:
             ext = song.audio_path.suffix.lower()
             if ext == ".ogg":

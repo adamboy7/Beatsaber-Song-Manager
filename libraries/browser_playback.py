@@ -77,6 +77,31 @@ class BrowserPlaybackMixin:
             return
         self._media_player.toggle_pause()
 
+    def _toggle_mute(self) -> None:
+        if self._vol_muted:
+            self._vol_muted = False
+            level = self._vol_pre_mute if self._vol_pre_mute > 0 else 75
+            self._volume_var.set(level)
+            self._vol_icon_label.config(text="🔊")
+            self._volume_label.config(text=f"{level}%")
+            self._draw_vol_canvas()
+            self._media_player.set_volume(level)
+        else:
+            self._vol_pre_mute = self._volume_var.get()
+            self._vol_muted = True
+            self._volume_var.set(0)
+            self._vol_icon_label.config(text="🔇")
+            self._volume_label.config(text="0%")
+            self._draw_vol_canvas()
+            self._media_player.set_volume(0)
+
+    def _on_volume_change(self, level: int) -> None:
+        self._volume_label.config(text=f"{level}%")
+        pending = getattr(self, "_volume_apply_id", None)
+        if pending:
+            self.after_cancel(pending)
+        self._volume_apply_id = self.after(250, lambda: self._media_player.set_volume(level))
+
     # ── Play / queue ──────────────────────────────────────────────────────────
 
     def _play_audio(self, song: SongInfo):
