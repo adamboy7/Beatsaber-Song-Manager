@@ -22,6 +22,7 @@ from libraries.asset_editor import bak_files
 from libraries.favorites import add_to_favorites, remove_from_favorites
 from libraries.song_operations import (
     restore_song_files, replace_song_art, replace_song_audio, clear_song_score,
+    save_song_info,
 )
 
 
@@ -73,6 +74,7 @@ class BrowserActionsMixin:
         if errors:
             messagebox.showerror("Restore Failed", "\n".join(errors))
         else:
+            song._parse()
             self._thumbnails.clear()
             self._render_list()
             self.status_bar.config(text=f"Restored {count} file(s) for: {song.display_name}")
@@ -166,6 +168,82 @@ class BrowserActionsMixin:
             errs = "\n".join(f"{s.display_name}: {exc}" for s, exc in failed)
             messagebox.showerror("Delete Failed", f"Failed to delete {len(failed)} song(s):\n{errs}")
 
+    def _edit_song_info(self, song: SongInfo):
+        from libraries.constants import BG_COLOR
+        result = [None]
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Edit Info")
+        dlg.configure(bg=BG_COLOR)
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+
+        form = tk.Frame(dlg, bg=BG_COLOR, padx=20, pady=16)
+        form.pack(fill="both")
+
+        fields = [
+            ("Song Name", song.song_name),
+            ("Artist",    song.author),
+            ("Mapper",    song.mapper),
+        ]
+        entries: list[tk.Entry] = []
+        for label_text, default in fields:
+            row = tk.Frame(form, bg=BG_COLOR)
+            row.pack(fill="x", pady=4)
+            tk.Label(row, text=label_text, width=10, anchor="w",
+                     font=("Segoe UI", 10), bg=BG_COLOR, fg=TEXT_COLOR).pack(side="left")
+            entry = tk.Entry(row, font=("Segoe UI", 10),
+                             bg="#1e1e1e", fg=TEXT_COLOR,
+                             insertbackground=TEXT_COLOR,
+                             relief="flat", bd=4, width=32)
+            entry.insert(0, default)
+            entry.pack(side="left", fill="x", expand=True)
+            entries.append(entry)
+
+        btn_frame = tk.Frame(dlg, bg=BG_COLOR)
+        btn_frame.pack(pady=(4, 16))
+
+        def _ok(_event=None):
+            result[0] = (entries[0].get(), entries[1].get(), entries[2].get())
+            dlg.destroy()
+
+        def _cancel(_event=None):
+            dlg.destroy()
+
+        tk.Button(btn_frame, text="OK", font=("Segoe UI", 10),
+                  bg=ACCENT_COLOR, fg=TEXT_COLOR,
+                  activebackground="#a01d90", activeforeground=TEXT_COLOR,
+                  relief="flat", padx=14, pady=5,
+                  command=_ok).pack(side="left", padx=6)
+        tk.Button(btn_frame, text="Cancel", font=("Segoe UI", 10),
+                  bg="#333333", fg=TEXT_COLOR,
+                  activebackground="#444444", activeforeground=TEXT_COLOR,
+                  relief="flat", padx=14, pady=5,
+                  command=_cancel).pack(side="left", padx=6)
+
+        dlg.bind("<Return>", _ok)
+        dlg.bind("<Escape>", _cancel)
+
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{x}+{y}")
+
+        entries[0].focus_set()
+        entries[0].select_range(0, "end")
+        dlg.wait_window()
+
+        if result[0] is None:
+            return
+        song_name, author, mapper = result[0]
+        err = save_song_info(song, song_name, author, mapper)
+        if err:
+            messagebox.showerror("Edit Info Failed", err)
+            return
+        self._render_list()
+        self.status_bar.config(text=f"Updated info for: {song.display_name}")
+
     # ── Context menus ─────────────────────────────────────────────────────────
 
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
@@ -202,6 +280,8 @@ class BrowserActionsMixin:
             if baks:
                 menu.add_command(label=f"Restore Files ({len(baks)})",
                                  command=lambda: self._restore_files(song))
+            menu.add_command(label="Edit Info",
+                             command=lambda: self._edit_song_info(song))
         else:
             menu.add_command(label="Copy Link",
                              command=lambda: self._copy(f"https://beatsaver.com/maps/{song.song_id}"),

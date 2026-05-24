@@ -1,4 +1,5 @@
 import json
+import shutil
 import webbrowser
 import tkinter as tk
 import tkinter.filedialog as fd
@@ -115,6 +116,61 @@ def replace_song_audio(parent: tk.Misc, song: SongInfo) -> bool:
     except Exception as exc:
         messagebox.showerror("Replace Audio Failed", str(exc))
         return False
+
+
+def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> str | None:
+    """Write song name, artist, and mapper back to Info.dat. Returns error string or None."""
+    info_file = None
+    for name in ("Info.dat", "info.dat", "INFO.DAT"):
+        candidate = song.folder / name
+        if candidate.exists():
+            info_file = candidate
+            break
+    if info_file is None:
+        return "Info.dat not found in song folder."
+    try:
+        data = json.loads(info_file.read_text(encoding="utf-8", errors="replace"))
+    except Exception as exc:
+        return f"Failed to read Info.dat: {exc}"
+    try:
+        is_v4 = data.get("version", "").startswith("4")
+        if is_v4:
+            if "song" not in data:
+                data["song"] = {}
+            data["song"]["title"] = song_name
+            data["song"]["author"] = author
+            new_mappers = [mapper] if mapper else []
+            for bm in data.get("difficultyBeatmaps", []):
+                authors = bm.setdefault("beatmapAuthors", {})
+                existing = authors.get("mappers", [])
+                if existing:
+                    existing[0] = mapper if mapper else ""
+                    if not mapper:
+                        existing.clear()
+                else:
+                    authors["mappers"] = new_mappers[:]
+        else:
+            data["_songName"] = song_name
+            data["_songAuthorName"] = author
+            data["_levelAuthorName"] = mapper
+        shutil.copy2(info_file, info_file.parent / (info_file.name + ".bak"))
+        info_file.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        return f"Failed to write Info.dat: {exc}"
+
+    song.song_name = song_name
+    song.author = author
+    song.mapper = mapper
+    if song_name:
+        song.display_name = song_name
+        if song.sub_name:
+            song.display_name += f" {song.sub_name}"
+    else:
+        song.display_name = song.folder.name
+    return None
 
 
 def clear_song_score(player_dat_path: Path, song: SongInfo) -> tuple[int, dict] | None:
