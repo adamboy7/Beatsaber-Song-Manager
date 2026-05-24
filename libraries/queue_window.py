@@ -71,11 +71,24 @@ class QueueWindow(tk.Toplevel):
         self._header_label.pack(side="left")
         self._header_label.bind("<Button-3>", self._on_header_right_click)
         self._header_label.bind("<Button-1>", self._on_header_left_click)
-        tk.Label(
-            header, text="  drag to reorder  •  shift+click to select  •  ctrl+a  •  del to remove",
+        self._next_btn = tk.Button(
+            header, text="Next ▶",
             font=("Segoe UI", 8),
-            bg="#0d0d1a", fg=SUBTEXT_COLOR,
-        ).pack(side="left")
+            bg="#0d0d1a", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=0, padx=6,
+            command=browser._queue_next,
+        )
+        self._next_btn.pack(side="right")
+        self._back_btn = tk.Button(
+            header, text="◀ Back",
+            font=("Segoe UI", 8),
+            bg="#0d0d1a", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=0, padx=6,
+            command=browser._queue_prev,
+        )
+        self._back_btn.pack(side="right", padx=(0, 4))
 
         container = tk.Frame(self, bg="#0d0d1a")
         container.pack(fill="both", expand=True)
@@ -103,6 +116,7 @@ class QueueWindow(tk.Toplevel):
         self.bind("<BackSpace>", self._delete_selected)
         self.bind("<Escape>", self._deselect_all)
         self.bind("<Control-a>", self._select_all)
+        self.bind("<Control-s>", lambda _e: self._browser._share_playlist(list(self._browser._queue)) if self._browser._queue else None)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._setup_dnd()
@@ -152,7 +166,29 @@ class QueueWindow(tk.Toplevel):
             self._last_queue_index = new_idx
             self._last_stopped = new_stopped
             self._last_paused = new_paused
+        self._refresh_nav_btns()
         self._tick_id = self.after(300, self._tick)
+
+    def _refresh_nav_btns(self):
+        b = self._browser
+        mp = b._media_player
+        if mp._looping or not b._queue:
+            can_next = can_prev = False
+        else:
+            can_next = (
+                b._queue_index + 1 < len(b._queue)
+                or (b._shuffle_queue and len(b._queue) >= 2)
+                or b._loop_queue
+            )
+            can_prev = b._queue_index > 0 or b._loop_queue
+        self._next_btn.config(
+            state="normal" if can_next else "disabled",
+            fg=TEXT_COLOR if can_next else SUBTEXT_COLOR,
+        )
+        self._back_btn.config(
+            state="normal" if can_prev else "disabled",
+            fg=TEXT_COLOR if can_prev else SUBTEXT_COLOR,
+        )
 
     # ── Build / Refresh ──────────────────────────────────────────────────────
 
@@ -173,10 +209,12 @@ class QueueWindow(tk.Toplevel):
                 bg="#0d0d1a", fg=SUBTEXT_COLOR,
                 anchor="center",
             ).pack(pady=30)
+            self._refresh_nav_btns()
             return
 
         for i, song in enumerate(queue):
             self._build_row(i, song)
+        self._refresh_nav_btns()
 
     def _row_bg(self, idx: int) -> str:
         if idx in self._selected:
@@ -264,6 +302,12 @@ class QueueWindow(tk.Toplevel):
             bg="#1e1e1e", fg=TEXT_COLOR,
             activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0,
         )
+        menu.add_command(
+            label="Save Queue",
+            state="normal" if queue else "disabled",
+            command=lambda: self._browser._share_playlist(list(queue)),
+        )
+        menu.add_separator()
         menu.add_command(
             label="Shuffle Order",
             state="normal" if len(queue) > 1 else "disabled",
@@ -510,12 +554,6 @@ class QueueWindow(tk.Toplevel):
             selectcolor=ACCENT_COLOR,
             state="normal" if can_shuffle else "disabled",
         )
-        menu.add_separator()
-        menu.add_command(
-            label="Save Queue",
-            state="normal" if self._browser._queue else "disabled",
-            command=lambda: self._browser._share_playlist(list(self._browser._queue)),
-        )
         menu.tk_popup(event.x_root, event.y_root)
 
     def _view_song(self, song: "SongInfo"):
@@ -700,6 +738,8 @@ class QueueWindow(tk.Toplevel):
                 self._selected.discard(idx)
             else:
                 self._selected.add(idx)
+        elif len(self._selected) == 1 and idx in self._selected:
+            self._selected.discard(idx)
         else:
             self._selected = {idx}
         self._update_row_colors()

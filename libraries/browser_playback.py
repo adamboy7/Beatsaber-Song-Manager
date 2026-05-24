@@ -97,6 +97,9 @@ class BrowserPlaybackMixin:
         if next_idx < len(self._queue):
             self._queue_index = next_idx
             self._play_audio(self._queue[next_idx])
+        elif self._loop_queue and self._queue:
+            self._queue_index = 0
+            self._play_audio(self._queue[0])
 
     def _queue_prev(self) -> None:
         if self._media_player._looping:
@@ -104,6 +107,17 @@ class BrowserPlaybackMixin:
         if self._queue_index > 0:
             self._queue_index -= 1
             self._play_audio(self._queue[self._queue_index])
+        elif self._loop_queue and self._queue:
+            if self._shuffle_queue and len(self._queue) >= 2:
+                candidates = [i for i in range(len(self._queue)) if i != self._queue_index]
+                prev_idx = random.choice(candidates)
+                self._last_shuffle_index = prev_idx
+                self._queue_index = prev_idx
+                self._play_audio(self._queue[prev_idx])
+            else:
+                last_idx = len(self._queue) - 1
+                self._queue_index = last_idx
+                self._play_audio(self._queue[last_idx])
 
     # ── Player bar ────────────────────────────────────────────────────────────
 
@@ -243,8 +257,15 @@ class BrowserPlaybackMixin:
             label="Loop", variable=loop_var, command=mp.toggle_loop,
             selectcolor=ACCENT_COLOR,
         )
-        can_next = not mp._looping and (self._queue_index + 1 < len(self._queue) or (self._shuffle_queue and len(self._queue) >= 2))
-        can_prev = not mp._looping and (self._queue_index > 0)
+        can_next = not mp._looping and (
+            self._queue_index + 1 < len(self._queue)
+            or (self._shuffle_queue and len(self._queue) >= 2)
+            or (self._loop_queue and bool(self._queue))
+        )
+        can_prev = not mp._looping and (
+            self._queue_index > 0
+            or (self._loop_queue and bool(self._queue))
+        )
         menu.add_separator()
         menu.add_command(label="Next",
                          state="normal" if can_next else "disabled",

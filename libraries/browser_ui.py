@@ -647,6 +647,13 @@ class BrowserUIMixin:
                 self.selected_index = idx
                 if 0 <= local_idx < len(self._row_frames):
                     self._recolor_row(self._row_frames[local_idx], SELECTED_BG)
+        elif len(self.selected_indices) == 1 and idx in self.selected_indices:
+            self.selected_indices.clear()
+            self._selected_folders.clear()
+            self.selected_index = None
+            if 0 <= local_idx < len(self._row_frames):
+                self._recolor_row(self._row_frames[local_idx], ITEM_BG)
+            self.status_bar.config(text="")
         else:
             for i in self.selected_indices:
                 li = i - page_start
