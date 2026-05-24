@@ -269,7 +269,11 @@ class QueueWindow(tk.Toplevel):
             state="normal" if len(queue) > 1 else "disabled",
             command=self._shuffle_queue_order,
         )
-        menu.add_command(label="Add Random Song…", command=self._show_add_random_dialog)
+        def _open_add_random():
+            r = self._show_add_random_dialog()
+            if r:
+                self._add_random_songs(*r)
+        menu.add_command(label="Add Random Song…", command=_open_add_random)
         menu.add_separator()
         menu.add_command(
             label="Clear Queue",
@@ -294,7 +298,9 @@ class QueueWindow(tk.Toplevel):
             )
         self.refresh()
 
-    def _show_add_random_dialog(self):
+    def _show_add_random_dialog(
+        self, locked_count: int | None = None
+    ) -> "tuple[str, int] | None":
         result: dict = {"query": None, "n": None}
 
         dlg = tk.Toplevel(self)
@@ -335,12 +341,13 @@ class QueueWindow(tk.Toplevel):
 
         tk.Label(bottom_frame, text="Count:", bg=BG_COLOR, fg=TEXT_COLOR,
                  font=("Segoe UI", 9)).pack(side="left")
-        count_var = tk.StringVar(value="1")
+        count_var = tk.StringVar(value=str(locked_count) if locked_count is not None else "1")
         tk.Spinbox(
             bottom_frame, from_=1, to=999, textvariable=count_var,
             bg="#1e1e1e", fg=TEXT_COLOR, buttonbackground="#1e1e1e",
             insertbackground=TEXT_COLOR, relief="flat", font=("Segoe UI", 9),
             width=6,
+            state="disabled" if locked_count is not None else "normal",
         ).pack(side="left", padx=(4, 0))
 
         def _ok(_event=None):
@@ -372,7 +379,8 @@ class QueueWindow(tk.Toplevel):
         self.wait_window(dlg)
 
         if result["n"] is not None:
-            self._add_random_songs(result["query"] or "", result["n"])
+            return (result["query"] or "", result["n"])
+        return None
 
     def _add_random_songs(self, query: str, n: int):
         b = self._browser
@@ -390,6 +398,64 @@ class QueueWindow(tk.Toplevel):
         picks = pick_random_songs(filtered_not_in_queue, unfiltered_pool, n)
         if picks:
             b._add_to_queue(picks)
+
+    def _random_replace(self, idx: int):
+        if idx in self._selected and len(self._selected) > 1:
+            sorted_indices = sorted(self._selected)
+            locked = len(sorted_indices)
+        else:
+            sorted_indices = [idx]
+            locked = None
+
+        r = self._show_add_random_dialog(locked_count=locked)
+        if not r:
+            return
+        query, n = r
+
+        b = self._browser
+        all_songs = b.songs
+
+        # Exclude queue songs except the ones being replaced (they're leaving)
+        replacing_folders = {str(b._queue[i].folder) for i in sorted_indices}
+        queue_folders = {str(s.folder) for s in b._queue} - replacing_folders
+
+        filtered_pool = None
+        if query:
+            filtered = filter_songs(all_songs, query, b.player_stats, b.favorite_ids)
+            filtered_pool = [s for s in filtered if str(s.folder) not in queue_folders]
+
+        unfiltered_pool = [s for s in all_songs if str(s.folder) not in queue_folders]
+        if not unfiltered_pool:
+            unfiltered_pool = all_songs
+
+        picks = pick_random_songs(filtered_pool, unfiltered_pool, n)
+        if not picks:
+            return
+
+        queue = b._queue
+        curr = b._queue_index
+        playing_replaced = curr in set(sorted_indices)
+
+        if len(sorted_indices) > 1:
+            new_playing_song = None
+            for i, qi in enumerate(sorted_indices):
+                queue[qi] = picks[i]
+                if qi == curr:
+                    new_playing_song = picks[i]
+            if playing_replaced and new_playing_song is not None:
+                b._queue_index = curr
+                b._play_audio(new_playing_song)
+        else:
+            qi = sorted_indices[0]
+            queue[qi : qi + 1] = picks
+            if playing_replaced:
+                b._queue_index = qi
+                b._play_audio(picks[0])
+            elif curr > qi:
+                b._queue_index = curr + (len(picks) - 1)
+
+        self._selected.clear()
+        self.refresh()
 
     def _confirm_clear_queue(self):
         if not messagebox.askyesno(
@@ -417,6 +483,7 @@ class QueueWindow(tk.Toplevel):
         else:
             menu.add_command(label="Play", command=lambda: self._play_from_queue(idx, song))
         menu.add_command(label="View Song", command=lambda: self._view_song(song))
+        menu.add_command(label="Random Replace…", command=lambda: self._random_replace(idx))
         menu.add_separator()
         menu.add_command(
             label="Move to Top",
@@ -605,11 +672,18 @@ class QueueWindow(tk.Toplevel):
     # ── Selection & Delete ───────────────────────────────────────────────────
 
     def _on_click(self, event: tk.Event, idx: int):
-        if event.state & 0x1 and len(self._selected) == 1:
+        ctrl = bool(event.state & 0x4)
+        shift = bool(event.state & 0x1)
+        if ctrl:
+            if idx in self._selected:
+                self._selected.discard(idx)
+            else:
+                self._selected.add(idx)
+        elif shift and len(self._selected) == 1:
             anchor = next(iter(self._selected))
             lo, hi = min(anchor, idx), max(anchor, idx)
             self._selected = set(range(lo, hi + 1))
-        elif event.state & 0x1:
+        elif shift:
             if idx in self._selected:
                 self._selected.discard(idx)
             else:
