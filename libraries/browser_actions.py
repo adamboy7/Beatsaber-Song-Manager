@@ -170,6 +170,17 @@ class BrowserActionsMixin:
 
     def _edit_song_info(self, song: SongInfo):
         from libraries.constants import BG_COLOR
+        confirmed = messagebox.askokcancel(
+            "Warning — Edit Info",
+            "Modifying song info changes the data used to generate a song's hash in SongCore.\n\n"
+            "This may:\n"
+            "  • Alter how high scores are tracked\n"
+            "  • Cause inconsistencies when importing or sharing playlists\n\n"
+            "Continue?",
+        )
+        if not confirmed:
+            return
+
         result = [None]
 
         dlg = tk.Toplevel(self)
@@ -290,7 +301,8 @@ class BrowserActionsMixin:
             if baks:
                 menu.add_command(label=f"Restore Files ({len(baks)})",
                                  command=lambda: self._restore_files(song))
-            menu.add_command(label="Edit Info",
+            menu.add_command(label="Edit Info", foreground="#ff4444",
+                             activeforeground="#ff4444",
                              command=lambda: self._edit_song_info(song))
             menu.add_command(label="Custom Tags…",
                              command=lambda: self._show_custom_tags_dialog([song]))
