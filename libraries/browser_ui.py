@@ -394,8 +394,8 @@ class BrowserUIMixin:
 
         self._vol_icon_label = tk.Label(
             volume_row, text="🔊",
-            bg="#0d0d1a", fg=SUBTEXT_COLOR,
-            font=("Segoe UI", 9),
+            bg="#0d0d1a", fg="white",
+            font=("Segoe UI", 11),
             cursor="hand2",
         )
         self._vol_icon_label.pack(side="left")
