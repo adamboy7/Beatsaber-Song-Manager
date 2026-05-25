@@ -79,6 +79,10 @@ class PlaylistInstaller:
         prerequisites weren't met. Completion is reported asynchronously
         through ``complete_cb``.
         """
+        # Tear down any prior install (server + watcher) so back-to-back
+        # calls don't leak the previous loopback HTTPServer / thread.
+        self.cancel()
+
         if not self.has_handler():
             self._status_cb(
                 "bsplaylist:// handler not found — install Mod Assistant or "
@@ -225,12 +229,16 @@ class PlaylistInstaller:
                 if current != last_count:
                     last_count = current
                     stable_since = time.monotonic()
-                elif (
-                    current == 0
-                    and time.monotonic() - stable_since > self.NO_PROGRESS_GIVEUP
-                ):
+                elif time.monotonic() - stable_since > self.NO_PROGRESS_GIVEUP:
+                    # Progress has stalled for too long — bail rather than
+                    # waiting out the full DEFAULT_TIMEOUT. Report success
+                    # iff at least one expected song made it in before the
+                    # stall (matches the post-timeout heuristic below).
                     if gen == self._gen:
-                        self._after(0, lambda: self._on_complete(gen, False))
+                        self._after(
+                            0,
+                            lambda: self._on_complete(gen, last_count > 0),
+                        )
                     return
 
                 time.sleep(2)

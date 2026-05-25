@@ -115,7 +115,9 @@ def _song_matches_tags(
                     return False
         elif tag == "difficulty":
             diff_int = _DIFF_NAME_TO_INT.get(value)
-            if diff_int is not None and diff_int not in song.difficulties:
+            # Fail closed on unrecognised values so a typo doesn't silently
+            # disable the filter and let every song through.
+            if diff_int is None or diff_int not in song.difficulties:
                 return False
         elif tag == "custom":
             if not any(value == t.lower() for t in song.custom_tags):
@@ -343,7 +345,7 @@ class BrowserPaginationMixin:
     def _extract_song_id(self, query: str) -> str | None:
         """Return the BeatSaver song ID if query is a one-click or map URL, else None."""
         q = query.strip()
-        m = re.match(r'^beatsaver://([A-Za-z0-9]+)/?$', q, re.IGNORECASE)
+        m = re.match(r'^beatsaver://([A-Za-z0-9]+)(?:[/?#]|$)', q, re.IGNORECASE)
         if m:
             return m.group(1).lower()
         m = re.match(r'^https?://beatsaver\.com/maps/([A-Za-z0-9]+)', q, re.IGNORECASE)

@@ -171,8 +171,15 @@ def main():
     sys.argv = normalized
 
     # Move any playlist path to the front so --randomAdd's greedy nargs='+' can't consume it.
-    _playlist_toks = [t for t in sys.argv[1:] if not t.startswith('-') and Path(t).suffix.lower() in {'.bplist', '.json'}]
-    _other_toks    = [t for t in sys.argv[1:] if t not in _playlist_toks]
+    # Partition by index (not value) so a non-playlist token that happens to match a
+    # playlist token's string isn't accidentally pulled out with it.
+    _playlist_toks: list[str] = []
+    _other_toks: list[str] = []
+    for _tok in sys.argv[1:]:
+        if not _tok.startswith('-') and Path(_tok).suffix.lower() in {'.bplist', '.json'}:
+            _playlist_toks.append(_tok)
+        else:
+            _other_toks.append(_tok)
     sys.argv = [sys.argv[0]] + _playlist_toks + _other_toks
 
     parser = argparse.ArgumentParser(
@@ -187,7 +194,7 @@ def main():
             "  Browser.py playlist.bplist --shuffle\n"
             "      Shuffle the playlist in-place and exit.\n"
             "\n"
-            "  Browser.py playlist.bplist --randomAdd 10 \"stars>5\"\n"
+            "  Browser.py playlist.bplist --randomAdd 10 \"{difficulty}:expertplus\"\n"
             "      Append 10 random songs matching the filter and exit.\n"
             "\n"
             "  Browser.py new.bplist --randomAdd 20\n"
@@ -265,7 +272,11 @@ def main():
             print,
             _on_complete,
         )
-        installer.install(playlist_path, expected_keys)
+        if not installer.install(playlist_path, expected_keys):
+            # install() returned False without scheduling _complete_cb
+            # (e.g. handler missing, playlist vanished, or server start
+            # failed). Don't block on _done forever.
+            sys.exit(1)
         _done.wait()
         sys.exit(0 if _success[0] else 1)
 

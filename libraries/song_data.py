@@ -46,9 +46,14 @@ class SongInfo:
         self.difficulties: set[int] = set()
         self.song_hash: str = ""
         self.custom_tags: frozenset[str] = frozenset()
-        # Use st_birthtime (Windows/macOS) with st_ctime as fallback
-        stat = folder.stat()
-        self.created_at: float = getattr(stat, "st_birthtime", stat.st_ctime)
+        # Use st_birthtime (Windows/macOS) with st_ctime as fallback.
+        # A racy filesystem (folder deleted mid-scan, permission denied)
+        # shouldn't take down the whole load_songs() call.
+        try:
+            stat = folder.stat()
+            self.created_at: float = getattr(stat, "st_birthtime", stat.st_ctime)
+        except OSError:
+            self.created_at = 0.0
         self._parse()
 
     def _parse(self):
@@ -202,9 +207,14 @@ def compute_song_hash(song_folder: Path, info_file: Path | None = None) -> str:
     is_v4 = str(data.get("version", "")).startswith("4")
     if is_v4:
         for bm in data.get("difficultyBeatmaps", []):
-            fn = bm.get("beatmapDataFilename") or bm.get("lightshowDataFilename")
-            if fn:
-                diff_filenames.append(fn)
+            # SongCore hashes both the beatmap file and the lightshow file
+            # when present, in the order they appear on the entry.
+            beatmap_fn = bm.get("beatmapDataFilename")
+            if beatmap_fn:
+                diff_filenames.append(beatmap_fn)
+            lightshow_fn = bm.get("lightshowDataFilename")
+            if lightshow_fn:
+                diff_filenames.append(lightshow_fn)
     else:
         for bms in data.get("_difficultyBeatmapSets", []):
             for bm in bms.get("_difficultyBeatmaps", []):
