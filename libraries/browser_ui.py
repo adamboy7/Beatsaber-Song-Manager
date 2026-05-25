@@ -298,6 +298,7 @@ class BrowserUIMixin:
         self.bind("<space>", self._on_space)
         self.bind("<Escape>", self._deselect_all)
         self.bind("<Control-a>", self._select_all)
+        self.bind("<Control-o>", lambda _: self._open_playlist())
 
         # Pagination controls
         self.pagination_frame = tk.Frame(self, bg=BG_COLOR)
@@ -504,7 +505,7 @@ class BrowserUIMixin:
         c.create_line(pad, cy, w - pad, cy, fill="#2a2a3a", width=2, capstyle="round")
         if level > 0:
             c.create_line(pad, cy, ball_x, cy, fill=ACCENT_COLOR, width=2, capstyle="round")
-        c.create_oval(ball_x - 5, cy - 5, ball_x + 5, cy + 5, fill=ACCENT_COLOR, outline="")
+        c.create_oval(ball_x - 5, cy - 5, ball_x + 5, cy + 5, fill="white", outline=ACCENT_COLOR, width=2)
 
     def _vol_canvas_press(self, event: tk.Event) -> None:
         self._vol_drag_start = self._volume_var.get()

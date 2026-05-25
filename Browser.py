@@ -92,6 +92,7 @@ class SongBrowser(
         try:
             _icon = tk.PhotoImage(file=Path(__file__).parent / "Icon.png")
             self.iconphoto(True, _icon)
+            self._icon = _icon
         except Exception:
             pass
 

@@ -163,6 +163,7 @@ class QueueWindow(tk.Toplevel):
         self.bind("<Escape>", self._deselect_all)
         self.bind("<Control-a>", self._select_all)
         self.bind("<Control-s>", self._on_save_shortcut)
+        self.bind("<Control-o>", lambda _: self._open_playlist())
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._setup_dnd()
@@ -199,6 +200,17 @@ class QueueWindow(tk.Toplevel):
             self._browser._share_playlist(list(self._browser._queue), parent=self)
         else:
             _show_queue_empty_warning(self)
+
+    def _open_playlist(self, _event=None):
+        import tkinter.filedialog as fd
+        path = fd.askopenfilename(
+            title="Open Playlist",
+            filetypes=[("Beat Saber Playlist", "*.bplist"), ("All files", "*.*")],
+            parent=self,
+        )
+        if not path:
+            return
+        self._browser._load_playlist_to_queue(path, anchor=self)
 
     def _on_close(self):
         if self._tick_id:
