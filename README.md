@@ -343,7 +343,7 @@ Add 5 unplayed favorites to an existing playlist, then shuffle it.
 ```
 C:\Users\Adam\Documents\GitHub\Beatsaber-Song-Manager>python Browser.py --randomAdd 5 "{artist}:Miku" --randomAdd 5 "{artist}:Teto" --randomAdd 10 {favorite}:y --shuffle
 ```
-Creates _objectively_ the best playlist: a queue with 5 Miku songs, 5 Teto songs, 10 user favorites, and filally shuffles before opening the UI and playing
+Creates _objectively_ the best playlist: a queue with 5 Miku songs, 5 Teto songs, 10 user favorites, and finally shuffles before opening the UI and playing
 
 ```
 python Browser.py --randomAdd 10 "{unplayed}:n" "{fc}:n" practice.bplist
