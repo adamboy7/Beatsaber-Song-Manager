@@ -116,6 +116,26 @@ class QueueWindow(tk.Toplevel):
             command=self._on_play_btn_click,
         )
         self._play_btn.pack(side="left", padx=(6, 0))
+        self._shuffle_btn = tk.Button(
+            header, text="🔀",
+            font=("Segoe UI", 15),
+            bg="#0d0d1a", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=0, padx=3, pady=0,
+            cursor="hand2",
+            command=self._on_shuffle_btn_click,
+        )
+        self._shuffle_btn.pack(side="left", padx=(4, 0), pady=(0, 1))
+        self._repeat_btn = tk.Button(
+            header, text="🔁",
+            font=("Segoe UI", 15),
+            bg="#0d0d1a", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+            relief="flat", bd=0, padx=2, pady=0,
+            cursor="hand2",
+            command=self._on_repeat_btn_click,
+        )
+        self._repeat_btn.pack(side="left", padx=(2, 0), pady=(0, 1))
         self._next_btn = tk.Button(
             header, text="⏭",
             font=("Segoe UI", 14),
@@ -231,6 +251,8 @@ class QueueWindow(tk.Toplevel):
             self._last_paused = new_paused
         self._refresh_nav_btns()
         self._refresh_play_btn()
+        self._refresh_shuffle_btn()
+        self._refresh_repeat_btn()
         self._tick_id = self.after(300, self._tick)
 
     def _refresh_nav_btns(self):
@@ -276,6 +298,36 @@ class QueueWindow(tk.Toplevel):
             cursor="hand2" if has_queue else "",
         )
 
+    def _on_shuffle_btn_click(self):
+        self._browser._toggle_shuffle_queue()
+        self._refresh_shuffle_btn()
+        self._refresh_nav_btns()
+
+    def _on_repeat_btn_click(self):
+        self._browser._toggle_loop()
+        self._refresh_repeat_btn()
+        self._refresh_nav_btns()
+
+    def _refresh_shuffle_btn(self):
+        b = self._browser
+        can_shuffle = len(b._queue) >= 2
+        active = b._shuffle_queue and can_shuffle
+        self._shuffle_btn.config(
+            fg=ACCENT_COLOR if active else (TEXT_COLOR if can_shuffle else SUBTEXT_COLOR),
+            state="normal" if can_shuffle else "disabled",
+            cursor="hand2" if can_shuffle else "",
+        )
+
+    def _refresh_repeat_btn(self):
+        b = self._browser
+        has_queue = bool(b._queue)
+        active = b._media_player._looping
+        self._repeat_btn.config(
+            fg=ACCENT_COLOR if active else (TEXT_COLOR if has_queue else SUBTEXT_COLOR),
+            state="normal" if has_queue else "disabled",
+            cursor="hand2" if has_queue else "",
+        )
+
     # ── Build / Refresh ──────────────────────────────────────────────────────
 
     def refresh(self):
@@ -297,12 +349,16 @@ class QueueWindow(tk.Toplevel):
             ).pack(pady=30)
             self._refresh_nav_btns()
             self._refresh_play_btn()
+            self._refresh_shuffle_btn()
+            self._refresh_repeat_btn()
             return
 
         for i, song in enumerate(queue):
             self._build_row(i, song)
         self._refresh_nav_btns()
         self._refresh_play_btn()
+        self._refresh_shuffle_btn()
+        self._refresh_repeat_btn()
 
     def _row_bg(self, idx: int) -> str:
         if idx in self._selected:
