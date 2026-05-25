@@ -106,12 +106,11 @@ class QueueWindow(tk.Toplevel):
         self._header_label.pack(side="left")
         self._header_label.bind("<Button-3>", self._on_header_right_click)
         self._header_label.bind("<Button-1>", self._on_header_left_click)
-        _assets = Path(__file__).parent.parent
-        self._img_play = tk.PhotoImage(file=_assets / "Play.png")
-        self._img_pause = tk.PhotoImage(file=_assets / "Pause.png")
         self._play_btn = tk.Button(
-            header, image=self._img_play,
-            bg="#0d0d1a", activebackground=ACCENT_COLOR,
+            header, text="▶",
+            font=("Segoe UI", 14),
+            bg="#0d0d1a", fg=TEXT_COLOR,
+            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
             relief="flat", bd=0, padx=3, pady=0,
             cursor="hand2",
             command=self._on_play_btn_click,
@@ -271,7 +270,8 @@ class QueueWindow(tk.Toplevel):
         has_queue = bool(b._queue)
         is_playing = has_queue and not mp._stopped and not mp._audio_paused
         self._play_btn.config(
-            image=self._img_pause if is_playing else self._img_play,
+            text="⏸" if is_playing else "▶",
+            fg=TEXT_COLOR if has_queue else SUBTEXT_COLOR,
             state="normal" if has_queue else "disabled",
             cursor="hand2" if has_queue else "",
         )
