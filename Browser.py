@@ -169,6 +169,11 @@ def main():
         normalized.append(a)
     sys.argv = normalized
 
+    # Move any playlist path to the front so --randomAdd's greedy nargs='+' can't consume it.
+    _playlist_toks = [t for t in sys.argv[1:] if not t.startswith('-') and Path(t).suffix.lower() in {'.bplist', '.json'}]
+    _other_toks    = [t for t in sys.argv[1:] if t not in _playlist_toks]
+    sys.argv = [sys.argv[0]] + _playlist_toks + _other_toks
+
     parser = argparse.ArgumentParser(
         description="Beat Saber Song Manager",
         epilog=(

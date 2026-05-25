@@ -1,103 +1,140 @@
-# Beat Saber Song Browser
+# Beat Saber Song Manager
 
-A custom song manager, media player, asset editor, and playlist creator for Beat Saber. Browse and search your entire custom song library, play previews, manage favorites, build playlists, and edit song assets — all from one window.
-
----
-
-## Features
-
-- **Song Browser** — Paginated list of your entire CustomLevels library with cover art, BPM, BeatSaver ID, and date added
-- **Advanced Search** — Tag-based filtering by title, artist, mapper, play status, and favorites; combinable with plain-text search
-- **Media Player** — Audio preview playback with queue, shuffle, loop, and media key support
-- **Favorites** — Add/remove favorites synced directly with Beat Saber's PlayerData.dat
-- **Score Display** — Per-difficulty high scores, ranks, play counts, and full combo status read from your save data
-- **Playlist Management** — Import `.bplist` playlists from file or by drag-and-drop; export selections or queue as new playlists
-- **Asset Editor** — Replace a song's cover art or audio file, with automatic backup and OGG conversion
-- **Mod Assistant Integration** — One-click install of songs from BeatSaver URLs directly within the browser
+A music browser, media player, playlist builder, and asset editor for Beat Saber custom maps. Browse your entire CustomLevels library, preview songs, manage favorites, shape playlists, and edit song files — all from one place.
 
 ---
 
-## Requirements
+## Setup
 
-- Beat Saber installed via Steam (the CustomLevels folder is auto-detected from the Steam registry)
-- `ffplay.exe` / `ffmpeg.exe` / `ffprobe.exe` bundled alongside the app (required for audio playback and conversion)
+### Requirements
 
-Python dependencies: `Pillow`, `pynput`, `pydub`, `TkinterDnD2`
+- **ffmpeg** — place `ffmpeg.exe`, `ffplay.exe`, and `ffprobe.exe` next to the application, or add them to your system PATH. [Download ffmpeg](https://ffmpeg.org/download.html)
+- Beat Saber installed via Steam (recommended, but not required — see below)
+
+### How the App Finds Your Files
+
+On launch, the app locates your library automatically:
+
+1. Asks Windows where AppData is → finds your Beat Saber score data (`PlayerData.dat`)
+2. Asks Steam where the game is installed → finds your `CustomLevels` folder
+3. If either step fails, it prompts you to point it to a `CustomLevels` folder manually
+
+The app works even without Beat Saber installed. Point it at any folder of Beat Saber maps and it functions as a standalone music player and playlist manager.
+
+### Mod Assistant (Optional)
+
+Mod Assistant is the backbone for one-click song installation from BeatSaver. If you don't have it, the app can help you download and configure it. Once set up, the install button changes to quick navigation. Everything else works without it.
 
 ---
 
-## Basic Usage
+## How to Read the UI
 
-### Browsing Songs
+Three states, always consistent across every window:
 
-Launch `Browser.py`. Your CustomLevels folder is detected automatically. Songs load in the background and appear in a paginated list (default 50 per page).
+- **White** — clickable
+- **Grey** — not available right now
+- **Highlighted** — something to pay attention to
 
-- **Right-click the page indicator** to change the number of results per page
-- **Right-click Prev/Next** to jump directly to a page number
-- **F5** refreshes the song library and scores
+---
 
-### Playing Songs
+## Main Window
 
-- **Left-click** a song to select it; **right-click** for the context menu
-- Choose **Play** to start immediately, or **Add to Queue** to queue it
-- The player bar appears at the bottom when **Options → Show Media Player** is enabled
-- **Spacebar** toggles play/pause when the search bar is not focused
+### Opening a Playlist
 
-### Viewing Scores
+Four ways, pick what's comfortable:
 
-Each song row shows per-difficulty scores, ranks, and play counts pulled live from your Beat Saber save data. A gold ★ indicates the song is favorited in-game, and colored text denotes a full combo.
+1. **File → Open** or **Ctrl+O** — standard file dialog
+2. **Drag a `.bplist` file onto the window** — drop it anywhere
+3. **Drag a `.bplist` onto the application file itself** — works before the window opens
+4. **Command line** — pass a playlist path as an argument for scripted workflows
+
+When a playlist is already loaded, you'll be asked to overwrite the current queue, append to it, or cancel.
+
+### Finding a Song
+
+**Plain text search** — searches across title, artist, mapper, and BeatSaver ID simultaneously. Forgiving and fast.
+
+**Search tags** — filter by specific fields, play status, favorites, BPM ranges, and difficulty. Multiple tags combine in a single query. See [Search Tags](#search-tags) for the full reference.
+
+**Visual browsing** — scroll through cover art and titles. Sometimes you know what you want when you see it.
+
+**Chained searches** — selections persist across searches. Search for something, select a few songs, change your search, select more. Your picks accumulate. Export the whole selection as a playlist at any time, even if it came from three different searches.
+
+### Playing a Song
+
+- **Right-click → Play** — starts immediately if nothing else is playing
+- **Right-click → Add to Queue** — adds to end of queue
+- **Shift+right-click → Play** — jumps the queue and plays immediately
+- **Command line** — passing a playlist as an argument starts playback of the first song automatically
+
+### Navigating Playback
+
+- **Hardware media keys** — respected system-wide while the app is running
+- **Clickable player controls** — play/pause, next, previous, shuffle, loop
+- **Queue window** — for full queue management, reordering, and editing
+
+The media player bar can be hidden (Options → Show Media Player). If you prefer controlling playback through media keys and the Queue window alone, you can keep the main window lean or minimize it entirely.
+
+### Song Actions
+
+**Ctrl+Click** on a song's cover art or title opens its BeatSaver page in your browser.
+
+Right-click a song for:
+
+- **Play / Add to Queue**
+- **Add to Favorites / Remove from Favorites**
+- **Copy Link** — copies the BeatSaver URL to clipboard
+- **Copy Name** — copies the song's display name
+- **More from This Artist / More from This Mapper** — instantly filters the library to that artist or mapper
+- **Open Folder…** — opens the song's folder in Explorer
+- **Delete** — disabled for favorited songs unless Shift is held
+
+Right-click a multi-selection for:
+
+- **Add to Queue**
+- **Add to Favorites / Remove from Favorites**
+- **Share Playlist** — exports your selection as a new `.bplist` file
+- **Delete**
 
 ### Favorites
 
-Right-click a song and choose **Add to Favorites** or **Remove from Favorites**. Multi-select works too — bulk-add or bulk-remove across any number of songs at once.
+Favorited songs show a gold ★ and are protected from accidental deletion — the delete option won't appear without the Shift override. Right-click to add or remove favorites on single songs or multi-selections.
 
-> **Deletion protection:** Favorited songs cannot be deleted by default. To delete a favorited song, hold **Shift** while right-clicking (single or multi-select) to unlock the delete option.
+The **View** menu has quick toggles for **Favorites Only** and **Hide Favorites** that layer on top of any active search.
 
-### Importing Playlists
+### Scores
 
-- **File → Open Playlist** to browse for a `.bplist` file
-- **Drag and drop** a `.bplist` file onto the browser window
-- If the queue already has songs, you will be prompted to **Overwrite** or **Append** — choose **Append** to combine two playlists into one queue
-- Missing songs in the playlist can be installed automatically via Mod Assistant
+Each song shows per-difficulty high scores, ranks, play counts, and full combo status from your Beat Saber save data. Full combos appear in colored text. Press **F5** to refresh after playing.
 
-### Exporting Playlists
+### Edit Menu (Shift+Right-Click)
 
-Select multiple songs (Shift+click for range, Ctrl+A for all visible), then right-click and choose **Share Playlist** to save them as a new `.bplist` file. Alternatively in the Queue window, right-click and select **Save Queue**
+Shift+right-click unlocks asset editing. All operations that modify a file create a **backup on first edit** — the original is always recoverable. Restore from the same menu.
 
-### Editing Assets
+- **Replace Art** — file picker for common image formats. Resized to match original dimensions. Reflects immediately in the UI.
+- **Replace Audio** — file picker for common audio formats including Beat Saber's native `.ogg`/`.egg`. Non-OGG files are converted automatically.
+- **Edit Info** — shown in red with a warning. Editing metadata changes the song's SHA1 hash, which breaks its identity on BeatSaver and in Mod Assistant (install links, playlist matching). Fine for personal use; avoid if you plan to share the map.
+- **Custom Tags…** — add or remove personal tags on a song (or a multi-selection). Tags are searchable via `{custom}:tagname`.
+- **Clear Score** — removes score data for this song only. All other high scores are preserved.
+- **Restore from Backup** — reverts to the backup created at first edit.
 
-**Shift+right-click** a song to access asset editing options:
+### Search Tags
 
-- **Replace Cover Art** — Select a new image; it will be resized to match the original dimensions. The original is backed up as `.bak`.
-- **Replace Audio** — Select an audio file (OGG, MP3, WAV, FLAC). Non-OGG files are converted automatically. The original is backed up as `.bak`.
-- **Restore from Backup** — Reverts to the `.bak` file if one exists.
-- **Clear Scores** — Removes all score data for this song from your save file (a backup of PlayerData.dat is created first).
-
-### Installing Songs from BeatSaver
-
-Paste a BeatSaver URL (`https://beatsaver.com/maps/ID`) or a `beatsaver://` link into the search bar. An install row appears — press **Enter** or click it to install via Mod Assistant. The browser reloads and re-applies your search automatically after installation. If you do not have mod assistant set up properly, the Song Browser can download the latest release and help you set up one click installs.
-
----
-
-## Search Tags
-
-All tags use the syntax `{tag}:value` and are **case-insensitive**. Multiple tags can be combined in a single query (space-separated). Plain text without a tag searches across title, artist, mapper, and BeatSaver ID simultaneously.
+All tags use `{tag}:value` syntax and are case-insensitive. Multiple tags can be combined in one query (space-separated). Plain text without a tag searches title, artist, mapper, and BeatSaver ID simultaneously.
 
 | Tag | Values | Description |
-|-----|--------|-------------|
-| `{title}:TEXT` | any text | Filter by song name (substring match) |
-| `{artist}:TEXT` | any text | Filter by song artist (substring match) |
+|---|---|---|
+| `{title}:TEXT` | any text | Filter by song title (substring match) |
+| `{artist}:TEXT` | any text | Filter by artist (substring match) |
 | `{mapper}:TEXT` | any text | Filter by mapper name (substring match) |
-| `{unplayed}:y` | `y` | Show only songs with zero plays across all difficulties |
-| `{unplayed}:n` | `n` | Show only songs that have been played at least once |
-| `{favorite}:y` | `y` | Show only favorited songs |
-| `{favorite}:n` | `n` | Show only non-favorited songs |
-| `{fullcombo}:y` / `{fc}:y` | `y` | Show only songs with a full combo on at least one difficulty |
-| `{fullcombo}:n` / `{fc}:n` | `n` | Show only songs with no full combo on any difficulty |
-| `{bpm}:OP N` | `<=`, `>=`, `<`, `>`, `=`, `==` followed by a number | Filter by BPM — use two tags for a range (e.g. `{bpm}:>=150 {bpm}:<=200`) |
-| `{difficulty}:NAME` | `easy`, `normal`, `hard`, `expert`, `expertplus` or `0`–`4` | Show only songs that include the specified difficulty |
+| `{unplayed}:y` / `:n` | `y` or `n` | Only unplayed / only played songs |
+| `{favorite}:y` / `:n` | `y` or `n` | Only favorited / only non-favorited songs |
+| `{fullcombo}:y` / `:n` | `y` or `n` | Only songs with / without a full combo |
+| `{fc}:y` / `:n` | `y` or `n` | Alias for `{fullcombo}` |
+| `{bpm}:OP N` | `<=`, `>=`, `<`, `>`, `=` + number | Filter by BPM — combine two for a range |
+| `{difficulty}:NAME` | `easy`, `normal`, `hard`, `expert`, `expertplus` or `0`–`4` | Only songs that include this difficulty |
+| `{custom}:TAG` | any text | Only songs with this custom tag (exact match, case-insensitive) |
 
-### Examples
+**Examples**
 
 ```
 {mapper}:psi {unplayed}:y
@@ -105,19 +142,9 @@ All tags use the syntax `{tag}:value` and are **case-insensitive**. Multiple tag
 Unplayed songs mapped by Psi.
 
 ```
-{artist}:camellia {favorite}:n
+{artist}:camellia {favorite}:y
 ```
-Non-favorited Camellia songs.
-
-```
-{title}:escape
-```
-All songs with "escape" in the title.
-
-```
-camellia
-```
-Plain-text search across title, artist, mapper, and song ID.
+Favorited Camellia songs.
 
 ```
 {bpm}:>=150 {bpm}:<=200
@@ -132,95 +159,181 @@ Expert+ songs without a full combo.
 ```
 {difficulty}:4 {favorite}:y
 ```
-Favorited Expert+ songs (using the numeric shorthand for difficulty).
+Favorited Expert+ songs (numeric shorthand for difficulty).
 
-> **Note:** The **View** menu also has quick toggles for **Favorites Only** and **Hide Favorites** that work independently of the search bar.
+### Installing from the Search Bar
+
+The search bar doubles as an install target. Paste any of the following and an install row appears at the top of the list — press Enter or click it to proceed.
+
+**Single songs**
+
+- A BeatSaver map URL — `https://beatsaver.com/maps/ID`
+- A one-click link — `beatsaver://ID`
+
+The song is handed to Mod Assistant, and the library reloads automatically when the download finishes.
+
+**Playlists**
+
+- A direct `.bplist` URL — `https://example.com/playlist.bplist`
+- A one-click playlist link — `bsplaylist://playlist/https://…`
+
+The file is downloaded, then handed to Mod Assistant in a single pass. Mod Assistant downloads every missing song at once. The library reloads when it's done.
+
+If Mod Assistant isn't configured, the app will offer to help you set it up.
+
+### Keyboard Shortcuts — Main Window
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+O | Open playlist |
+| Ctrl+A | Select all visible |
+| Escape | Deselect all |
+| Ctrl+Click | Single select toggle (on row); open BeatSaver page (on cover art or title) |
+| Shift+Click | Range select |
+| Shift+Right-Click | Open edit menu |
+| Space | Play / Pause (search bar must be unfocused) |
+| F5 | Refresh library |
+| Delete / Backspace | Delete selected |
+| Enter | Confirm pending install |
 
 ---
 
-## Queue & Playback
+## Queue Window
 
-- **Add to Queue** (context menu or multi-select) adds songs to the playback queue
-- **View → Queue** opens the Queue window, which shows thumbnails and allows drag-to-reorder
-- In the Queue window, **Delete/Backspace** removes selected entries
-- **Shuffle** randomizes the remaining queue; **Loop** repeats the queue after the last song
+The Queue window is a self-contained media player workflow. Open a playlist, shape it, save it — the main window can be minimized or ignored entirely. Media keys work regardless of which window has focus.
+
+### Playback Controls
+
+Clickable buttons for play/pause, shuffle, loop, next, and previous. The **Queue button** opens a menu to clear the queue (with a confirmation prompt). Stop is in the menus.
+
+**Shuffle Order** — different than the shuffle button. If you save after shuffling, the saved order is the shuffled order.
+
+### Reordering
+
+- **Drag and drop** rows to reorder
+- **Menus** for Move to Top / Move to Bottom
+- **Cut/Copy/Paste support** ctrl+ X/C/V
+
+### Replacing Songs
+
+Select one or more songs in the queue, then use Replace. A dialog appears with optional tag filters — press OK with defaults for a random pick from your whole library.
+
+The system always tries to pick songs not already in the queue. If filtered picks run dry, it falls back to unfiltered picks, then allows repeats if the queue is larger than your library.
+
+**Single song selected:** you can increase the count above 1 to insert additional songs at that position, keeping the rest of the queue in order. Useful for mid-queue inserts.
+
+**Multiple songs selected:** the count is locked to match your selection — one replacement per slot. Replaces every song 1:1 in place.
+
+The song being replaced is excluded from its own replacement pick, but may appear again in later replacements. If a song keeps showing up and you don't want it, refine your tag filter or remove it from your library in the main window.
+
+### Cut, Copy, and Paste
+
+The queue has an internal clipboard — your system clipboard is unaffected.
+
+- **Ctrl+C** — copy selected songs to clipboard; clears any pending cut
+- **Ctrl+X** — same as copy, but marks songs with a dark-red tint and leaves them in place until paste
+- **Ctrl+V** — if one song is selected, inserts the clipboard after it; if multiple or none are selected, appends to end; no-op if clipboard is empty
+
+If the currently playing song is marked for cut and you paste, playback stops and resumes from the first non-cut song in the original queue order. Closing the Queue window clears cut markers but keeps the clipboard — paste still works on reopen.
+
+### Saving
+
+**Ctrl+S** saves the current queue as a `.bplist` file. A warning appears if the queue is empty. Right-click → Save Queue also works.
+
+Saved playlists are useful in three ways:
+- Reimport them into the app as a saved session
+- Open with Mod Assistant to install any songs that aren't downloaded yet
+- Drop into Beat Saber's playlist folder to use in-game
+
+### Drag and Drop
+
+Drag a `.bplist` onto the Queue window to open it — same overwrite/append/cancel dialog as the main window.
+
+### View Song
+
+The View Song button brings the selected song into focus in the main window, useful when you want full details (scores, mapper, difficulty info) on a queue item.
+
+### Keyboard Shortcuts — Queue Window
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+O | Open playlist |
+| Ctrl+S | Save queue as playlist |
+| Ctrl+A | Select all |
+| Escape | Deselect all |
+| Ctrl+C | Copy to internal clipboard |
+| Ctrl+X | Cut (dark-red tint until paste) |
+| Ctrl+V | Paste after selection / append to end |
+| Delete / Backspace | Remove selected from queue |
+
+---
+
+## Playlist Art Window
+
+Access via **View → Playlist Art**. Only relevant when you're distributing a playlist to others — if you're just saving your queue for personal use, you can ignore this entirely.
+
+- **New playlist** — cover art defaults to the first song's image automatically
+- **Opened playlist** — existing art is imported; you can export it if you want it for other purposes
+- **Drag an image onto the window** — replaces the current art
+- **Right-click** — replace or export options
+- **Clear** — removes custom art and resets to inheriting the first song's image
 
 ---
 
 ## Media Keys
 
-The player responds to system media keys while the app is running:
+The player responds to system media keys while the app is running, regardless of which window has focus:
 
 | Key | Action |
-|-----|--------|
+|---|---|
 | Play/Pause | Toggle playback |
-| Stop | Stop playback (clears queue)|
+| Stop | Stop playback and clear queue |
 | Next Track | Skip to next in queue |
 | Previous Track | Go back in queue |
 
 ---
 
-## Keyboard Shortcuts
+## Command Line
 
-| Shortcut | Action |
-|----------|--------|
-| `Space` | Play / Pause (player must be visible and search bar unfocused) |
-| `F5` | Refresh song library |
-| `Escape` | Deselect all |
-| `Ctrl+A` | Select all visible songs |
-| `Ctrl+Click` | Open song's BeatSaver page in browser |
-| `Shift+Click` | Range-select songs |
-| `Delete` / `Backspace` | Remove selected |
-| `Enter` | Confirm pending song install (when install row is shown) |
-
----
-
-## Command Line Interface
-
-`Browser.py` accepts optional arguments for headless playlist operations and startup behaviour.
+`Browser.py` accepts optional arguments for headless playlist operations and startup behavior.
 
 ```
-python Browser.py [playlist] [--shuffle] [--randomAdd N [filter...]] ...
+python Browser.py [playlist] [--install] [--shuffle] [--randomAdd N [filter...]] ...
 ```
 
 | Argument | Description |
-|----------|-------------|
-| `playlist` | Path to a `.bplist` or `.json` playlist file (optional) |
-| `--shuffle` | **Headless.** Shuffle the songs in the given playlist file in place and exit. Requires `playlist`. |
-| `--randomAdd N [filter...]` | Add `N` random songs from your library, optionally narrowed by one or more search tags (see [Search Tags](#search-tags)). Can be used multiple times to build composite picks. |
-
-### `--randomAdd` behaviour
-
-| Command | Effect |
-|---------|--------|
-| `python Browser.py --randomAdd 10` | Opens the GUI and pre-populates the queue with 10 random songs. |
-| `python Browser.py --randomAdd 10 new.bplist` | **Headless.** Creates `new.bplist` with 10 random songs and exits (file must not already exist). |
-| `python Browser.py --shuffle --randomAdd 5 existing.bplist` | **Headless.** Adds 5 random songs to `existing.bplist`, shuffles the full list, writes it back, and exits. |
-| `python Browser.py --shuffle existing.bplist` | **Headless.** Shuffles `existing.bplist` in place and exits. |
+|---|---|
+| `playlist` | Path to a `.bplist` or `.json` playlist file |
+| `--install` | **Headless.** Hand the playlist to Mod Assistant via `bsplaylist://`, wait for all missing songs to download, then exit. Requires `playlist` and the `bsplaylist://` protocol handler (Mod Assistant with playlist one-click installs enabled). Exit code 0 on success, 1 on failure. |
+| `--shuffle` | **Headless.** Shuffle the songs in the playlist file in place and exit. Requires `playlist`. |
+| `--randomAdd N [filter...]` | Add N random songs from your library, optionally narrowed by search tags. Can be used multiple times to build composite picks. |
 
 `--randomAdd` avoids duplicates when adding to an existing playlist (matched by song hash). When multiple `--randomAdd` groups are used, each group's picks are excluded from subsequent groups so there is no overlap.
 
-### Pick priority
+### Pick Priority
 
-Each `--randomAdd` group fills its N slots in priority order — no repeats until a pool is fully exhausted:
+Each `--randomAdd` group fills its slots in order — no repeats until a pool is exhausted:
 
-1. **Filtered songs first** — random picks from songs matching the inline filters (no repeats).
-2. **Unfiltered supplement** — if filtered results < N, remaining slots are filled from the rest of the library (also no repeats).
-3. **Repeats as last resort** — only if even the full unfiltered library cannot fill N slots.
-
-If the filter matches zero songs a warning is printed and all N picks come from the full library.
+1. **Filtered songs first** — random picks from songs matching the inline filters
+2. **Unfiltered supplement** — if filtered results are fewer than N, remaining slots are filled from the rest of the library
+3. **Repeats as last resort** — only if even the full library can't fill N slots
 
 ### Examples
 
 ```
-python Browser.py --randomAdd 10 "{mapper}:Fefy" playlist.bplist
+python Browser.py playlist.bplist --install
 ```
-Add 10 songs mapped by Fefy to a playlist (supplements with other songs if fewer than 10 exist).
+Install every missing song in `playlist.bplist` via Mod Assistant and exit.
 
 ```
-python Browser.py --randomAdd 20 "{unplayed}:y" new.bplist
+python Browser.py --randomAdd 10 "{mapper}:Fefy"
 ```
-Create a new playlist of 20 unplayed songs.
+Add 10 maps by Fefy to a playlist (supplements from the full library if fewer than 10 exist).
+
+```
+python Browser.py --randomAdd 20 "{favorite}:y" Jams.bplist
+```
+Create a new playlist of 20 favorite songs.
 
 ```
 python Browser.py --shuffle --randomAdd 5 "{favorite}:y" "{unplayed}:y" existing.bplist
@@ -228,13 +341,11 @@ python Browser.py --shuffle --randomAdd 5 "{favorite}:y" "{unplayed}:y" existing
 Add 5 unplayed favorites to an existing playlist, then shuffle it.
 
 ```
-python Browser.py --randomAdd 15 "{artist}:camellia"
-```
-Open the GUI and pre-load 15 Camellia songs into the queue.
-
-```
 python Browser.py --randomAdd 5 "{artist}:Miku" --randomAdd 5 "{artist}:Teto" new.bplist
 ```
-Create a playlist with 5 Miku songs and 5 Teto songs, with no overlap between groups.
+Create a playlist with 5 Miku songs and 5 Teto songs, no overlap between groups.
 
----
+```
+python Browser.py --randomAdd 10 "{unplayed}:n" "{fc}:n" practice.bplist
+```
+Create a practice playlist of 10 songs you've played at least once but haven't full combo'd yet.
