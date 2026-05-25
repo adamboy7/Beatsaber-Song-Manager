@@ -157,6 +157,9 @@ class BrowserPlaylistsMixin:
                     excluded.update(s.folder for s in picks)
                 if all_picks:
                     self._play_queue(all_picks)
+                    if self._startup_shuffle:
+                        self._startup_shuffle = False
+                        self._shuffle_queue_inplace()
 
     # ── View filters ──────────────────────────────────────────────────────────
 

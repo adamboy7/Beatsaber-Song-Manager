@@ -56,7 +56,7 @@ class SongBrowser(
     BrowserPaginationMixin,
     TkinterDnD.Tk,
 ):
-    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None, startup_random_groups: list[tuple[int, str | None]] | None = None):
+    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None, startup_random_groups: list[tuple[int, str | None]] | None = None, startup_shuffle: bool = False):
         super().__init__()
         self.custom_levels = custom_levels
         self.songs: list[SongInfo] = []
@@ -123,6 +123,7 @@ class SongBrowser(
         self._pending_playlist_queue: list[dict] = []
         self._startup_playlist: Path | None = startup_playlist
         self._startup_random_groups: list[tuple[int, str | None]] = startup_random_groups or []
+        self._startup_shuffle: bool = startup_shuffle
 
         self._install_manager = InstallManager(
             custom_levels,
@@ -204,7 +205,7 @@ def main():
             "on failure or if the bsplaylist:// handler is not registered."
         ),
     )
-    parser.add_argument("--shuffle", action="store_true", help="Shuffle playlist order and write back to file (headless)")
+    parser.add_argument("--shuffle", action="store_true", help="With a playlist: shuffle order and write back to file (headless). Without a playlist: shuffle the --randomAdd queue in place on launch.")
     parser.add_argument("--randomAdd", nargs='+', action='append', metavar=("N", "FILTER"), help="Add N random songs (optional inline filters). May be used multiple times.")
     args = parser.parse_args()
 
@@ -268,10 +269,7 @@ def main():
         _done.wait()
         sys.exit(0 if _success[0] else 1)
 
-    if args.shuffle:
-        if playlist_path is None:
-            print("--shuffle requires a valid .bplist or .json playlist file.")
-            sys.exit(1)
+    if args.shuffle and playlist_path is not None:
         with open(playlist_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         playlist_songs = data.get("songs")
@@ -394,7 +392,7 @@ def main():
             return
         custom_levels = Path(path_str)
 
-    app = SongBrowser(custom_levels, startup_playlist=playlist_path, startup_random_groups=random_groups)
+    app = SongBrowser(custom_levels, startup_playlist=playlist_path, startup_random_groups=random_groups, startup_shuffle=args.shuffle)
     app.mainloop()
 
 

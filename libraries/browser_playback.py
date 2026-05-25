@@ -54,6 +54,20 @@ class BrowserPlaybackMixin:
             self._last_shuffle_index = None
         self._shuffle_queue_var.set(self._shuffle_queue)
 
+    def _shuffle_queue_inplace(self):
+        """Shuffle the queue order, keeping the currently-playing song tracked."""
+        queue = self._queue
+        if len(queue) < 2:
+            return
+        curr = self._queue_index
+        playing = queue[curr] if 0 <= curr < len(queue) else None
+        random.shuffle(queue)
+        if playing is not None:
+            self._queue_index = next(
+                (i for i, s in enumerate(queue) if s is playing), -1
+            )
+        self._notify_queue_window()
+
     def _update_status_icon(self):
         mp = self._media_player
         looping = mp._looping

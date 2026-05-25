@@ -328,12 +328,12 @@ Install every missing song in `playlist.bplist` via Mod Assistant and exit.
 ```
 python Browser.py --randomAdd 10 "{mapper}:Fefy"
 ```
-Add 10 maps by Fefy to a playlist (supplements from the full library if fewer than 10 exist).
+Add 10 maps by Fefy to a queue (supplements from the full library if fewer than 10 exist).
 
 ```
-python Browser.py --randomAdd 20 "{favorite}:y" Jams.bplist
+python Browser.py --randomAdd 20 "{favorite}:y"
 ```
-Create a new playlist of 20 favorite songs and exit.
+Create a queue of 20 favorite songs
 
 ```
 python Browser.py --shuffle --randomAdd 5 "{favorite}:y" "{unplayed}:y" existing.bplist
@@ -341,9 +341,9 @@ python Browser.py --shuffle --randomAdd 5 "{favorite}:y" "{unplayed}:y" existing
 Add 5 unplayed favorites to an existing playlist, then shuffle it.
 
 ```
-python Browser.py --randomAdd 5 "{artist}:Miku" --randomAdd 5 "{artist}:Teto" new.bplist
+C:\Users\Adam\Documents\GitHub\Beatsaber-Song-Manager>python Browser.py --randomAdd 5 "{artist}:Miku" --randomAdd 5 "{artist}:Teto" --randomAdd 10 {favorite}:y --shuffle
 ```
-Create a playlist with 5 Miku songs and 5 Teto songs, no overlap between groups.
+Creates _objectively_ the best playlist: a queue with 5 Miku songs, 5 Teto songs, 10 user favorites, and filally shuffles before opening the UI and playing
 
 ```
 python Browser.py --randomAdd 10 "{unplayed}:n" "{fc}:n" practice.bplist
