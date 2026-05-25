@@ -728,13 +728,18 @@ class BrowserUIMixin:
             for grandchild in child.winfo_children():
                 widgets.append(grandchild)
 
+        browser_targets = {thumb_lbl, title_lbl}
         for w in widgets:
-            w.bind("<Button-1>",         lambda e, i=idx: self._select(i, shift_held=bool(e.state & 0x1)))
-            w.bind("<Control-Button-1>",   lambda _, s=song: webbrowser.open(f"https://beatsaver.com/maps/{s.song_id}") if s.song_id else None)
-            w.bind("<Button-3>",         lambda e, i=idx, s=song: self._on_right_click(e, i, s))
-            w.bind("<Enter>",       lambda e, r=row, s=sep: self._hover(r, s, True))
-            w.bind("<Leave>",       lambda e, r=row, s=sep: self._hover(r, s, False))
-            w.bind("<MouseWheel>",  self._on_mousewheel)
+            w.bind("<Button-1>",        lambda e, i=idx: self._select(i, shift_held=bool(e.state & 0x1)))
+            w.bind("<Button-3>",        lambda e, i=idx, s=song: self._on_right_click(e, i, s))
+            w.bind("<Enter>",           lambda e, r=row, s=sep: self._hover(r, s, True))
+            w.bind("<Leave>",           lambda e, r=row, s=sep: self._hover(r, s, False))
+            w.bind("<MouseWheel>",      self._on_mousewheel)
+            if w in browser_targets:
+                w.bind("<Control-Button-1>",
+                       lambda _, s=song: webbrowser.open(f"https://beatsaver.com/maps/{s.song_id}") if s.song_id else None)
+            else:
+                w.bind("<Control-Button-1>", lambda e, i=idx: self._select(i, ctrl_held=True))
 
     # ── Hover / selection / row coloring ──────────────────────────────────────
 
@@ -787,10 +792,37 @@ class BrowserUIMixin:
         self.status_bar.config(text=f"{n} song{'s' if n != 1 else ''} selected")
         return "break"
 
-    def _select(self, idx: int, shift_held: bool = False):
+    def _select(self, idx: int, shift_held: bool = False, ctrl_held: bool = False):
         self.canvas.focus_set()
         page_start = self.page * self.page_size
         local_idx = idx - page_start
+
+        if ctrl_held:
+            if idx in self.selected_indices:
+                self.selected_indices.discard(idx)
+                self._selected_folders.discard(str(self.filtered[idx].folder))
+                if 0 <= local_idx < len(self._row_frames):
+                    self._recolor_row(self._row_frames[local_idx], ITEM_BG)
+                if self.selected_index == idx:
+                    self.selected_index = max(self.selected_indices) if self.selected_indices else None
+            else:
+                self.selected_indices.add(idx)
+                self._selected_folders.add(str(self.filtered[idx].folder))
+                self.selected_index = idx
+                if 0 <= local_idx < len(self._row_frames):
+                    self._recolor_row(self._row_frames[local_idx], SELECTED_BG)
+            if len(self._selected_folders) > 1:
+                self.status_bar.config(text=f"{len(self._selected_folders)} songs selected")
+            elif self.selected_index is not None:
+                song = self.filtered[self.selected_index]
+                self.status_bar.config(
+                    text=f"Selected: {song.display_name}"
+                         + (f"  •  {song.author}" if song.author else "")
+                         + (f"  •  {song.bpm_str}" if song.bpm_str else "")
+                )
+            else:
+                self.status_bar.config(text="")
+            return
 
         if shift_held and len(self.selected_indices) == 1:
             anchor = next(iter(self.selected_indices))
