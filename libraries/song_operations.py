@@ -153,7 +153,9 @@ def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> 
             data["_songName"] = song_name
             data["_songAuthorName"] = author
             data["_levelAuthorName"] = mapper
-        shutil.copy2(info_file, info_file.parent / (info_file.name + ".bak"))
+        bak = info_file.parent / (info_file.name + ".bak")
+        if not bak.exists():
+            shutil.copy2(info_file, bak)
         info_file.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
             encoding="utf-8",

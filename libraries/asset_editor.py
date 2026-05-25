@@ -53,7 +53,9 @@ def replace_art(cover_path: Path, new_path: str) -> None:
         if orig_format == "JPG":
             orig_format = "JPEG"
 
-    shutil.copy2(cover_path, cover_path.parent / (cover_path.name + ".bak"))
+    bak = cover_path.parent / (cover_path.name + ".bak")
+    if not bak.exists():
+        shutil.copy2(cover_path, bak)
 
     with Image.open(new_path) as new_img:
         if orig_format == "JPEG":
@@ -67,7 +69,9 @@ def replace_audio(audio_path: Path, new_path: str, ffmpeg_path: str) -> None:
     new = Path(new_path)
     ext = new.suffix.lower()
 
-    shutil.copy2(audio_path, audio_path.parent / (audio_path.name + ".bak"))
+    bak = audio_path.parent / (audio_path.name + ".bak")
+    if not bak.exists():
+        shutil.copy2(audio_path, bak)
 
     if ext in (".egg", ".ogg"):
         shutil.copy2(new, audio_path)
