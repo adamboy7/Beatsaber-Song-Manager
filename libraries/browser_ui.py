@@ -565,6 +565,16 @@ class BrowserUIMixin:
         return self._make_placeholder()
 
     def _render_list(self):
+        # Re-apply the canvas window width in case it hasn't been set yet or
+        # the window was resized while a dialog was open.  This is especially
+        # important under Tk 9 (Python 3.14+), which infers a label's wrap
+        # width from the geometry-manager-allocated pixel width; keeping the
+        # canvas window explicitly sized prevents text from wrapping after a
+        # song-info edit.
+        cw = self.canvas.winfo_width()
+        if cw > 1:
+            self.canvas.itemconfig(self.canvas_window, width=cw)
+
         for w in self.list_frame.winfo_children():
             w.destroy()
         self._row_frames.clear()
@@ -646,6 +656,7 @@ class BrowserUIMixin:
             font=("Segoe UI", 11, "bold"),
             bg=ITEM_BG, fg=TEXT_COLOR,
             anchor="w", cursor="hand2",
+            wraplength=0,
         )
         title_lbl.pack(fill="x")
 
@@ -656,6 +667,7 @@ class BrowserUIMixin:
                 font=("Segoe UI", 9),
                 bg=ITEM_BG, fg=SUBTEXT_COLOR,
                 anchor="w",
+                wraplength=0,
             )
             author_lbl.pack(fill="x")
 
@@ -674,6 +686,7 @@ class BrowserUIMixin:
                 font=("Segoe UI", 8),
                 bg=ITEM_BG, fg="#666666",
                 anchor="w",
+                wraplength=0,
             )
             meta_lbl.pack(fill="x")
 
@@ -700,6 +713,7 @@ class BrowserUIMixin:
                     font=("Segoe UI", 8),
                     bg=ITEM_BG, fg="#FFD700" if is_fav else "#888888",
                     anchor="w",
+                    wraplength=0,
                 )
                 plays_lbl.pack(fill="x")
         else:
@@ -709,6 +723,7 @@ class BrowserUIMixin:
                 font=("Courier New", 8),
                 bg=ITEM_BG, fg="#555555",
                 anchor="w",
+                wraplength=0,
             ).pack(fill="x")
             tk.Label(
                 text_frame,
@@ -716,6 +731,7 @@ class BrowserUIMixin:
                 font=("Segoe UI", 8),
                 bg=ITEM_BG, fg="#FFD700" if is_fav else "#555555",
                 anchor="w",
+                wraplength=0,
             ).pack(fill="x")
 
         # Separator

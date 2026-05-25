@@ -216,7 +216,9 @@ class BrowserActionsMixin:
         btn_frame.pack(pady=(4, 16))
 
         def _ok(_event=None):
-            result[0] = (entries[0].get(), entries[1].get(), entries[2].get())
+            # Strip embedded newlines/carriage returns that can slip in via
+            # paste and would cause the title label to render on two lines.
+            result[0] = tuple(e.get().replace("\r", "").replace("\n", "") for e in entries)
             dlg.destroy()
 
         def _cancel(_event=None):
