@@ -60,14 +60,14 @@ class BrowserPlaybackMixin:
         shuffling = self._shuffle_queue
         self._loop_var.set(looping)
         if looping and shuffling:
-            self._loop_icon_label.config(text="🔁")
-            self._shuffle_icon_label.config(text="🔀")
+            self._loop_icon_label.config(text="↻")
+            self._shuffle_icon_label.config(text="⇄")
         elif looping:
             self._loop_icon_label.config(text="")
-            self._shuffle_icon_label.config(text="🔁")
+            self._shuffle_icon_label.config(text="↻")
         elif shuffling:
             self._loop_icon_label.config(text="")
-            self._shuffle_icon_label.config(text="🔀")
+            self._shuffle_icon_label.config(text="⇄")
         else:
             self._loop_icon_label.config(text="")
             self._shuffle_icon_label.config(text="")
