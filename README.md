@@ -333,7 +333,7 @@ Add 10 maps by Fefy to a playlist (supplements from the full library if fewer th
 ```
 python Browser.py --randomAdd 20 "{favorite}:y" Jams.bplist
 ```
-Create a new playlist of 20 favorite songs.
+Create a new playlist of 20 favorite songs and exit.
 
 ```
 python Browser.py --shuffle --randomAdd 5 "{favorite}:y" "{unplayed}:y" existing.bplist
