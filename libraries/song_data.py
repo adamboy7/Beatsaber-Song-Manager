@@ -168,22 +168,24 @@ class SongInfo:
         return "  •  ".join(parts)
 
 
-def compute_song_hash(song_folder: Path) -> str:
+def compute_song_hash(song_folder: Path, info_file: Path | None = None) -> str:
     """Compute the Beat Saber song hash for a folder the way SongCore does:
     SHA1 over Info.dat's bytes followed by the bytes of every difficulty .dat
     file referenced in Info.dat (in the order they appear). Returns an
     uppercase hex digest, or "" if the folder isn't a valid map.
 
+    Pass info_file to override which file is used as Info.dat (e.g. a .bak).
+
     This is the fallback we use when SongCore hasn't yet indexed a song
     (e.g. it was just installed and Beat Saber hasn't been relaunched since).
     """
-    # Find Info.dat (case-insensitive)
-    info_file = None
-    for name in ("Info.dat", "info.dat", "INFO.DAT"):
-        candidate = song_folder / name
-        if candidate.exists():
-            info_file = candidate
-            break
+    if info_file is None:
+        # Find Info.dat (case-insensitive)
+        for name in ("Info.dat", "info.dat", "INFO.DAT"):
+            candidate = song_folder / name
+            if candidate.exists():
+                info_file = candidate
+                break
     if info_file is None:
         return ""
 
