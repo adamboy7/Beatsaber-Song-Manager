@@ -185,7 +185,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Beat Saber Song Manager",
         epilog=(
-            "Headless examples:\n"
+            "Flag precedence:\n"
+            "  --install short-circuits --shuffle and --randomAdd (both ignored).\n"
+            "  --shuffle and --randomAdd may be combined: picks are appended,\n"
+            "  then the result is shuffled and written back.\n"
+            "\n"
+            "Headless examples (exit without launching the GUI):\n"
             "  Browser.py playlist.bplist --install\n"
             "      Install every missing song in playlist.bplist via Mod Assistant\n"
             "      and exit.  Requires Mod Assistant with playlist one-click installs\n"
@@ -195,10 +200,19 @@ def main():
             "      Shuffle the playlist in-place and exit.\n"
             "\n"
             "  Browser.py playlist.bplist --randomAdd 10 \"{difficulty}:expertplus\"\n"
-            "      Append 10 random songs matching the filter and exit.\n"
+            "      Append 10 random songs to the existing playlist and exit.\n"
+            "      If playlist.bplist does not exist yet, it is created with the picks.\n"
             "\n"
-            "  Browser.py new.bplist --randomAdd 20\n"
-            "      Create new.bplist with 20 random songs and exit."
+            "  Browser.py new.bplist --randomAdd 20 --shuffle\n"
+            "      Create new.bplist with 20 random songs, shuffled, and exit.\n"
+            "\n"
+            "GUI examples (launch the browser window):\n"
+            "  Browser.py playlist.bplist\n"
+            "      Open the browser with the given playlist loaded into the queue.\n"
+            "\n"
+            "  Browser.py --randomAdd 20 \"{favorite}:y\" [--shuffle]\n"
+            "      Open the browser with 20 random favorites as the initial queue.\n"
+            "      No file is written; --shuffle (optional) shuffles the queue."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -208,13 +222,44 @@ def main():
         action="store_true",
         help=(
             "Headless: hand PLAYLIST to Mod Assistant via bsplaylist://, wait for "
-            "all missing songs to download, then exit.  Exit code 0 on success, 1 "
-            "on failure or if the bsplaylist:// handler is not registered."
+            "all missing songs to download, then exit.  Takes precedence over "
+            "--shuffle and --randomAdd (both are ignored when --install is set). "
+            "Exit code 0 on success, 1 on failure or if the bsplaylist:// handler "
+            "is not registered."
         ),
     )
-    parser.add_argument("--shuffle", action="store_true", help="With a playlist: shuffle order and write back to file (headless). Without a playlist: shuffle the --randomAdd queue in place on launch.")
-    parser.add_argument("--randomAdd", nargs='+', action='append', metavar=("N", "FILTER"), help="Add N random songs (optional inline filters). May be used multiple times.")
+    parser.add_argument(
+        "--shuffle",
+        action="store_true",
+        help=(
+            "Shuffle song order.  With a playlist arg this is headless: shuffle "
+            "the playlist's songs (after appending any --randomAdd picks) and "
+            "write the playlist back to disk.  Without a playlist arg, shuffle "
+            "the GUI startup queue (built from --randomAdd).  Requires either a "
+            "playlist file or --randomAdd."
+        ),
+    )
+    parser.add_argument(
+        "--randomAdd",
+        nargs='+',
+        action='append',
+        metavar=("N", "FILTER"),
+        help=(
+            "Add N random songs from your library (optional inline filters). "
+            "With a playlist arg this is headless: picks are appended to an "
+            "existing playlist or written to a new playlist, then exit.  Without "
+            "a playlist arg, the picks become the GUI's startup queue (nothing "
+            "is written to disk).  May be used multiple times."
+        ),
+    )
     args = parser.parse_args()
+
+    # --install takes precedence; warn if the user combined it with ignored flags.
+    if args.install and (args.shuffle or args.randomAdd):
+        print(
+            "Note: --install takes precedence; --shuffle and --randomAdd are ignored.",
+            file=sys.stderr,
+        )
 
     def _parse_random_groups(raw_groups):
         if not raw_groups:
@@ -229,11 +274,19 @@ def main():
 
     random_groups = _parse_random_groups(args.randomAdd)
 
-    playlist_path: Path | None = None
-    if args.playlist:
-        candidate = Path(args.playlist)
-        if candidate.suffix.lower() in {".bplist", ".json"} and candidate.is_file():
-            playlist_path = candidate
+    # Resolve playlist arg into two values:
+    #   playlist_arg  — the raw Path, if one was given (file may or may not exist)
+    #   playlist_path — the same Path, but only when it points at an existing
+    #                   .bplist/.json file (used by headless --install and the
+    #                   GUI "load playlist into queue" startup hook)
+    playlist_arg: Path | None = Path(args.playlist) if args.playlist else None
+    playlist_has_valid_suffix = (
+        playlist_arg is not None
+        and playlist_arg.suffix.lower() in {".bplist", ".json"}
+    )
+    playlist_path: Path | None = (
+        playlist_arg if (playlist_has_valid_suffix and playlist_arg.is_file()) else None
+    )
 
     if args.install:
         if playlist_path is None:
@@ -280,14 +333,45 @@ def main():
         _done.wait()
         sys.exit(0 if _success[0] else 1)
 
-    if args.shuffle and playlist_path is not None:
-        with open(playlist_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        playlist_songs = data.get("songs")
-        if not isinstance(playlist_songs, list):
-            print("Playlist has no 'songs' array.")
-            sys.exit(1)
+    # --shuffle requires either an existing playlist file or --randomAdd to
+    # supply songs.  Drops the old GUI-startup-shuffle-without-anything-to-shuffle
+    # silent no-op.
+    if args.shuffle and not playlist_path and not random_groups:
+        if playlist_arg is not None and playlist_has_valid_suffix:
+            # User supplied a playlist arg that just doesn't exist yet.
+            print(
+                f"--shuffle: '{playlist_arg}' does not exist; combine with --randomAdd "
+                "to create it."
+            )
+        else:
+            print("--shuffle requires either an existing playlist file or --randomAdd.")
+        sys.exit(1)
 
+    # ── Headless: --shuffle and/or --randomAdd with a playlist file ──────────
+    # File may already exist (read-modify-write) or be new (create-and-write).
+    # Replaces the previous two separate branches (existing-file shuffle and
+    # new-file randomAdd) which silently dropped flags between them.
+    if playlist_has_valid_suffix and (args.shuffle or random_groups):
+        existing_file = playlist_path is not None
+        if existing_file:
+            with open(playlist_arg, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            playlist_songs = data.get("songs")
+            if not isinstance(playlist_songs, list):
+                print("Playlist has no 'songs' array.")
+                sys.exit(1)
+        else:
+            data = {
+                "playlistTitle": playlist_arg.stem,
+                "playlistAuthor": "",
+                "image": "",
+                "customData": {},
+                "songs": [],
+            }
+            playlist_songs = data["songs"]
+
+        added_count = 0
+        first_pick = None
         if random_groups:
             custom_levels = find_beatsaber_custom_levels()
             if custom_levels is None:
@@ -297,92 +381,74 @@ def main():
             hashes = load_song_hashes(custom_levels)
             for song in library:
                 song.song_hash = hashes.get(song.folder.name, "")
-            existing = {(e.get("hash") or "").upper() for e in playlist_songs}
-            remaining_candidates = [s for s in library if s.song_hash and s.song_hash.upper() not in existing]
+            existing_hashes = {(e.get("hash") or "").upper() for e in playlist_songs}
+            remaining_candidates = [
+                s for s in library
+                if s.song_hash and s.song_hash.upper() not in existing_hashes
+            ]
             if not remaining_candidates:
-                print("Warning: no songs found in library; skipping randomAdd.")
+                print("Warning: no candidate songs available; skipping --randomAdd.")
             else:
                 ps, fi = _load_player_data_headless()
-                total_added = 0
                 for count, filter_str in random_groups:
                     filtered_candidates = None
                     if filter_str:
-                        filtered_candidates = filter_songs(remaining_candidates, filter_str, ps, fi)
+                        filtered_candidates = filter_songs(
+                            remaining_candidates, filter_str, ps, fi
+                        )
                         if not filtered_candidates:
-                            print(f"Warning: filter '{filter_str}' matched no songs; falling back to unfiltered picks.")
-                    picks = pick_random_songs(filtered_candidates, remaining_candidates, count)
+                            print(
+                                f"Warning: filter '{filter_str}' matched no songs; "
+                                "falling back to unfiltered picks."
+                            )
+                    picks = pick_random_songs(
+                        filtered_candidates, remaining_candidates, count
+                    )
                     for song in picks:
+                        if first_pick is None:
+                            first_pick = song
                         playlist_songs.append({
                             "key": song.song_id,
                             "hash": song.song_hash,
                             "songName": song.display_name,
                         })
                     picked_folders = {s.folder for s in picks}
-                    remaining_candidates = [s for s in remaining_candidates if s.folder not in picked_folders]
-                    total_added += len(picks)
-                print(f"Added {total_added} random song(s) to {playlist_path.name}")
+                    remaining_candidates = [
+                        s for s in remaining_candidates if s.folder not in picked_folders
+                    ]
+                    added_count += len(picks)
 
-        random.shuffle(playlist_songs)
+        if args.shuffle:
+            random.shuffle(playlist_songs)
+
+        # New playlists: derive cover art from the first pick when available.
+        if not existing_file and not data.get("image") and first_pick is not None:
+            if first_pick.cover_path and first_pick.cover_path.exists():
+                try:
+                    from PIL import Image
+                    buf = io.BytesIO()
+                    Image.open(first_pick.cover_path).convert("RGB").save(buf, format="JPEG")
+                    data["image"] = base64.b64encode(buf.getvalue()).decode("ascii")
+                except Exception:
+                    pass
+
         data["songs"] = playlist_songs
-        with open(playlist_path, "w", encoding="utf-8") as f:
+        playlist_arg.parent.mkdir(parents=True, exist_ok=True)
+        with open(playlist_arg, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-        print(f"Shuffled {len(playlist_songs)} songs in {playlist_path.name}")
-        sys.exit(0)
 
-    # Headless: --randomAdd N with a playlist path that doesn't exist yet → create it and exit
-    if random_groups and args.playlist:
-        candidate = Path(args.playlist)
-        if not candidate.is_file() and candidate.suffix.lower() in {".bplist", ".json"}:
-            custom_levels = find_beatsaber_custom_levels()
-            if custom_levels is None:
-                print("--randomAdd requires Beat Saber to be found automatically.")
-                sys.exit(1)
-            library = load_songs(custom_levels)
-            hashes = load_song_hashes(custom_levels)
-            for song in library:
-                song.song_hash = hashes.get(song.folder.name, "")
-            remaining_candidates = [s for s in library if s.song_hash]
-            if not remaining_candidates:
-                print("Warning: no songs with hashes found in library.")
-                sys.exit(1)
-            ps, fi = _load_player_data_headless()
-            all_picks = []
-            for count, filter_str in random_groups:
-                filtered_candidates = None
-                if filter_str:
-                    filtered_candidates = filter_songs(remaining_candidates, filter_str, ps, fi)
-                    if not filtered_candidates:
-                        print(f"Warning: filter '{filter_str}' matched no songs; falling back to unfiltered picks.")
-                picks = pick_random_songs(filtered_candidates, remaining_candidates, count)
-                all_picks.extend(picks)
-                picked_folders = {s.folder for s in picks}
-                remaining_candidates = [s for s in remaining_candidates if s.folder not in picked_folders]
-            image_data = ""
-            for song in all_picks:
-                if song.cover_path and song.cover_path.exists():
-                    try:
-                        from PIL import Image
-                        buf = io.BytesIO()
-                        Image.open(song.cover_path).convert("RGB").save(buf, format="JPEG")
-                        image_data = base64.b64encode(buf.getvalue()).decode("ascii")
-                    except Exception:
-                        pass
-                    break
-            playlist = {
-                "playlistTitle": candidate.stem,
-                "playlistAuthor": "",
-                "image": image_data,
-                "customData": {},
-                "songs": [
-                    {"key": s.song_id, "hash": s.song_hash, "songName": s.display_name}
-                    for s in all_picks
-                ],
-            }
-            candidate.parent.mkdir(parents=True, exist_ok=True)
-            with open(candidate, "w", encoding="utf-8") as f:
-                json.dump(playlist, f, indent=2)
-            print(f"Created '{candidate.name}' with {len(all_picks)} random song(s).")
-            sys.exit(0)
+        if not existing_file:
+            shuf = " (shuffled)" if args.shuffle else ""
+            print(f"Created '{playlist_arg.name}' with {len(playlist_songs)} song(s){shuf}.")
+        else:
+            parts = []
+            if added_count:
+                parts.append(f"appended {added_count} song(s)")
+            if args.shuffle:
+                parts.append(f"shuffled {len(playlist_songs)} songs")
+            summary = " and ".join(parts) if parts else "no changes"
+            print(f"{summary.capitalize()} in '{playlist_arg.name}'.")
+        sys.exit(0)
 
     # Try to find custom levels automatically
     custom_levels = find_beatsaber_custom_levels()

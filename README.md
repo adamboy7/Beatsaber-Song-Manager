@@ -303,12 +303,19 @@ python Browser.py [playlist] [--install] [--shuffle] [--randomAdd N [filter...]]
 
 | Argument | Description |
 |---|---|
-| `playlist` | Path to a `.bplist` or `.json` playlist file |
-| `--install` | **Headless.** Hand the playlist to Mod Assistant via `bsplaylist://`, wait for all missing songs to download, then exit. Requires `playlist` and the `bsplaylist://` protocol handler (Mod Assistant with playlist one-click installs enabled). Exit code 0 on success, 1 on failure. |
-| `--shuffle` | **Headless.** Shuffle the songs in the playlist file in place and exit. Requires `playlist`. |
-| `--randomAdd N [filter...]` | Add N random songs from your library, optionally narrowed by search tags. Can be used multiple times to build composite picks. |
+| `playlist` | Path to a `.bplist` or `.json` playlist file. May not exist yet when combined with `--randomAdd` (the file is created). |
+| `--install` | **Headless.** Hand the playlist to Mod Assistant via `bsplaylist://`, wait for all missing songs to download, then exit. Requires an existing `playlist` file and the `bsplaylist://` protocol handler (Mod Assistant with playlist one-click installs enabled). Takes precedence over `--shuffle` and `--randomAdd`, both of which are ignored. Exit code 0 on success, 1 on failure. |
+| `--shuffle` | Shuffle song order. **Headless** when combined with a `playlist` arg: shuffles the playlist's songs (after any `--randomAdd` picks are appended) and writes the playlist back to disk. **GUI** when used with `--randomAdd` alone (no `playlist` arg): shuffles the startup queue. Requires either a `playlist` file or `--randomAdd`. |
+| `--randomAdd N [filter...]` | Add N random songs from your library, optionally narrowed by search tags. **Headless** when combined with a `playlist` arg: appends picks to an existing playlist or writes a new playlist, then exits. **GUI** without a `playlist` arg: the picks become the startup queue (nothing is written to disk). Can be used multiple times to build composite picks. |
 
 `--randomAdd` avoids duplicates when adding to an existing playlist (matched by song hash). When multiple `--randomAdd` groups are used, each group's picks are excluded from subsequent groups so there is no overlap.
+
+### Headless vs. GUI
+
+Every command is one of two modes, decided up front:
+
+- **Headless** — runs to completion and exits. Use for scripted playlist edits. Triggers: `--install`, or any `playlist` arg combined with `--shuffle` and/or `--randomAdd`.
+- **GUI** — launches the browser window. Triggers: a `playlist` arg by itself (loads it into the queue), `--randomAdd` without a `playlist` arg (picks become the queue), or no arguments at all.
 
 ### Pick Priority
 
@@ -338,14 +345,14 @@ Create a queue of 20 favorite songs
 ```
 python Browser.py --shuffle --randomAdd 5 "{favorite}:y" "{unplayed}:y" existing.bplist
 ```
-Add 5 unplayed favorites to an existing playlist, then shuffle it.
+Append 5 unplayed favorites to `existing.bplist`, shuffle it, save, and exit. If `existing.bplist` does not exist, it is created with the picks (still shuffled before saving).
 
 ```
-C:\Users\Adam\Documents\GitHub\Beatsaber-Song-Manager>python Browser.py --randomAdd 5 "{artist}:Miku" --randomAdd 5 "{artist}:Teto" --randomAdd 10 {favorite}:y --shuffle
+python Browser.py --randomAdd 5 "{artist}:Miku" --randomAdd 5 "{artist}:Teto" --randomAdd 10 "{favorite}:y" --shuffle
 ```
 Creates _objectively_ the best playlist: a queue with 5 Miku songs, 5 Teto songs, 10 user favorites, and finally shuffles before opening the UI and playing
 
 ```
 python Browser.py --randomAdd 10 "{unplayed}:n" "{fc}:n" practice.bplist
 ```
-Create a practice playlist of 10 songs you've played at least once but haven't full combo'd yet.
+Create (or append to) `practice.bplist` with 10 songs you've played at least once but haven't full combo'd yet, and exit.

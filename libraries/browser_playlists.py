@@ -132,9 +132,15 @@ class BrowserPlaylistsMixin:
         self.count_label.config(text=f"({len(songs)} songs)")
         self._on_search()  # re-applies search bar contents; resolves _pending_install_id
 
+        # Startup hooks fire once on initial load.  The CLI contract makes
+        # `playlist + --randomAdd` headless, so in practice only one of these
+        # two paths fires here — but we keep both checks defensive so that a
+        # caller wiring up both doesn't silently lose the loaded playlist.
+        startup_playlist_loaded = False
         if self._startup_playlist is not None:
             path, self._startup_playlist = self._startup_playlist, None
             self._load_playlist_to_queue(str(path), anchor=self)
+            startup_playlist_loaded = True
 
         if self._startup_random_groups:
             groups, self._startup_random_groups = self._startup_random_groups, []
@@ -156,10 +162,21 @@ class BrowserPlaylistsMixin:
                     all_picks.extend(picks)
                     excluded.update(s.folder for s in picks)
                 if all_picks:
-                    self._play_queue(all_picks)
-                    if self._startup_shuffle:
-                        self._startup_shuffle = False
-                        self._shuffle_queue_inplace()
+                    # If a startup playlist was just loaded, append picks to
+                    # it rather than overwriting (was: _play_queue silently
+                    # discarded the loaded playlist).
+                    if startup_playlist_loaded:
+                        self._add_to_queue(all_picks)
+                    else:
+                        self._play_queue(all_picks)
+
+        # Shuffle the resulting queue regardless of source (playlist load,
+        # random picks, or both).  Previously this only fired inside the
+        # random-picks branch, so `--shuffle` with a playlist-only startup
+        # was a silent no-op.
+        if self._startup_shuffle:
+            self._startup_shuffle = False
+            self._shuffle_queue_inplace()
 
     # ── View filters ──────────────────────────────────────────────────────────
 
