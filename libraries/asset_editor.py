@@ -3,24 +3,52 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
+
+
+# Thread-local flag toggled by `_no_console_window`. The monkey-patched Popen
+# subclass only applies CREATE_NO_WINDOW when *this* thread has the patch
+# active, so background threads (pynput listener, install watchers, audio
+# Popen, the loopback HTTP server) constructing a Popen concurrently are not
+# affected.
+_quiet_local = threading.local()
+_patch_lock = threading.Lock()
+_patch_depth = 0
+_orig_popen = subprocess.Popen
+
+
+class _Quiet(_orig_popen):
+    def __init__(self, *args, **kwargs):
+        if getattr(_quiet_local, "active", False):
+            flags = kwargs.get("creationflags", 0) or 0
+            creation_flag = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            kwargs["creationflags"] = flags | creation_flag
+        super().__init__(*args, **kwargs)
 
 
 @contextlib.contextmanager
 def _no_console_window():
-    """Temporarily patch subprocess.Popen to suppress Windows console windows."""
-    _orig = subprocess.Popen
+    """Suppress Windows console windows for subprocess.Popen calls in *this* thread.
 
-    class _Quiet(_orig):
-        def __init__(self, *args, **kwargs):
-            kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
-            super().__init__(*args, **kwargs)
-
-    subprocess.Popen = _Quiet
+    The patch is reference-counted across threads so concurrent users don't
+    each toggle the global Popen back to the original prematurely; the
+    creationflags override is scoped to the calling thread via a thread-local.
+    """
+    global _patch_depth
+    with _patch_lock:
+        if _patch_depth == 0:
+            subprocess.Popen = _Quiet  # type: ignore[misc]
+        _patch_depth += 1
+    _quiet_local.active = True
     try:
         yield
     finally:
-        subprocess.Popen = _orig
+        _quiet_local.active = False
+        with _patch_lock:
+            _patch_depth -= 1
+            if _patch_depth == 0:
+                subprocess.Popen = _orig_popen  # type: ignore[misc]
 
 from libraries.song_data import SongInfo
 

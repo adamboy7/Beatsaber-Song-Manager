@@ -229,11 +229,29 @@ def compute_song_hash(song_folder: Path, info_file: Path | None = None) -> str:
         if diff_path.exists():
             try:
                 sha.update(diff_path.read_bytes())
-            except Exception:
+            except Exception as exc:
                 # If a referenced diff can't be read, the hash will differ from
                 # SongCore's — better to bail than to produce a wrong hash.
+                # Log so the silent dedupe/playlist-missing failure is at least
+                # diagnosable from stdout.
+                print(
+                    f"compute_song_hash: skipping {song_folder.name}: "
+                    f"could not read {fn}: {exc}"
+                )
                 return ""
     return sha.hexdigest().upper()
+
+
+def _folder_mtime(folder: Path) -> float:
+    """Return the latest mtime of Info.dat (case-insensitive) or 0.0 if missing."""
+    for name in ("Info.dat", "info.dat", "INFO.DAT"):
+        candidate = folder / name
+        if candidate.exists():
+            try:
+                return candidate.stat().st_mtime
+            except OSError:
+                return 0.0
+    return 0.0
 
 
 def load_song_hashes(custom_levels: Path) -> dict[str, str]:
@@ -242,6 +260,10 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
     Primary source is SongCore's SongHashData.dat. For any custom-level
     folder that file doesn't cover (e.g. songs added since SongCore last
     ran), we fall back to computing the hash from the map files directly.
+
+    The fallback computation is cached in ``<custom_levels>/.bsm_hash_cache.json``
+    keyed by folder name + Info.dat mtime so subsequent launches with the same
+    library skip the expensive SHA1 work for unchanged folders.
     """
     hash_file = custom_levels.parent.parent / "UserData" / "SongCore" / "SongHashData.dat"
     result: dict[str, str] = {}
@@ -255,6 +277,19 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
     except Exception:
         pass
 
+    # Load the sidecar cache (best-effort).
+    cache_path = custom_levels / ".bsm_hash_cache.json"
+    cache: dict[str, dict] = {}
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        if not isinstance(cache, dict):
+            cache = {}
+    except Exception:
+        cache = {}
+
+    new_cache: dict[str, dict] = {}
+    dirty = False
+
     # Fallback: compute hashes for folders SongCore didn't list.
     try:
         for entry in custom_levels.iterdir():
@@ -262,11 +297,34 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
                 continue
             if entry.name in result:
                 continue
+            mtime = _folder_mtime(entry)
+            cached = cache.get(entry.name)
+            if (
+                isinstance(cached, dict)
+                and cached.get("mtime") == mtime
+                and isinstance(cached.get("hash"), str)
+                and cached["hash"]
+            ):
+                result[entry.name] = cached["hash"]
+                new_cache[entry.name] = cached
+                continue
             computed = compute_song_hash(entry)
             if computed:
                 result[entry.name] = computed
+                new_cache[entry.name] = {"mtime": mtime, "hash": computed}
+                dirty = True
     except Exception:
         pass
+
+    # Drop stale entries (folder gone) and persist if we touched anything.
+    if dirty or len(new_cache) != len(cache):
+        try:
+            cache_path.write_text(
+                json.dumps(new_cache, separators=(",", ":")),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
 
     return result
 

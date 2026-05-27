@@ -115,14 +115,25 @@ class BrowserPlaylistsMixin:
         self._load_async()
 
     def _load_async(self):
+        # Tag each background load with a generation counter so that if the user
+        # hammers F5 (or an install completes mid-reload) we can ignore stale
+        # results that would otherwise wipe out the newer load's state.
+        self._load_gen = getattr(self, "_load_gen", 0) + 1
+        gen = self._load_gen
+
         def worker():
             songs = load_songs(self.custom_levels)
             hashes = load_song_hashes(self.custom_levels)
             for song in songs:
                 song.song_hash = hashes.get(song.folder.name, "")
-            self.after(0, lambda: self._on_loaded(songs))
+            self.after(0, lambda: self._maybe_apply_loaded(gen, songs))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _maybe_apply_loaded(self, gen: int, songs: list[SongInfo]):
+        if gen != getattr(self, "_load_gen", 0):
+            return  # superseded by a newer load; drop the stale result
+        self._on_loaded(songs)
 
     def _on_loaded(self, songs: list[SongInfo]):
         self.songs = songs
@@ -510,8 +521,8 @@ class BrowserPlaylistsMixin:
                 tmp_path = Path(tmp_str)
                 urllib.request.urlretrieve(url, tmp_path)
                 self.after(0, lambda: self._on_playlist_url_downloaded(tmp_path))
-            except Exception as e:
-                self.after(0, lambda: self.status_bar.config(text=f"Download failed: {e}"))
+            except Exception as exc:
+                self.after(0, lambda e=exc: self.status_bar.config(text=f"Download failed: {e}"))
 
         threading.Thread(target=_download, daemon=True).start()
 
@@ -566,6 +577,17 @@ class BrowserPlaylistsMixin:
         self._on_install_complete_reload()
 
     def _check_pending_playlist(self) -> None:
+        # bsplaylist vs. per-song fallback contract:
+        #   * bsplaylist path: `_install_playlist_from_path` initializes
+        #     `_pending_playlist_queue = []` *after* launching Mod Assistant.
+        #     The empty queue is load-bearing — it makes us fall through to the
+        #     "everything is installed, queue the songs" branch below.
+        #   * per-song fallback: `_pending_playlist_queue` is populated with
+        #     `installable[:]` and drained one entry at a time by
+        #     `_install_next_playlist_song()`.
+        # If a future change forgets to reset `_pending_playlist_queue` between
+        # playlists, the next install would resume from a stale list — keep the
+        # reset at the bsplaylist branch.
         if self._pending_playlist_entries is None:
             return
         hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}
@@ -596,6 +618,20 @@ class BrowserPlaylistsMixin:
         if self._queue_window and self._queue_window.winfo_exists():
             self._queue_window.refresh()
         self._update_playlist_art_auto()
+
+    def _notify_queue_library_reloaded(self):
+        """Tell the queue window to drop its thumbnail/duration caches.
+
+        Called from the post-install reload path so that a newly-installed song
+        (which may replace an existing folder) shows the fresh cover art and
+        duration in any open queue window.
+        """
+        if self._queue_window and self._queue_window.winfo_exists():
+            try:
+                self._queue_window.invalidate_caches()
+                self._queue_window.refresh()
+            except Exception:
+                pass
 
     def _open_playlist_art_window(self):
         if self._playlist_art_window and self._playlist_art_window.winfo_exists():

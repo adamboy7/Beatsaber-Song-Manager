@@ -110,8 +110,9 @@ class PlaylistInstaller:
 
         self._gen += 1
         gen = self._gen
-        self._pulse(gen, 0)
-        self._spawn_watcher(gen, timeout or self.DEFAULT_TIMEOUT)
+        effective_timeout = timeout or self.DEFAULT_TIMEOUT
+        self._pulse(gen, 0, effective_timeout)
+        self._spawn_watcher(gen, effective_timeout)
         return True
 
     # ── Loopback HTTP server ──────────────────────────────────────────────────
@@ -189,9 +190,12 @@ class PlaylistInstaller:
                 count += 1
         return count
 
-    def _pulse(self, gen: int, elapsed: int) -> None:
+    def _pulse(self, gen: int, elapsed: int, timeout: int | None = None) -> None:
         if gen != self._gen:
             return
+        # Share the effective timeout with the watcher so the two don't disagree
+        # if the caller passed a non-default `timeout` to install().
+        effective_timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
         dots = "." * (elapsed % 4)
         total = len(self._keys)
         if total:
@@ -203,8 +207,8 @@ class PlaylistInstaller:
             self._status_cb(
                 f"Installing playlist via Mod Assistant{dots}  ({elapsed}s)"
             )
-        if elapsed < self.DEFAULT_TIMEOUT:
-            self._after(1000, lambda: self._pulse(gen, elapsed + 1))
+        if elapsed < effective_timeout:
+            self._after(1000, lambda: self._pulse(gen, elapsed + 1, effective_timeout))
 
     def _spawn_watcher(self, gen: int, timeout: int) -> None:
         total = len(self._keys)

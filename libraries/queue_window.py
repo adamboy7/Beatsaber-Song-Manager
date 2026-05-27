@@ -760,9 +760,13 @@ class QueueWindow(tk.Toplevel):
 
     def _subtitle(self, song: "SongInfo") -> str:
         key = str(song.folder)
-        if key not in self._durations:
-            self._durations[key] = get_audio_duration(song.audio_path) if song.audio_path else None
-        dur = self._durations[key]
+        # Don't call ffprobe synchronously on the UI thread — for a long queue
+        # the first render would block per row at the 5s ffprobe timeout. Kick
+        # the lookup off in a background thread and refresh once it returns.
+        if key not in self._durations and song.audio_path:
+            self._durations[key] = None  # mark as in-flight so we don't relaunch
+            self._fetch_duration_async(key, song.audio_path)
+        dur = self._durations.get(key)
         parts = []
         if song.author:
             parts.append(song.author)
@@ -770,6 +774,43 @@ class QueueWindow(tk.Toplevel):
             m, s = divmod(int(dur), 60)
             parts.append(f"{m}:{s:02d}")
         return "  •  ".join(parts)
+
+    def _fetch_duration_async(self, key: str, audio_path) -> None:
+        import threading
+
+        def worker():
+            try:
+                dur = get_audio_duration(audio_path)
+            except Exception:
+                dur = None
+            try:
+                self.after(0, lambda: self._apply_duration(key, dur))
+            except tk.TclError:
+                pass  # window was destroyed
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_duration(self, key: str, dur) -> None:
+        if dur is None:
+            return
+        self._durations[key] = dur
+        # A duration just arrived — re-render so the row text updates.
+        try:
+            self.refresh()
+        except tk.TclError:
+            pass
+
+    def _get_placeholder_thumb(self) -> ImageTk.PhotoImage:
+        """Return a single shared placeholder thumbnail (cached on first use)."""
+        cached = getattr(self, "_placeholder_thumb", None)
+        if cached is not None:
+            return cached
+        try:
+            placeholder = Image.new("RGB", _QUEUE_THUMB, color="#2a0033")
+            self._placeholder_thumb = ImageTk.PhotoImage(placeholder)
+        except Exception:
+            self._placeholder_thumb = self._browser._make_placeholder()
+        return self._placeholder_thumb
 
     def _load_thumb(self, song: "SongInfo") -> ImageTk.PhotoImage:
         key = str(song.folder)
@@ -784,13 +825,14 @@ class QueueWindow(tk.Toplevel):
                 return photo
         except Exception:
             pass
-        try:
-            placeholder = Image.new("RGB", _QUEUE_THUMB, color="#2a0033")
-            photo = ImageTk.PhotoImage(placeholder)
-            self._thumbnails[key] = photo
-            return photo
-        except Exception:
-            return self._browser._make_placeholder()
+        # Reuse a single placeholder across all cover-less rows instead of
+        # creating N identical PhotoImages.
+        return self._get_placeholder_thumb()
+
+    def invalidate_caches(self) -> None:
+        """Clear thumbnail and duration caches — call after a library reload."""
+        self._thumbnails.clear()
+        self._durations.clear()
 
     # ── Drag-to-Reorder ──────────────────────────────────────────────────────
 

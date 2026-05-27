@@ -107,17 +107,31 @@ class MediaPlayer:
             ntdll = ctypes.WinDLL("ntdll")
             kernel32 = ctypes.WinDLL("kernel32")
             handle = kernel32.OpenProcess(0x1F0FFF, False, self._audio_proc.pid)
-            if self._audio_paused:
-                ntdll.NtResumeProcess(handle)
-                self._audio_paused = False
-                if self._pause_start is not None:
-                    self._paused_total += time.time() - self._pause_start
-                    self._pause_start = None
-            else:
-                ntdll.NtSuspendProcess(handle)
-                self._audio_paused = True
-                self._pause_start = time.time()
-            kernel32.CloseHandle(handle)
+            if not handle:
+                # OpenProcess returned NULL (process exited between poll() and OpenProcess,
+                # AV blocked the handle, insufficient privileges, etc.). Don't flip the
+                # pause flag — the kernel will reject Nt(Suspend|Resume)Process(0) and we'd
+                # end up out of sync with reality.
+                messagebox.showerror(
+                    "Pause Failed",
+                    "Could not get a handle to the audio process. Try again.",
+                )
+                return
+            try:
+                if self._audio_paused:
+                    status = ntdll.NtResumeProcess(handle)
+                    if status == 0:  # STATUS_SUCCESS
+                        self._audio_paused = False
+                        if self._pause_start is not None:
+                            self._paused_total += time.time() - self._pause_start
+                            self._pause_start = None
+                else:
+                    status = ntdll.NtSuspendProcess(handle)
+                    if status == 0:
+                        self._audio_paused = True
+                        self._pause_start = time.time()
+            finally:
+                kernel32.CloseHandle(handle)
         except Exception as exc:
             messagebox.showerror("Pause Failed", str(exc))
 
@@ -214,8 +228,17 @@ class MediaPlayer:
             self._audio_proc.terminate()
             self._audio_proc = None
             self._audio_paused = False
-            self._launch_ffplay(song, elapsed)
-            self.song_duration = duration
+            if self._launch_ffplay(song, elapsed):
+                # Preserve previously known duration; re-probe if missing.
+                self.song_duration = duration if duration is not None else get_audio_duration(song.audio_path)
+            else:
+                # Launch failed: leave player in a coherent "stopped" state instead of
+                # claiming we still have a song playing with a stale duration.
+                self.playing_song = None
+                self._play_start = None
+                self._pause_start = None
+                self._paused_total = 0.0
+                self.song_duration = None
 
     def play(self, song: SongInfo) -> None:
         if not song.audio_path:

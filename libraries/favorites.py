@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tempfile
 import datetime
 from pathlib import Path
@@ -22,9 +23,84 @@ def backup_player_data(player_dat_path: Path, raw: str) -> None:
     player_dat_path.with_suffix(".dat.bak").write_text(raw, encoding="utf-8")
 
 
+def beat_saber_running() -> bool:
+    """Best-effort check for a running Beat Saber process. Returns False if we can't tell."""
+    if os.name != "nt":
+        return False
+    try:
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq Beat Saber.exe", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=creationflags,
+        )
+        return "Beat Saber.exe" in (result.stdout or "")
+    except Exception:
+        return False
+
+
+def confirm_player_data_write(parent=None) -> bool:
+    """Warn the user if Beat Saber is running before touching PlayerData.dat.
+
+    Returns True if it's safe to proceed (game not detected, or user chose to continue).
+    """
+    if not beat_saber_running():
+        return True
+    try:
+        return bool(messagebox.askyesno(
+            "Beat Saber is running",
+            "Beat Saber appears to be running. Saving now risks the game overwriting "
+            "your change when it exits (or vice versa).\n\n"
+            "Close Beat Saber first for safety.\n\nContinue anyway?",
+            icon="warning",
+            parent=parent,
+        ))
+    except Exception:
+        # If we can't show the dialog for any reason, fall through and allow.
+        return True
+
+
+def _atomic_write_player_data(
+    player_dat_path: Path,
+    content: str,
+    mtime_before: float,
+    parent=None,
+) -> bool:
+    """Write content to player_dat_path atomically, aborting if mtime changed.
+
+    Returns True on success. Shows an error and returns False otherwise.
+    """
+    try:
+        if player_dat_path.stat().st_mtime != mtime_before:
+            messagebox.showerror(
+                "PlayerData changed",
+                "PlayerData.dat was modified by another process while we were updating it. "
+                "Aborting to avoid overwriting changes. Please retry.",
+                parent=parent,
+            )
+            return False
+    except OSError:
+        # If we can't stat, fall through and attempt the write.
+        pass
+    fd, tmp_str = tempfile.mkstemp(dir=str(player_dat_path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_str, player_dat_path)
+    except Exception:
+        Path(tmp_str).unlink(missing_ok=True)
+        raise
+    return True
+
+
 def add_to_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: set[str]) -> bool:
     """Add song to favorites in PlayerData.dat. Mutates favorite_ids. Returns True on success."""
+    if not confirm_player_data_write():
+        return False
     try:
+        mtime_before = player_dat_path.stat().st_mtime
         raw = player_dat_path.read_text(encoding="utf-8", errors="replace")
         backup_player_data(player_dat_path, raw)
         data = json.loads(raw)
@@ -36,14 +112,8 @@ def add_to_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: set[st
         if level_id not in favs:
             favs.append(level_id)
         content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-        fd, tmp_str = tempfile.mkstemp(dir=str(player_dat_path.parent), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_str, player_dat_path)
-        except:
-            Path(tmp_str).unlink(missing_ok=True)
-            raise
+        if not _atomic_write_player_data(player_dat_path, content, mtime_before):
+            return False
         favorite_ids.add(level_id)
         return True
     except Exception as exc:
@@ -53,7 +123,10 @@ def add_to_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: set[st
 
 def remove_from_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: set[str]) -> bool:
     """Remove song from favorites in PlayerData.dat. Mutates favorite_ids. Returns True on success."""
+    if not confirm_player_data_write():
+        return False
     try:
+        mtime_before = player_dat_path.stat().st_mtime
         raw = player_dat_path.read_text(encoding="utf-8", errors="replace")
         backup_player_data(player_dat_path, raw)
         data = json.loads(raw)
@@ -66,14 +139,8 @@ def remove_from_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: s
         favs: list = players[0].get("favoritesLevelIds", [])
         players[0]["favoritesLevelIds"] = [f for f in favs if f not in to_remove]
         content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-        fd, tmp_str = tempfile.mkstemp(dir=str(player_dat_path.parent), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_str, player_dat_path)
-        except:
-            Path(tmp_str).unlink(missing_ok=True)
-            raise
+        if not _atomic_write_player_data(player_dat_path, content, mtime_before):
+            return False
         favorite_ids -= to_remove
         return True
     except Exception as exc:

@@ -770,22 +770,15 @@ class BrowserUIMixin:
         return row.cget("bg") == SELECTED_BG
 
     def _recolor_row(self, row: tk.Frame, bg: str):
-        row.configure(bg=bg)
+        # Recurse rather than hard-coding the current depth-3 row layout — any
+        # future wrapping frame around scores_frame/text_frame would otherwise
+        # leave the deepest widgets at the previous bg on hover/select.
+        try:
+            row.configure(bg=bg)
+        except Exception:
+            pass
         for child in row.winfo_children():
-            try:
-                child.configure(bg=bg)
-            except Exception:
-                pass
-            for grandchild in child.winfo_children():
-                try:
-                    grandchild.configure(bg=bg)
-                except Exception:
-                    pass
-                for great in grandchild.winfo_children():
-                    try:
-                        great.configure(bg=bg)
-                    except Exception:
-                        pass
+            self._recolor_row(child, bg)
 
     def _deselect_all(self, _event=None):
         page_start = self.page * self.page_size

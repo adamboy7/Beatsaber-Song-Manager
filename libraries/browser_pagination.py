@@ -68,6 +68,10 @@ def _parse_tags(query: str) -> tuple[list[tuple[str, str]], str]:
 def _song_matches_tags(
     song, tags: list[tuple[str, str]], player_stats: dict, favorite_ids: set
 ) -> bool:
+    # Compute the (potentially expensive) per-song stats lookup at most once even
+    # if the user filters by several stats-derived tags simultaneously.
+    needs_stats = any(t in ("unplayed", "fullcombo", "fc") for t, _ in tags)
+    stats = get_song_stats(song, player_stats) if needs_stats else None
     for tag, value in tags:
         if tag == "artist":
             if value not in song.author.lower():
@@ -79,7 +83,6 @@ def _song_matches_tags(
             if value not in song.display_name.lower():
                 return False
         elif tag == "unplayed":
-            stats = get_song_stats(song, player_stats)
             total_plays = sum(d.plays for d in stats.values()) if stats else 0
             is_unplayed = total_plays == 0
             if value == "y" and not is_unplayed:
@@ -93,7 +96,6 @@ def _song_matches_tags(
             if value == "n" and is_fav:
                 return False
         elif tag in ("fullcombo", "fc"):
-            stats = get_song_stats(song, player_stats)
             is_fc = any(d.full_combo for d in stats.values()) if stats else False
             if value == "y" and not is_fc:
                 return False
@@ -206,12 +208,26 @@ class BrowserPaginationMixin:
 
         result: list[int | None] = [None]
 
-        def _confirm():
+        def _flash_invalid():
+            # Brief red-tint to tell the user the entry wasn't a positive integer.
             try:
-                result[0] = max(1, int(entry.get()))
-            except ValueError:
+                entry.config(bg="#5a1f1f")
+                entry.after(600, lambda: entry.config(bg="#1e1e1e"))
+            except tk.TclError:
                 pass
-            dlg.destroy()
+
+        def _confirm():
+            text = entry.get().strip()
+            try:
+                val = int(text)
+                if val < 1:
+                    raise ValueError
+                result[0] = val
+                dlg.destroy()
+            except ValueError:
+                _flash_invalid()
+                entry.focus_set()
+                entry.select_range(0, "end")
 
         def _cancel():
             dlg.destroy()
@@ -345,12 +361,18 @@ class BrowserPaginationMixin:
     # ── Search ────────────────────────────────────────────────────────────────
 
     def _extract_song_id(self, query: str) -> str | None:
-        """Return the BeatSaver song ID if query is a one-click or map URL, else None."""
+        """Return the BeatSaver song ID if query is a one-click or map URL, else None.
+
+        BeatSaver keys are short hex strings (currently 1–6 chars in the wild);
+        we bound the capture so a copy/paste accident like
+        `https://beatsaver.com/maps/abc/comments` doesn't silently strip the
+        trailing path and offer to install `abc`.
+        """
         q = query.strip()
-        m = re.match(r'^beatsaver://([A-Za-z0-9]+)(?:[/?#]|$)', q, re.IGNORECASE)
+        m = re.match(r'^beatsaver://([A-Za-z0-9]{1,8})(?:[/?#]|$)', q, re.IGNORECASE)
         if m:
             return m.group(1).lower()
-        m = re.match(r'^https?://beatsaver\.com/maps/([A-Za-z0-9]+)', q, re.IGNORECASE)
+        m = re.match(r'^https?://beatsaver\.com/maps/([A-Za-z0-9]{1,8})(?:[/?#]|$)', q, re.IGNORECASE)
         if m:
             return m.group(1).lower()
         return None
@@ -381,7 +403,8 @@ class BrowserPaginationMixin:
                 if str(s.folder) in self._selected_folders
             }
             self.selected_index = max(self.selected_indices) if self.selected_indices else None
-            self._thumbnails.clear()
+            # Thumbnail cache is keyed by folder path; the search result is a subset
+            # of the library, so the existing cache is still valid. Don't clear it.
             self.page = 0
             self._render_list()
             self._update_search_icon_color()
@@ -392,7 +415,6 @@ class BrowserPaginationMixin:
             self._pending_playlist_url = playlist_url
             self._pending_install_id = None
             self.filtered = []
-            self._thumbnails.clear()
             self.page = 0
             self._render_list()
             self.status_bar.config(
@@ -418,7 +440,9 @@ class BrowserPaginationMixin:
             if str(s.folder) in self._selected_folders
         }
         self.selected_index = max(self.selected_indices) if self.selected_indices else None
-        self._thumbnails.clear()
+        # Thumbnail cache is keyed by folder path; rows shown after the filter are
+        # always a subset of cached entries, so clearing on every keystroke is
+        # over-defensive and causes search lag on slow disks.
         self.page = 0
         self._render_list()
         if tags:
@@ -452,18 +476,34 @@ class BrowserPaginationMixin:
     # ── Install completion ────────────────────────────────────────────────────
 
     def _on_install_complete_reload(self):
+        # Share the same generation counter as _load_async so a racing F5 + install
+        # completion can't double-fire the destructive _on_loaded path.
+        self._load_gen = getattr(self, "_load_gen", 0) + 1
+        gen = self._load_gen
+
         def worker():
             songs = load_songs(self.custom_levels)
             hashes = load_song_hashes(self.custom_levels)
             for song in songs:
                 song.song_hash = hashes.get(song.folder.name, "")
-            self.after(0, lambda: self._after_install_load(songs))
+            self.after(0, lambda: self._maybe_after_install_load(gen, songs))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _maybe_after_install_load(self, gen: int, songs: list[SongInfo]):
+        if gen != getattr(self, "_load_gen", 0):
+            return  # superseded; drop stale result
+        self._after_install_load(songs)
 
     def _after_install_load(self, songs: list[SongInfo]):
         self.songs = songs
         self.count_label.config(text=f"({len(songs)} songs)")
+        # Queue thumbnail cache may now point at stale cover art for folders whose
+        # contents changed during install — let the queue window invalidate it.
+        try:
+            self._notify_queue_library_reloaded()
+        except AttributeError:
+            pass
         self._on_search()  # re-applies search bar content; shows installed song and clears pending_install_id
         self._check_pending_playlist()
 

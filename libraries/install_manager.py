@@ -36,6 +36,10 @@ class InstallManager:
             return False
 
     def _watch(self, song_id: str) -> None:
+        # Lowercase once at the top — BeatSaver keys round-trip as lowercase hex
+        # in folder names. The folder-name comparison below was already
+        # lowercased, but song_id was not, so an uppercase caller would miss.
+        song_id = song_id.lower()
         self._gen += 1
         gen = self._gen
         self._pulse(song_id, gen, 0)

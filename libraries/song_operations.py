@@ -12,7 +12,7 @@ from libraries.song_data import SongInfo
 from libraries.asset_editor import bak_files, restore_files, replace_art, replace_audio
 from libraries.audio_utils import find_ffmpeg
 from libraries.player_data import song_level_ids, load_player_stats
-from libraries.favorites import backup_player_data
+from libraries.favorites import backup_player_data, confirm_player_data_write, _atomic_write_player_data
 from libraries.constants import BG_COLOR, ACCENT_COLOR, TEXT_COLOR
 
 
@@ -185,7 +185,10 @@ def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> 
 def clear_song_score(player_dat_path: Path, song: SongInfo) -> tuple[int, dict] | None:
     """Delete all score entries for song. Returns (removed_count, new_stats) or None on failure."""
     ids_to_clear = set(song_level_ids(song))
+    if not confirm_player_data_write():
+        return None
     try:
+        mtime_before = player_dat_path.stat().st_mtime
         raw = player_dat_path.read_text(encoding="utf-8", errors="replace")
         backup_player_data(player_dat_path, raw)
         data = json.loads(raw)
@@ -199,14 +202,8 @@ def clear_song_score(player_dat_path: Path, song: SongInfo) -> tuple[int, dict] 
         ]
         removed = before - len(players[0]["levelsStatsData"])
         content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-        fd, tmp_str = tempfile.mkstemp(dir=str(player_dat_path.parent), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_str, player_dat_path)
-        except:
-            Path(tmp_str).unlink(missing_ok=True)
-            raise
+        if not _atomic_write_player_data(player_dat_path, content, mtime_before):
+            return None
         return removed, load_player_stats(player_dat_path)
     except Exception as exc:
         messagebox.showerror("Clear Score Failed", str(exc))
