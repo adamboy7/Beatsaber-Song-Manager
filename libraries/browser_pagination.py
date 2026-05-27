@@ -113,6 +113,8 @@ def _song_matches_tags(
                 )
                 if not passes:
                     return False
+            else:
+                return False
         elif tag == "difficulty":
             diff_int = _DIFF_NAME_TO_INT.get(value)
             # Fail closed on unrecognised values so a typo doesn't silently
