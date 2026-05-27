@@ -71,6 +71,7 @@ class MediaPlayer:
         self._paused_total: float = 0.0
         self.song_duration: float | None = None
         self._volume: int = 75
+        self._volume_changed_while_paused: bool = False
 
     def start_media_keys(self, after_fn, on_stop=None, on_next=None, on_prev=None) -> None:
         from pynput import keyboard as pynput_kb
@@ -125,6 +126,22 @@ class MediaPlayer:
                         if self._pause_start is not None:
                             self._paused_total += time.time() - self._pause_start
                             self._pause_start = None
+                        if self._volume_changed_while_paused:
+                            self._volume_changed_while_paused = False
+                            elapsed = self.elapsed_seconds() or 0.0
+                            if not (self.song_duration and elapsed > self.song_duration - 0.5):
+                                song = self.playing_song
+                                duration = self.song_duration
+                                self._audio_proc.terminate()
+                                self._audio_proc = None
+                                if self._launch_ffplay(song, elapsed):
+                                    self.song_duration = duration if duration is not None else get_audio_duration(song.audio_path)
+                                else:
+                                    self.playing_song = None
+                                    self._play_start = None
+                                    self._pause_start = None
+                                    self._paused_total = 0.0
+                                    self.song_duration = None
                 else:
                     status = ntdll.NtSuspendProcess(handle)
                     if status == 0:
@@ -216,6 +233,9 @@ class MediaPlayer:
         """Set volume 0-100. Restarts current song at its current position if actively playing."""
         level = max(0, min(100, level))
         self._volume = level
+        if self._audio_paused and self.playing_song:
+            self._volume_changed_while_paused = True
+            return
         if (not self._audio_paused and not self._stopped
                 and self._audio_proc and self._audio_proc.poll() is None
                 and self.playing_song):
