@@ -189,6 +189,9 @@ class BrowserPlaylistsMixin:
             self._startup_shuffle = False
             self._shuffle_queue_inplace()
             self._queue_index = 0
+            if self._queue:
+                self._play_audio(self._queue[0])
+                self._notify_queue_window()
 
     # ── View filters ──────────────────────────────────────────────────────────
 
