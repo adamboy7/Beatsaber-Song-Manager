@@ -129,6 +129,23 @@ class BrowserActionsMixin:
             if str(s.folder) in self._selected_folders
         }
         self.selected_index = max(self.selected_indices) if self.selected_indices else None
+        deleted_q_indices = [i for i, s in enumerate(self._queue) if s is song]
+        if deleted_q_indices:
+            self._queue = [s for s in self._queue if s is not song]
+            if not self._queue:
+                self._stop_player()
+            else:
+                curr = self._queue_index
+                if curr in deleted_q_indices:
+                    new_index = min(
+                        curr - sum(1 for di in deleted_q_indices if di < curr),
+                        len(self._queue) - 1,
+                    )
+                    self._queue_index = new_index
+                    self._play_audio(self._queue[new_index])
+                else:
+                    self._queue_index -= sum(1 for di in deleted_q_indices if di < curr)
+                self._notify_queue_window()
         self._thumbnails.clear()
         self._render_list()
         self.count_label.config(text=f"({len(self.songs)} songs)")
@@ -160,6 +177,23 @@ class BrowserActionsMixin:
             if str(s.folder) in self._selected_folders
         }
         self.selected_index = max(self.selected_indices) if self.selected_indices else None
+        deleted_q_indices = {i for i, s in enumerate(self._queue) if id(s) in deleted_ids}
+        if deleted_q_indices:
+            self._queue = [s for s in self._queue if id(s) not in deleted_ids]
+            if not self._queue:
+                self._stop_player()
+            else:
+                curr = self._queue_index
+                if curr in deleted_q_indices:
+                    new_index = min(
+                        curr - sum(1 for di in deleted_q_indices if di < curr),
+                        len(self._queue) - 1,
+                    )
+                    self._queue_index = new_index
+                    self._play_audio(self._queue[new_index])
+                else:
+                    self._queue_index -= sum(1 for di in deleted_q_indices if di < curr)
+                self._notify_queue_window()
         self._thumbnails.clear()
         self._render_list()
         self.count_label.config(text=f"({len(self.songs)} songs)")
