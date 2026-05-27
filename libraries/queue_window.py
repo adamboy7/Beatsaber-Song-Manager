@@ -67,6 +67,7 @@ def _show_queue_empty_warning(parent: tk.Misc) -> None:
 
 _QUEUE_THUMB = (48, 48)
 _QUEUE_PLAYING_BG = "#1a1a3a"
+_CUT_BG = "#3a1212"
 
 
 class QueueWindow(tk.Toplevel):
@@ -86,6 +87,11 @@ class QueueWindow(tk.Toplevel):
         self._last_queue_index: int = -2
         self._last_stopped: bool = False
         self._last_paused: bool = False
+
+        if not hasattr(self._browser, '_queue_clipboard'):
+            self._browser._queue_clipboard = []
+        if not hasattr(self._browser, '_queue_cut_songs'):
+            self._browser._queue_cut_songs = None
 
         self.title("Playback Queue")
         self.configure(bg="#0d0d1a")
@@ -183,6 +189,9 @@ class QueueWindow(tk.Toplevel):
         self.bind("<Control-a>", self._select_all)
         self.bind("<Control-s>", self._on_save_shortcut)
         self.bind("<Control-o>", lambda _: self._open_playlist())
+        self.bind("<Control-c>", self._copy_selected)
+        self.bind("<Control-x>", self._cut_selected)
+        self.bind("<Control-v>", self._paste_clipboard)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._setup_dnd()
@@ -234,6 +243,7 @@ class QueueWindow(tk.Toplevel):
     def _on_close(self):
         if self._tick_id:
             self.after_cancel(self._tick_id)
+        self._browser._queue_cut_songs = None  # un-mark cuts; clipboard survives
         self._browser._queue_window = None
         self.destroy()
 
@@ -962,15 +972,113 @@ class QueueWindow(tk.Toplevel):
             self._browser._queue_index = curr
         self.refresh()
 
+    # ── Clipboard Operations ──────────────────────────────────────────────────
+
+    def _copy_selected(self, event=None):
+        if not self._selected:
+            return
+        queue = self._browser._queue
+        self._browser._queue_clipboard = [queue[i] for i in sorted(self._selected)]
+        self._browser._queue_cut_songs = None
+        self._selected.clear()
+        self._update_row_colors()
+
+    def _cut_selected(self, event=None):
+        if not self._selected:
+            return
+        queue = self._browser._queue
+        songs = [queue[i] for i in sorted(self._selected)]
+        self._browser._queue_clipboard = songs
+        self._browser._queue_cut_songs = songs[:]
+        self._selected.clear()
+        self._update_row_colors()
+
+    def _paste_clipboard(self, event=None):
+        clipboard = getattr(self._browser, '_queue_clipboard', [])
+        if not clipboard:
+            return
+        queue = self._browser._queue
+        cut_songs = getattr(self._browser, '_queue_cut_songs', None)
+
+        # Determine insert position
+        if len(self._selected) == 1:
+            insert_idx = sorted(self._selected)[0] + 1
+        else:
+            insert_idx = len(queue)
+
+        playing_was_cut = False
+        next_to_play = None
+
+        if cut_songs:
+            cut_id_set = {id(s) for s in cut_songs}
+            cut_indices = sorted(i for i, s in enumerate(queue) if id(s) in cut_id_set)
+
+            curr = self._browser._queue_index
+            playing_song = queue[curr] if 0 <= curr < len(queue) else None
+            playing_was_cut = playing_song is not None and id(playing_song) in cut_id_set
+
+            if playing_was_cut:
+                cut_idx_set = set(cut_indices)
+                for i in range(curr + 1, len(queue)):
+                    if i not in cut_idx_set:
+                        next_to_play = queue[i]
+                        break
+
+            # Shift insert_idx for each cut song that precedes it
+            insert_idx -= sum(1 for ci in cut_indices if ci < insert_idx)
+
+            # Remove cut songs in reverse order
+            for i in sorted(cut_indices, reverse=True):
+                queue.pop(i)
+
+            if not playing_was_cut and playing_song is not None:
+                new_idx = next((j for j, s in enumerate(queue) if s is playing_song), -1)
+                self._browser._queue_index = new_idx
+
+            self._browser._queue_cut_songs = None
+
+        # Clamp
+        insert_idx = max(0, min(insert_idx, len(queue)))
+
+        # Shift playing index past the incoming block (skip if we'll set it explicitly below)
+        if not playing_was_cut:
+            curr = self._browser._queue_index
+            if curr >= 0 and curr >= insert_idx:
+                self._browser._queue_index = curr + len(clipboard)
+
+        # Insert clipboard songs as a block
+        for j, song in enumerate(clipboard):
+            queue.insert(insert_idx + j, song)
+
+        # Resolve playback for a cut-and-removed playing song
+        if playing_was_cut:
+            if next_to_play is not None:
+                new_idx = next((j for j, s in enumerate(queue) if s is next_to_play), -1)
+                self._browser._queue_index = new_idx
+                if new_idx >= 0:
+                    self._browser._play_audio(queue[new_idx])
+                else:
+                    self._browser._stop_audio_keep_queue()
+            else:
+                self._browser._stop_audio_keep_queue()
+
+        self._selected.clear()
+        self.refresh()
+
     # ── Row Coloring ─────────────────────────────────────────────────────────
 
     def _update_row_colors(self):
         playing_idx = self._browser._queue_index
+        queue = self._browser._queue
+        cut_songs = getattr(self._browser, '_queue_cut_songs', None)
+        cut_id_set = {id(s) for s in cut_songs} if cut_songs else set()
         for i, row in enumerate(self._row_frames):
             if self._dragging and i == self._drag_source:
                 continue
             elif i in self._selected:
                 bg = SELECTED_BG
+            elif i < len(queue) and id(queue[i]) in cut_id_set:
+                bg = _CUT_BG
             elif i == playing_idx:
                 bg = _QUEUE_PLAYING_BG
             else:
@@ -1018,7 +1126,11 @@ class QueueWindow(tk.Toplevel):
 
     def _on_leave(self, row: tk.Frame, idx: int):
         if idx not in self._selected and idx != self._browser._queue_index:
-            self._recolor_row(row, idx, ITEM_BG)
+            queue = self._browser._queue
+            cut_songs = getattr(self._browser, '_queue_cut_songs', None)
+            is_cut = (cut_songs is not None and idx < len(queue)
+                      and any(queue[idx] is s for s in cut_songs))
+            self._recolor_row(row, idx, _CUT_BG if is_cut else ITEM_BG)
 
     def _on_mousewheel(self, event: tk.Event):
         self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
