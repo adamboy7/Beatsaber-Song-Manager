@@ -266,7 +266,22 @@ def main():
             return []
         groups = []
         for parts in raw_groups:
-            count = int(parts[0])
+            try:
+                count = int(parts[0])
+            except ValueError:
+                print(
+                    f"--randomAdd: expected a positive integer count as the first argument, "
+                    f"got {parts[0]!r}.\n"
+                    "Usage: --randomAdd N [FILTER ...]",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if count < 1:
+                print(
+                    f"--randomAdd: count must be a positive integer, got {count}.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             filters = [p.strip(',') for p in parts[1:] if p.strip(',')]
             filter_str = ' '.join(filters) if filters else None
             groups.append((count, filter_str))
