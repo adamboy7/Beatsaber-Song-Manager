@@ -37,7 +37,7 @@ _DIFF_NAME_TO_INT = {
     "0": 0, "1": 1, "2": 2, "3": 3, "4": 4,
 }
 
-_BPM_OP_RE = re.compile(r'^(<=|>=|<|>|==|=)(\d+(?:\.\d+)?)$')
+_BPM_OP_RE = re.compile(r'^(<=|>=|<|>|==|=)?(\d+(?:\.\d+)?)$')
 
 _KNOWN_TAGS = {"artist", "mapper", "title", "unplayed", "favorite", "fullcombo", "fc", "bpm", "difficulty", "custom"}
 _YN_TAGS    = {"unplayed", "favorite", "fullcombo", "fc"}
@@ -102,7 +102,7 @@ def _song_matches_tags(
         elif tag == "bpm":
             m = _BPM_OP_RE.match(value)
             if m:
-                op, num = m.group(1), float(m.group(2))
+                op, num = m.group(1) or "==", float(m.group(2))
                 bpm = song.bpm
                 passes = (
                     bpm <= num if op == "<=" else
