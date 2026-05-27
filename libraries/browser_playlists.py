@@ -188,6 +188,7 @@ class BrowserPlaylistsMixin:
         if self._startup_shuffle:
             self._startup_shuffle = False
             self._shuffle_queue_inplace()
+            self._queue_index = 0
 
     # ── View filters ──────────────────────────────────────────────────────────
 
