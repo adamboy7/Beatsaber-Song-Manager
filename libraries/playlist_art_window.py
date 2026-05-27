@@ -21,6 +21,7 @@ from tkinterdnd2 import DND_FILES
 from PIL import Image, ImageTk
 
 from libraries.constants import ACCENT_COLOR, TEXT_COLOR
+from libraries.song_data import compute_song_hash
 
 if TYPE_CHECKING:
     from Browser import SongBrowser
@@ -226,6 +227,38 @@ class PlaylistArtWindow(tk.Toplevel):
             ):
                 return
 
+        # Detect songs whose Info.dat has been edited (a .bak backup exists).
+        edited_baks: dict[Path, Path] = {}
+        for s in valid:
+            for bak_name in ("Info.dat.bak", "info.dat.bak", "INFO.DAT.bak"):
+                bak = s.folder / bak_name
+                if bak.exists():
+                    edited_baks[s.folder] = bak
+                    break
+
+        if edited_baks:
+            edited_names = "\n".join(
+                f"  • {s.display_name}" for s in valid if s.folder in edited_baks
+            )
+            messagebox.showwarning(
+                "Edited Songs Detected",
+                f"{len(edited_baks)} song(s) have a modified Info.dat "
+                f"(original backed up as .bak):\n\n{edited_names}\n\n"
+                "Modifying Info.dat changes the SongCore hash used to identify and "
+                "download songs — the edited version will not be recognised by "
+                "other tools or players.\n\n"
+                "The playlist will use a best-effort hash recalculated from the "
+                "original Info.dat file.",
+                parent=self,
+            )
+
+        # Build hash overrides from .bak originals for edited songs.
+        hash_overrides: dict[Path, str] = {}
+        for folder, bak in edited_baks.items():
+            h = compute_song_hash(folder, bak)
+            if h:
+                hash_overrides[folder] = h
+
         save_path = fd.asksaveasfilename(
             title="Save Playlist",
             filetypes=[("Beat Saber Playlist", "*.bplist"), ("All files", "*.*")],
@@ -241,7 +274,11 @@ class PlaylistArtWindow(tk.Toplevel):
             "image": b._playlist_art_b64 or "",
             "customData": {},
             "songs": [
-                {"key": s.song_id, "hash": s.song_hash, "songName": s.display_name}
+                {
+                    "key": s.song_id,
+                    "hash": hash_overrides.get(s.folder, s.song_hash),
+                    "songName": s.display_name,
+                }
                 for s in valid
             ],
         }
