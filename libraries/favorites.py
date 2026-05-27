@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 import datetime
 from pathlib import Path
 from tkinter import messagebox
@@ -33,10 +35,15 @@ def add_to_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: set[st
         favs: list = players[0].setdefault("favoritesLevelIds", [])
         if level_id not in favs:
             favs.append(level_id)
-        player_dat_path.write_text(
-            json.dumps(data, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
-        )
+        content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        fd, tmp_str = tempfile.mkstemp(dir=str(player_dat_path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_str, player_dat_path)
+        except:
+            Path(tmp_str).unlink(missing_ok=True)
+            raise
         favorite_ids.add(level_id)
         return True
     except Exception as exc:
@@ -58,10 +65,15 @@ def remove_from_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: s
             to_remove.add(f"custom_level_{song.song_hash}")
         favs: list = players[0].get("favoritesLevelIds", [])
         players[0]["favoritesLevelIds"] = [f for f in favs if f not in to_remove]
-        player_dat_path.write_text(
-            json.dumps(data, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
-        )
+        content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        fd, tmp_str = tempfile.mkstemp(dir=str(player_dat_path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_str, player_dat_path)
+        except:
+            Path(tmp_str).unlink(missing_ok=True)
+            raise
         favorite_ids -= to_remove
         return True
     except Exception as exc:

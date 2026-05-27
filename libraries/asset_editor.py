@@ -1,6 +1,8 @@
 import contextlib
+import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -53,15 +55,22 @@ def replace_art(cover_path: Path, new_path: str) -> None:
         if orig_format == "JPG":
             orig_format = "JPEG"
 
-    bak = cover_path.parent / (cover_path.name + ".bak")
-    if not bak.exists():
-        shutil.copy2(cover_path, bak)
-
-    with Image.open(new_path) as new_img:
-        if orig_format == "JPEG":
-            new_img = new_img.convert("RGB")
-        new_img = new_img.resize(orig_size, Image.LANCZOS)
-        new_img.save(cover_path, format=orig_format)
+    fd, tmp_str = tempfile.mkstemp(dir=str(cover_path.parent), suffix=".tmp")
+    tmp = Path(tmp_str)
+    try:
+        os.close(fd)
+        with Image.open(new_path) as new_img:
+            if orig_format == "JPEG":
+                new_img = new_img.convert("RGB")
+            new_img = new_img.resize(orig_size, Image.LANCZOS)
+            new_img.save(tmp_str, format=orig_format)
+        bak = cover_path.parent / (cover_path.name + ".bak")
+        if not bak.exists():
+            shutil.copy2(cover_path, bak)
+        os.replace(tmp_str, cover_path)
+    except:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def replace_audio(audio_path: Path, new_path: str, ffmpeg_path: str) -> None:
@@ -69,22 +78,29 @@ def replace_audio(audio_path: Path, new_path: str, ffmpeg_path: str) -> None:
     new = Path(new_path)
     ext = new.suffix.lower()
 
-    bak = audio_path.parent / (audio_path.name + ".bak")
-    if not bak.exists():
-        shutil.copy2(audio_path, bak)
-
-    if ext in (".egg", ".ogg"):
-        shutil.copy2(new, audio_path)
-    else:
-        try:
-            from pydub import AudioSegment
-        except ImportError as e:
-            raise RuntimeError(
-                "Missing dependencies for audio conversion.\n"
-                "Run: pip install -r requirements.txt\n\n"
-                f"Detail: {e}"
-            ) from e
-        AudioSegment.converter = ffmpeg_path
-        with _no_console_window():
-            audio = AudioSegment.from_file(new_path)
-            audio.export(str(audio_path), format="ogg")
+    fd, tmp_str = tempfile.mkstemp(dir=str(audio_path.parent), suffix=".tmp")
+    tmp = Path(tmp_str)
+    try:
+        os.close(fd)
+        if ext in (".egg", ".ogg"):
+            shutil.copy2(new, tmp_str)
+        else:
+            try:
+                from pydub import AudioSegment
+            except ImportError as e:
+                raise RuntimeError(
+                    "Missing dependencies for audio conversion.\n"
+                    "Run: pip install -r requirements.txt\n\n"
+                    f"Detail: {e}"
+                ) from e
+            AudioSegment.converter = ffmpeg_path
+            with _no_console_window():
+                audio = AudioSegment.from_file(new_path)
+                audio.export(tmp_str, format="ogg")
+        bak = audio_path.parent / (audio_path.name + ".bak")
+        if not bak.exists():
+            shutil.copy2(audio_path, bak)
+        os.replace(tmp_str, audio_path)
+    except:
+        tmp.unlink(missing_ok=True)
+        raise

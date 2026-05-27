@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import base64
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -283,11 +285,19 @@ class PlaylistArtWindow(tk.Toplevel):
             ],
         }
 
-        with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(playlist, f, indent=2)
+        content = json.dumps(playlist, ensure_ascii=False, indent=2)
+        target = Path(save_path)
+        fd, tmp_str = tempfile.mkstemp(dir=str(target.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_str, target)
+        except:
+            Path(tmp_str).unlink(missing_ok=True)
+            raise
 
         messagebox.showinfo(
             "Playlist Saved",
-            f"Saved {len(valid)} songs to {Path(save_path).name}",
+            f"Saved {len(valid)} songs to {target.name}",
             parent=self,
         )

@@ -1,5 +1,7 @@
 import json
+import os
 import shutil
+import tempfile
 import webbrowser
 import tkinter as tk
 import tkinter.filedialog as fd
@@ -156,10 +158,15 @@ def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> 
         bak = info_file.parent / (info_file.name + ".bak")
         if not bak.exists():
             shutil.copy2(info_file, bak)
-        info_file.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        content = json.dumps(data, ensure_ascii=False, indent=2)
+        fd, tmp_str = tempfile.mkstemp(dir=str(info_file.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_str, info_file)
+        except:
+            Path(tmp_str).unlink(missing_ok=True)
+            raise
     except Exception as exc:
         return f"Failed to write Info.dat: {exc}"
 
@@ -191,10 +198,15 @@ def clear_song_score(player_dat_path: Path, song: SongInfo) -> tuple[int, dict] 
             e for e in entries if e.get("levelId", "") not in ids_to_clear
         ]
         removed = before - len(players[0]["levelsStatsData"])
-        player_dat_path.write_text(
-            json.dumps(data, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
-        )
+        content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        fd, tmp_str = tempfile.mkstemp(dir=str(player_dat_path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_str, player_dat_path)
+        except:
+            Path(tmp_str).unlink(missing_ok=True)
+            raise
         return removed, load_player_stats(player_dat_path)
     except Exception as exc:
         messagebox.showerror("Clear Score Failed", str(exc))
