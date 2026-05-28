@@ -159,9 +159,11 @@ def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> 
         if not bak.exists():
             shutil.copy2(info_file, bak)
         content = json.dumps(data, ensure_ascii=False, indent=2)
-        fd, tmp_str = tempfile.mkstemp(dir=str(info_file.parent), suffix=".tmp")
+        # `fd` is `tkinter.filedialog` at module scope — rename the descriptor
+        # so it can't clobber the module reference for later edits.
+        fd_int, tmp_str = tempfile.mkstemp(dir=str(info_file.parent), suffix=".tmp")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            with os.fdopen(fd_int, "w", encoding="utf-8") as f:
                 f.write(content)
             os.replace(tmp_str, info_file)
         except:
@@ -190,7 +192,6 @@ def clear_song_score(player_dat_path: Path, song: SongInfo) -> tuple[int, dict] 
     try:
         mtime_before = player_dat_path.stat().st_mtime
         raw = player_dat_path.read_text(encoding="utf-8", errors="replace")
-        backup_player_data(player_dat_path, raw)
         data = json.loads(raw)
         players = data.get("localPlayers", [])
         if not players:
@@ -204,6 +205,9 @@ def clear_song_score(player_dat_path: Path, song: SongInfo) -> tuple[int, dict] 
         content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
         if not _atomic_write_player_data(player_dat_path, content, mtime_before):
             return None
+        # Only back up after a successful write, so an aborted operation
+        # doesn't leave stray `.dat.bak` files behind.
+        backup_player_data(player_dat_path, raw)
         return removed, load_player_stats(player_dat_path)
     except Exception as exc:
         messagebox.showerror("Clear Score Failed", str(exc))

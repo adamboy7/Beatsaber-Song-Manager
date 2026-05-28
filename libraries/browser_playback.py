@@ -60,12 +60,13 @@ class BrowserPlaybackMixin:
         if len(queue) < 2:
             return
         curr = self._queue_index
-        playing = queue[curr] if 0 <= curr < len(queue) else None
-        random.shuffle(queue)
-        if playing is not None:
-            self._queue_index = next(
-                (i for i, s in enumerate(queue) if s is playing), -1
-            )
+        # Permute by indices so duplicate SongInfo references don't confuse the
+        # "where is the playing song now?" lookup.
+        perm = list(range(len(queue)))
+        random.shuffle(perm)
+        queue[:] = [queue[i] for i in perm]
+        if 0 <= curr < len(queue):
+            self._queue_index = perm.index(curr)
         self._notify_queue_window()
 
     def _update_status_icon(self):

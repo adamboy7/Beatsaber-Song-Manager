@@ -271,8 +271,22 @@ class MediaPlayer:
         else:
             ext = song.audio_path.suffix.lower()
             if ext == ".ogg":
+                # Degraded fallback: ffplay is unavailable, so hand the file
+                # off to the OS default player. That player honors none of our
+                # volume / pause / stop / queue controls and we have no
+                # `_audio_proc` to poll, so keep the in-app state as "stopped"
+                # to avoid a misleading player bar.
                 try:
                     os.startfile(song.audio_path)
+                    self._stopped = True
+                    self.playing_song = None
+                    self.song_duration = None
+                    messagebox.showinfo(
+                        "Play Audio",
+                        "ffplay not found — handed the file to your system's default "
+                        "player. The in-app controls (volume, pause, queue) won't apply "
+                        "to that playback.",
+                    )
                 except Exception as exc:
                     messagebox.showerror("Play Audio Failed", str(exc))
             else:

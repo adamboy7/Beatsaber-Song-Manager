@@ -287,9 +287,11 @@ class PlaylistArtWindow(tk.Toplevel):
 
         content = json.dumps(playlist, ensure_ascii=False, indent=2)
         target = Path(save_path)
-        fd, tmp_str = tempfile.mkstemp(dir=str(target.parent), suffix=".tmp")
+        # `fd` is `tkinter.filedialog` in scope — use a distinct name for the
+        # file descriptor so later edits referencing `fd.ask…()` don't break.
+        fd_int, tmp_str = tempfile.mkstemp(dir=str(target.parent), suffix=".tmp")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            with os.fdopen(fd_int, "w", encoding="utf-8") as f:
                 f.write(content)
             os.replace(tmp_str, target)
         except:

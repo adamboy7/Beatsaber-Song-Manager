@@ -20,7 +20,11 @@ def backup_player_data(player_dat_path: Path, raw: str) -> None:
     bak_dir.mkdir(exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
     (bak_dir / f"PlayerData_{stamp}.dat.bak").write_text(raw, encoding="utf-8")
-    player_dat_path.with_suffix(".dat.bak").write_text(raw, encoding="utf-8")
+    # Build the sibling backup name by string concatenation rather than
+    # `.with_suffix(".dat.bak")` — the multi-dot behaviour of `with_suffix`
+    # shifted across Python 3.12+, so this avoids version-dependent output.
+    sibling_bak = player_dat_path.parent / (player_dat_path.name + ".bak")
+    sibling_bak.write_text(raw, encoding="utf-8")
 
 
 def beat_saber_running() -> bool:
@@ -102,7 +106,6 @@ def add_to_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: set[st
     try:
         mtime_before = player_dat_path.stat().st_mtime
         raw = player_dat_path.read_text(encoding="utf-8", errors="replace")
-        backup_player_data(player_dat_path, raw)
         data = json.loads(raw)
         players = data.get("localPlayers", [])
         if not players:
@@ -114,6 +117,10 @@ def add_to_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: set[st
         content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
         if not _atomic_write_player_data(player_dat_path, content, mtime_before):
             return False
+        # Write the backup only after the new content has been committed, so
+        # aborted/no-op writes don't litter `backups/` and overwrite the
+        # alongside-`.dat.bak` file.
+        backup_player_data(player_dat_path, raw)
         favorite_ids.add(level_id)
         return True
     except Exception as exc:
@@ -128,7 +135,6 @@ def remove_from_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: s
     try:
         mtime_before = player_dat_path.stat().st_mtime
         raw = player_dat_path.read_text(encoding="utf-8", errors="replace")
-        backup_player_data(player_dat_path, raw)
         data = json.loads(raw)
         players = data.get("localPlayers", [])
         if not players:
@@ -141,6 +147,7 @@ def remove_from_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: s
         content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
         if not _atomic_write_player_data(player_dat_path, content, mtime_before):
             return False
+        backup_player_data(player_dat_path, raw)
         favorite_ids -= to_remove
         return True
     except Exception as exc:

@@ -795,8 +795,7 @@ class BrowserUIMixin:
         self.selected_indices = set(range(len(self.filtered)))
         self._selected_folders = {str(s.folder) for s in self.filtered}
         self.selected_index = len(self.filtered) - 1 if self.filtered else None
-        page_start = self.page * self.page_size
-        for li, row in enumerate(self._row_frames):
+        for row in self._row_frames:
             self._recolor_row(row, SELECTED_BG)
         n = len(self.filtered)
         self.status_bar.config(text=f"{n} song{'s' if n != 1 else ''} selected")

@@ -427,8 +427,7 @@ class BrowserPaginationMixin:
         self._pending_install_id = None
         self._install_manager.cancel()
         raw_query = self.search_var.get().strip()
-        tags, plain = _parse_tags(raw_query)
-        plain_lower = plain.lower()
+        tags, _ = _parse_tags(raw_query)
 
         if not raw_query:
             self.filtered = self.songs[:]

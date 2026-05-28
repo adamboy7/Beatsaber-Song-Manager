@@ -1,54 +1,9 @@
-import contextlib
 import os
 import shutil
 import subprocess
 import tempfile
-import threading
 from pathlib import Path
 
-
-# Thread-local flag toggled by `_no_console_window`. The monkey-patched Popen
-# subclass only applies CREATE_NO_WINDOW when *this* thread has the patch
-# active, so background threads (pynput listener, install watchers, audio
-# Popen, the loopback HTTP server) constructing a Popen concurrently are not
-# affected.
-_quiet_local = threading.local()
-_patch_lock = threading.Lock()
-_patch_depth = 0
-_orig_popen = subprocess.Popen
-
-
-class _Quiet(_orig_popen):
-    def __init__(self, *args, **kwargs):
-        if getattr(_quiet_local, "active", False):
-            flags = kwargs.get("creationflags", 0) or 0
-            creation_flag = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            kwargs["creationflags"] = flags | creation_flag
-        super().__init__(*args, **kwargs)
-
-
-@contextlib.contextmanager
-def _no_console_window():
-    """Suppress Windows console windows for subprocess.Popen calls in *this* thread.
-
-    The patch is reference-counted across threads so concurrent users don't
-    each toggle the global Popen back to the original prematurely; the
-    creationflags override is scoped to the calling thread via a thread-local.
-    """
-    global _patch_depth
-    with _patch_lock:
-        if _patch_depth == 0:
-            subprocess.Popen = _Quiet  # type: ignore[misc]
-        _patch_depth += 1
-    _quiet_local.active = True
-    try:
-        yield
-    finally:
-        _quiet_local.active = False
-        with _patch_lock:
-            _patch_depth -= 1
-            if _patch_depth == 0:
-                subprocess.Popen = _orig_popen  # type: ignore[misc]
 
 from libraries.song_data import SongInfo
 
@@ -113,18 +68,31 @@ def replace_audio(audio_path: Path, new_path: str, ffmpeg_path: str) -> None:
         if ext in (".egg", ".ogg"):
             shutil.copy2(new, tmp_str)
         else:
-            try:
-                from pydub import AudioSegment
-            except ImportError as e:
+            if not ffmpeg_path:
                 raise RuntimeError(
-                    "Missing dependencies for audio conversion.\n"
-                    "Run: pip install -r requirements.txt\n\n"
-                    f"Detail: {e}"
-                ) from e
-            AudioSegment.converter = ffmpeg_path
-            with _no_console_window():
-                audio = AudioSegment.from_file(new_path)
-                audio.export(tmp_str, format="ogg")
+                    "ffmpeg not available — cannot convert audio.\n"
+                    "Place ffmpeg.exe next to this script or add it to PATH."
+                )
+            # Invoke ffmpeg directly with CREATE_NO_WINDOW rather than going
+            # through pydub. Avoids the global `subprocess.Popen` monkey-patch
+            # that would otherwise be needed to suppress the conversion's
+            # console window.
+            creation_flag = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            cmd = [
+                ffmpeg_path, "-y", "-i", str(new_path),
+                "-c:a", "libvorbis", "-q:a", "5", tmp_str,
+            ]
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                creationflags=creation_flag,
+            )
+            if result.returncode != 0:
+                err = (result.stderr or b"").decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"ffmpeg conversion failed (exit {result.returncode}):\n{err.strip()}"
+                )
         bak = audio_path.parent / (audio_path.name + ".bak")
         if not bak.exists():
             shutil.copy2(audio_path, bak)

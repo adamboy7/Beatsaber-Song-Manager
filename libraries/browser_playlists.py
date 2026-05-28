@@ -17,7 +17,6 @@ import io
 import json
 import base64
 import os
-import random
 import tempfile
 import threading
 import urllib.request
@@ -314,9 +313,12 @@ class BrowserPlaylistsMixin:
 
         content = json.dumps(playlist, ensure_ascii=False, indent=2)
         target = Path(save_path)
-        fd, tmp_str = tempfile.mkstemp(dir=str(target.parent), suffix=".tmp")
+        # `fd` is `tkinter.filedialog` in scope — use a distinct name for the
+        # file descriptor so a future edit that references `fd.ask…()` below
+        # this line doesn't hit AttributeError on an int.
+        fd_int, tmp_str = tempfile.mkstemp(dir=str(target.parent), suffix=".tmp")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            with os.fdopen(fd_int, "w", encoding="utf-8") as f:
                 f.write(content)
             os.replace(tmp_str, target)
         except:
@@ -512,6 +514,16 @@ class BrowserPlaylistsMixin:
 
     def _install_playlist_from_url(self, url: str) -> None:
         """Download a remote .bplist and install via Mod Assistant."""
+        # If a previous URL install is still in flight, clean up its temp file
+        # before we overwrite the slot — otherwise the prior path gets orphaned
+        # and is never unlinked.
+        prev_tmp = getattr(self, "_pending_playlist_temp_path", None)
+        if prev_tmp is not None:
+            try:
+                prev_tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            self._pending_playlist_temp_path = None
         self._pending_playlist_url = url
         self.status_bar.config(text="Downloading playlist…")
 
@@ -544,6 +556,14 @@ class BrowserPlaylistsMixin:
         installable = [e for e in entries if e.get("key") or e.get("id")]
         expected_keys = [(e.get("key") or e.get("id") or "") for e in installable]
 
+        # Belt-and-suspenders: drop any previous pending temp path so we don't
+        # leak it if a rapid re-trigger raced through _install_playlist_from_url.
+        prev_tmp = getattr(self, "_pending_playlist_temp_path", None)
+        if prev_tmp is not None and prev_tmp != tmp_path:
+            try:
+                prev_tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
         self._pending_playlist_temp_path = tmp_path
 
         if not PlaylistInstaller.has_handler():

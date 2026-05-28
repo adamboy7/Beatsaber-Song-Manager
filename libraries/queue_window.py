@@ -90,8 +90,12 @@ class QueueWindow(tk.Toplevel):
 
         if not hasattr(self._browser, '_queue_clipboard'):
             self._browser._queue_clipboard = []
-        if not hasattr(self._browser, '_queue_cut_songs'):
-            self._browser._queue_cut_songs = None
+        # Cut marks are stored as a list of (index, song) tuples so that
+        # cutting one occurrence of a song that appears more than once in
+        # the queue marks/removes only that specific slot, not every slot
+        # holding the same SongInfo reference.
+        if not hasattr(self._browser, '_queue_cut_marks'):
+            self._browser._queue_cut_marks = None
 
         self.title("Playback Queue")
         self.configure(bg="#0d0d1a")
@@ -243,7 +247,7 @@ class QueueWindow(tk.Toplevel):
     def _on_close(self):
         if self._tick_id:
             self.after_cancel(self._tick_id)
-        self._browser._queue_cut_songs = None  # un-mark cuts; clipboard survives
+        self._browser._queue_cut_marks = None  # un-mark cuts; clipboard survives
         self._browser._queue_window = None
         self.destroy()
 
@@ -496,12 +500,13 @@ class QueueWindow(tk.Toplevel):
         if len(queue) < 2:
             return
         curr = b._queue_index
-        playing = queue[curr] if 0 <= curr < len(queue) else None
-        random.shuffle(queue)
-        if playing is not None:
-            b._queue_index = next(
-                (i for i, s in enumerate(queue) if s is playing), -1
-            )
+        # Permute by indices so duplicate SongInfo references don't confuse the
+        # "where is the playing song now?" lookup.
+        perm = list(range(len(queue)))
+        random.shuffle(perm)
+        queue[:] = [queue[i] for i in perm]
+        if 0 <= curr < len(queue):
+            b._queue_index = perm.index(curr)
         self.refresh()
 
     def _show_add_random_dialog(
@@ -910,17 +915,20 @@ class QueueWindow(tk.Toplevel):
     def _perform_move(self, src: int, dst: int):
         queue = self._browser._queue
         curr = self._browser._queue_index
-        playing_song = queue[curr] if 0 <= curr < len(queue) else None
 
         song = queue.pop(src)
         if dst > src:
             dst -= 1
         queue.insert(dst, song)
 
-        if playing_song is not None:
-            self._browser._queue_index = next(
-                (i for i, s in enumerate(queue) if s is playing_song), -1
-            )
+        # Track the playing index by arithmetic on src/dst rather than by
+        # identity — duplicate SongInfo refs would land on the wrong copy.
+        if 0 <= curr < len(queue):
+            if curr == src:
+                self._browser._queue_index = dst
+            else:
+                mid = curr - 1 if curr > src else curr
+                self._browser._queue_index = mid + 1 if mid >= dst else mid
         self.refresh()
 
     # ── Selection & Delete ───────────────────────────────────────────────────
@@ -979,7 +987,7 @@ class QueueWindow(tk.Toplevel):
             return
         queue = self._browser._queue
         self._browser._queue_clipboard = [queue[i] for i in sorted(self._selected)]
-        self._browser._queue_cut_songs = None
+        self._browser._queue_cut_marks = None
         self._selected.clear()
         self._update_row_colors()
 
@@ -987,9 +995,12 @@ class QueueWindow(tk.Toplevel):
         if not self._selected:
             return
         queue = self._browser._queue
-        songs = [queue[i] for i in sorted(self._selected)]
-        self._browser._queue_clipboard = songs
-        self._browser._queue_cut_songs = songs[:]
+        selected_sorted = sorted(self._selected)
+        self._browser._queue_clipboard = [queue[i] for i in selected_sorted]
+        # Record the (index, song) of each cut slot. The song reference is
+        # used at paste time to validate that the queue hasn't shifted under
+        # us; duplicates of the same SongInfo are distinguished by index.
+        self._browser._queue_cut_marks = [(i, queue[i]) for i in selected_sorted]
         self._selected.clear()
         self._update_row_colors()
 
@@ -998,7 +1009,7 @@ class QueueWindow(tk.Toplevel):
         if not clipboard:
             return
         queue = self._browser._queue
-        cut_songs = getattr(self._browser, '_queue_cut_songs', None)
+        cut_marks = getattr(self._browser, '_queue_cut_marks', None)
 
         # Determine insert position
         if len(self._selected) == 1:
@@ -1007,21 +1018,27 @@ class QueueWindow(tk.Toplevel):
             insert_idx = len(queue)
 
         playing_was_cut = False
-        next_to_play = None
+        next_to_play_idx = -1  # index in the post-removal, pre-paste queue
+        curr = self._browser._queue_index
 
-        if cut_songs:
-            cut_id_set = {id(s) for s in cut_songs}
-            cut_indices = sorted(i for i, s in enumerate(queue) if id(s) in cut_id_set)
+        if cut_marks:
+            # Validate each cut mark: only remove a slot if its recorded
+            # SongInfo is still at that index. This makes the cut mark
+            # specific to a single queue slot, so a duplicated song with
+            # only one occurrence cut won't pull both occurrences out.
+            cut_indices = sorted({
+                i for i, s in cut_marks
+                if 0 <= i < len(queue) and queue[i] is s
+            })
+            cut_idx_set = set(cut_indices)
 
-            curr = self._browser._queue_index
-            playing_song = queue[curr] if 0 <= curr < len(queue) else None
-            playing_was_cut = playing_song is not None and id(playing_song) in cut_id_set
+            playing_was_cut = 0 <= curr < len(queue) and curr in cut_idx_set
 
             if playing_was_cut:
-                cut_idx_set = set(cut_indices)
+                # First non-cut index after curr → translate to post-removal index.
                 for i in range(curr + 1, len(queue)):
                     if i not in cut_idx_set:
-                        next_to_play = queue[i]
+                        next_to_play_idx = i - sum(1 for ci in cut_indices if ci <= i)
                         break
 
             # Shift insert_idx for each cut song that precedes it
@@ -1031,20 +1048,21 @@ class QueueWindow(tk.Toplevel):
             for i in sorted(cut_indices, reverse=True):
                 queue.pop(i)
 
-            if not playing_was_cut and playing_song is not None:
-                new_idx = next((j for j, s in enumerate(queue) if s is playing_song), -1)
-                self._browser._queue_index = new_idx
+            if not playing_was_cut and 0 <= curr:
+                self._browser._queue_index = (
+                    curr - sum(1 for ci in cut_indices if ci < curr)
+                )
 
-            self._browser._queue_cut_songs = None
+            self._browser._queue_cut_marks = None
 
         # Clamp
         insert_idx = max(0, min(insert_idx, len(queue)))
 
         # Shift playing index past the incoming block (skip if we'll set it explicitly below)
         if not playing_was_cut:
-            curr = self._browser._queue_index
-            if curr >= 0 and curr >= insert_idx:
-                self._browser._queue_index = curr + len(clipboard)
+            c = self._browser._queue_index
+            if c >= 0 and c >= insert_idx:
+                self._browser._queue_index = c + len(clipboard)
 
         # Insert clipboard songs as a block
         for j, song in enumerate(clipboard):
@@ -1052,11 +1070,14 @@ class QueueWindow(tk.Toplevel):
 
         # Resolve playback for a cut-and-removed playing song
         if playing_was_cut:
-            if next_to_play is not None:
-                new_idx = next((j for j, s in enumerate(queue) if s is next_to_play), -1)
-                self._browser._queue_index = new_idx
-                if new_idx >= 0:
-                    self._browser._play_audio(queue[new_idx])
+            if next_to_play_idx >= 0:
+                # The recorded index was in the post-removal queue; account for
+                # the just-inserted paste block.
+                if next_to_play_idx >= insert_idx:
+                    next_to_play_idx += len(clipboard)
+                self._browser._queue_index = next_to_play_idx
+                if 0 <= next_to_play_idx < len(queue):
+                    self._browser._play_audio(queue[next_to_play_idx])
                 else:
                     self._browser._stop_audio_keep_queue()
             else:
@@ -1070,14 +1091,20 @@ class QueueWindow(tk.Toplevel):
     def _update_row_colors(self):
         playing_idx = self._browser._queue_index
         queue = self._browser._queue
-        cut_songs = getattr(self._browser, '_queue_cut_songs', None)
-        cut_id_set = {id(s) for s in cut_songs} if cut_songs else set()
+        cut_marks = getattr(self._browser, '_queue_cut_marks', None)
+        # Honour only marks whose recorded (index, song) still matches the
+        # current queue — that way a single occurrence of a duplicated song
+        # stays highlighted while its twin doesn't.
+        cut_indices = (
+            {i for i, s in cut_marks if 0 <= i < len(queue) and queue[i] is s}
+            if cut_marks else set()
+        )
         for i, row in enumerate(self._row_frames):
             if self._dragging and i == self._drag_source:
                 continue
             elif i in self._selected:
                 bg = SELECTED_BG
-            elif i < len(queue) and id(queue[i]) in cut_id_set:
+            elif i in cut_indices:
                 bg = _CUT_BG
             elif i == playing_idx:
                 bg = _QUEUE_PLAYING_BG
@@ -1127,9 +1154,12 @@ class QueueWindow(tk.Toplevel):
     def _on_leave(self, row: tk.Frame, idx: int):
         if idx not in self._selected and idx != self._browser._queue_index:
             queue = self._browser._queue
-            cut_songs = getattr(self._browser, '_queue_cut_songs', None)
-            is_cut = (cut_songs is not None and idx < len(queue)
-                      and any(queue[idx] is s for s in cut_songs))
+            cut_marks = getattr(self._browser, '_queue_cut_marks', None)
+            is_cut = (
+                cut_marks is not None
+                and 0 <= idx < len(queue)
+                and any(ci == idx and cs is queue[idx] for ci, cs in cut_marks)
+            )
             self._recolor_row(row, idx, _CUT_BG if is_cut else ITEM_BG)
 
     def _on_mousewheel(self, event: tk.Event):
