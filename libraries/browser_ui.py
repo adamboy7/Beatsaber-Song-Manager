@@ -195,6 +195,7 @@ class BrowserUIMixin:
         view_menu.add_separator()
         view_menu.add_command(label="Queue", command=self._open_queue_window)
         view_menu.add_command(label="Playlist Art", command=self._open_playlist_art_window)
+        view_menu.add_command(label="Visualizer", command=self._open_visualizer_window)
         menubar.add_cascade(label="View", menu=view_menu)
 
         options_menu = tk.Menu(menubar, tearoff=0)

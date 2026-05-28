@@ -39,6 +39,7 @@ from libraries.install_manager import InstallManager
 from libraries.playlist_installer import PlaylistInstaller
 from libraries.queue_window import QueueWindow
 from libraries.playlist_art_window import PlaylistArtWindow
+from libraries.visualizer_window import VisualizerWindow
 from libraries.browser_ui import BrowserUIMixin
 from libraries.browser_playback import BrowserPlaybackMixin
 from libraries.browser_playlists import BrowserPlaylistsMixin
@@ -115,6 +116,7 @@ class SongBrowser(
             self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
             self._player_bar_visible = True
         self._queue_window: QueueWindow | None = None
+        self._visualizer_window: VisualizerWindow | None = None
         self._playlist_art_b64: str | None = None
         self._playlist_art_locked: bool = False
         self._playlist_art_first_song_key: str | None = None

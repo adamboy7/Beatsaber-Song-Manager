@@ -34,6 +34,7 @@ from libraries.player_data import (
 from libraries.playlist_installer import PlaylistInstaller
 from libraries.queue_window import QueueWindow
 from libraries.playlist_art_window import PlaylistArtWindow
+from libraries.visualizer_window import VisualizerWindow
 
 
 def _ask_overwrite_or_append(parent: tk.Misc, anchor: tk.Misc | None = None) -> str:
@@ -663,6 +664,14 @@ class BrowserPlaylistsMixin:
             self._playlist_art_window.focus_force()
             return
         self._playlist_art_window = PlaylistArtWindow(self)
+
+    def _open_visualizer_window(self):
+        if self._visualizer_window and self._visualizer_window.winfo_exists():
+            self._visualizer_window.deiconify()
+            self._visualizer_window.lift()
+            self._visualizer_window.focus_force()
+            return
+        self._visualizer_window = VisualizerWindow(self)
 
     def _notify_playlist_art_window(self):
         if self._playlist_art_window and self._playlist_art_window.winfo_exists():
