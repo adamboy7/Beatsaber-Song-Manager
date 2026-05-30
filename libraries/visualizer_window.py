@@ -303,6 +303,7 @@ class VisualizerWindow(tk.Toplevel):
             return
         if find_ffmpeg() is None:
             return
+        self._stop_stream()
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
         self._start_stream(song, elapsed)
 
@@ -634,6 +635,16 @@ class VisualizerWindow(tk.Toplevel):
         if mp.playing_song is None or mp._stopped:
             return
         self._restart_stream_at_elapsed()
+        if mp._audio_paused:
+            proc = self._ffmpeg_proc
+            if proc is not None and proc.poll() is None:
+                _suspend_pid(proc.pid)
+                self._suspended = True
+            self._y_scale = 0.0
+            self._y_scale_target = 0.0
+            self._y_scale_anim_start = None
+            self._y_scale_paused = True
+            self._show_bright_art()
 
     # ── Context menu ─────────────────────────────────────────────────────────
 
