@@ -13,6 +13,7 @@ from __future__ import annotations
 import ctypes
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,7 @@ _DEFAULT_W = 480
 _FPS = 30
 _FRAME_BYTES_PER_PX = 3  # rgb24
 _PIPE_READ_CHUNK = 65536
+_ANIM_DURATION = 0.25  # seconds for pause/resume y-scale animation
 
 
 def _suspend_pid(pid: int) -> bool:
@@ -93,6 +95,15 @@ class VisualizerWindow(tk.Toplevel):
         self._was_stopped = True
         self._suspended = False
 
+        # Waveform vertical-scale animation state.
+        self._y_scale: float = 1.0
+        self._y_scale_target: float = 1.0
+        self._y_scale_anim_from: float = 1.0
+        self._y_scale_anim_start: float | None = None
+        self._last_freq_img: Image.Image | None = None
+        self._bg_image_bright: Image.Image | None = None
+        self._y_scale_paused: bool = False
+
         # Tk-side state.
         self._photo: ImageTk.PhotoImage | None = None
         self._image_id: int | None = None
@@ -113,7 +124,7 @@ class VisualizerWindow(tk.Toplevel):
         self.geometry(f"{_DEFAULT_W}x{_DEFAULT_W}")
         self.minsize(300, 300)
         try:
-            _icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Icon.png")
+            _icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Visualizer.png")
             self.iconphoto(False, _icon)
             self._icon = _icon
         except Exception:
@@ -139,7 +150,10 @@ class VisualizerWindow(tk.Toplevel):
         self._status_label.pack(fill="x", side="bottom")
 
         self._canvas.bind("<Configure>", self._on_resize)
+        self._canvas.bind("<Button-3>", self._on_right_click)
+        self._name_label.bind("<Button-3>", self._on_right_click)
         self.bind("<Configure>", self._on_window_configure)
+        self.bind("<space>", lambda _e: self._browser._media_player.toggle_pause())
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Sync to whatever is currently playing right when the window opens.
@@ -238,6 +252,17 @@ class VisualizerWindow(tk.Toplevel):
             proc = self._ffmpeg_proc
             if proc is not None and proc.poll() is not None and not stopped:
                 self._stop_stream()
+
+            # Advance y-scale animation.
+            if self._y_scale_anim_start is not None:
+                t = min(1.0, (time.time() - self._y_scale_anim_start) / _ANIM_DURATION)
+                self._y_scale = self._y_scale_anim_from + (self._y_scale_target - self._y_scale_anim_from) * t
+                if t >= 1.0:
+                    self._y_scale = self._y_scale_target
+                    self._y_scale_anim_start = None
+                    if self._y_scale_target == 0.0:
+                        self._show_bright_art()
+                        self._y_scale_paused = True
 
             self._blit_latest_frame()
             self._tick_id = self.after(33, self._tick)
@@ -388,6 +413,10 @@ class VisualizerWindow(tk.Toplevel):
             return
         if _suspend_pid(proc.pid):
             self._suspended = True
+            self._y_scale_anim_from = self._y_scale
+            self._y_scale_target = 0.0
+            self._y_scale_anim_start = time.time()
+            self._y_scale_paused = False
 
     def _resume_stream(self):
         proc = self._ffmpeg_proc
@@ -399,6 +428,10 @@ class VisualizerWindow(tk.Toplevel):
             self._latest_frame = None
         if _resume_pid(proc.pid):
             self._suspended = False
+            self._y_scale_anim_from = self._y_scale
+            self._y_scale_target = 1.0
+            self._y_scale_anim_start = time.time()
+            self._y_scale_paused = False
 
     def _stop_stream(self):
         self._reader_stop.set()
@@ -426,6 +459,11 @@ class VisualizerWindow(tk.Toplevel):
         self._reader_thread = None
         with self._frame_lock:
             self._latest_frame = None
+        self._y_scale = 1.0
+        self._y_scale_target = 1.0
+        self._y_scale_anim_start = None
+        self._last_freq_img = None
+        self._y_scale_paused = False
 
     # ── Drawing ──────────────────────────────────────────────────────────────
 
@@ -435,16 +473,58 @@ class VisualizerWindow(tk.Toplevel):
         with self._frame_lock:
             data = self._latest_frame
             self._latest_frame = None
+
+        animating = self._y_scale_anim_start is not None
+
         if data is None:
-            return
-        try:
-            freq_img = Image.frombytes("RGB", (self._stream_w, self._stream_h), data)
-            bg = self._bg_image
-            if bg is not None and bg.size == freq_img.size:
-                mask = freq_img.convert("L").point(lambda p: 255 if p > 10 else 0)
-                img = Image.composite(freq_img, bg, mask)
+            if not animating:
+                return
+            freq_img = self._last_freq_img
+            if freq_img is None:
+                return
+        else:
+            try:
+                freq_img = Image.frombytes("RGB", (self._stream_w, self._stream_h), data)
+                self._last_freq_img = freq_img
+            except Exception:
+                return
+
+        w, h = freq_img.size
+
+        # Background art: crossfade dim → bright as scale goes 1 → 0.
+        art_alpha = 1.0 - self._y_scale
+        dim = self._bg_image
+        bright = self._bg_image_bright
+        if dim is not None and bright is not None and dim.size == (w, h):
+            if art_alpha < 0.001:
+                bg = dim
+            elif art_alpha > 0.999:
+                bg = bright
             else:
-                img = freq_img
+                bg = Image.blend(dim, bright, art_alpha)
+        elif dim is not None and dim.size == (w, h):
+            bg = dim
+        else:
+            bg = None
+
+        # Scale bars only, anchored at the bottom — art stays full size.
+        scale = self._y_scale
+        if abs(scale - 1.0) > 0.001:
+            scaled_h = max(1, int(h * scale))
+            scaled_bars = freq_img.resize((w, scaled_h), Image.LANCZOS)
+            freq_overlay = Image.new("RGB", (w, h), (0, 0, 0))
+            freq_overlay.paste(scaled_bars, (0, h - scaled_h))
+        else:
+            freq_overlay = freq_img
+
+        # Composite bars over background.
+        if bg is not None:
+            mask = freq_overlay.convert("L").point(lambda p: 255 if p > 10 else 0)
+            img = Image.composite(freq_overlay, bg, mask)
+        else:
+            img = freq_overlay
+
+        try:
             photo = ImageTk.PhotoImage(img)
         except Exception:
             return
@@ -457,6 +537,20 @@ class VisualizerWindow(tk.Toplevel):
                 self._canvas.itemconfig(self._image_id, image=photo)
             # Keep a reference so Python doesn't GC the PhotoImage while Tk
             # still has the handle.
+            self._photo = photo
+        except tk.TclError:
+            pass
+
+    def _show_bright_art(self):
+        bg = self._bg_image_bright
+        if bg is None:
+            return
+        try:
+            photo = ImageTk.PhotoImage(bg)
+            if self._image_id is None:
+                self._image_id = self._canvas.create_image(0, 0, image=photo, anchor="nw")
+            else:
+                self._canvas.itemconfig(self._image_id, image=photo)
             self._photo = photo
         except tk.TclError:
             pass
@@ -489,6 +583,7 @@ class VisualizerWindow(tk.Toplevel):
         if song is None or not song.cover_path:
             self._bg_image_src = None
             self._bg_image = None
+            self._bg_image_bright = None
             return
         if self._bg_song_id != id(song):
             try:
@@ -502,6 +597,7 @@ class VisualizerWindow(tk.Toplevel):
         src = self._bg_image_src
         if src is None:
             self._bg_image = None
+            self._bg_image_bright = None
             return
         src_w, src_h = src.size
         scale = min(w / src_w, h / src_h)
@@ -509,6 +605,7 @@ class VisualizerWindow(tk.Toplevel):
         scaled = src.resize((fit_w, fit_h), Image.LANCZOS)
         canvas = Image.new("RGB", (w, h), (0, 0, 0))
         canvas.paste(scaled, ((w - fit_w) // 2, (h - fit_h) // 2))
+        self._bg_image_bright = canvas.copy()
         self._bg_image = ImageEnhance.Brightness(canvas).enhance(0.45)
 
     # ── Resize handling ──────────────────────────────────────────────────────
@@ -537,6 +634,76 @@ class VisualizerWindow(tk.Toplevel):
         if mp.playing_song is None or mp._stopped:
             return
         self._restart_stream_at_elapsed()
+
+    # ── Context menu ─────────────────────────────────────────────────────────
+
+    def _on_right_click(self, event: tk.Event):
+        song = self._current_song
+        if song is None:
+            return
+        menu = tk.Menu(
+            self, tearoff=0,
+            bg="#1e1e1e", fg="white",
+            activebackground=ACCENT_COLOR, activeforeground="white", bd=0,
+        )
+        menu.add_command(label="View Song", command=lambda: self._view_song(song))
+        menu.add_command(label="Save Image…", command=lambda: self._save_cover_art(song))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _save_cover_art(self, song: "SongInfo"):
+        import re
+        import tkinter.filedialog as fd
+        from tkinter import messagebox
+        if not song.cover_path:
+            messagebox.showinfo("No image", "This song has no cover art.", parent=self)
+            return
+        raw_name = song.display_name or song.song_name or "cover"
+        safe_name = re.sub(r'[\\/:*?"<>|]', "", raw_name).strip() or "cover"
+        path = fd.asksaveasfilename(
+            title="Save Image As",
+            initialfile=safe_name,
+            defaultextension=".jpg",
+            filetypes=[
+                ("JPEG", "*.jpg *.jpeg"),
+                ("PNG", "*.png"),
+                ("All files", "*.*"),
+            ],
+            parent=self,
+        )
+        if not path:
+            return
+        try:
+            img = Image.open(song.cover_path).convert("RGB")
+            fmt = "PNG" if Path(path).suffix.lower() == ".png" else "JPEG"
+            img.save(path, format=fmt)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not save image:\n{e}", parent=self)
+
+    def _view_song(self, song: "SongInfo"):
+        b = self._browser
+        folder = str(song.folder)
+
+        def _find(lst):
+            for i, s in enumerate(lst):
+                if s is song or str(s.folder) == folder:
+                    return i
+            return None
+
+        idx = _find(b.filtered)
+        if idx is None:
+            b.search_var.set("")
+            idx = _find(b.filtered)
+            if idx is None:
+                return
+        b.page = idx // b.page_size
+        b.selected_indices = {idx}
+        b.selected_index = idx
+        b._selected_folders = {str(song.folder)}
+        b._render_list()
+        b._scroll_to_selected()
+        b.status_bar.config(text=f"Selected: {song.display_name}")
+        b.lift()
+        b.focus_force()
 
     # ── Refresh entry point (called from __init__ for initial state) ──────────
 
