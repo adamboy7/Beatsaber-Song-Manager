@@ -51,7 +51,7 @@ def _has_invalid_tags(tags: list[tuple[str, str]]) -> bool:
             return True
         if tag == "bpm" and not _BPM_OP_RE.match(value):
             return True
-        if tag == "difficulty" and value not in _DIFF_NAME_TO_INT:
+        if tag == "difficulty" and not value:
             return True
     return False
 
@@ -119,10 +119,12 @@ def _song_matches_tags(
                 return False
         elif tag == "difficulty":
             diff_int = _DIFF_NAME_TO_INT.get(value)
-            # Fail closed on unrecognised values so a typo doesn't silently
-            # disable the filter and let every song through.
-            if diff_int is None or diff_int not in song.difficulties:
-                return False
+            if diff_int is not None:
+                if diff_int not in song.difficulties:
+                    return False
+            else:
+                if not any(value == lbl.lower() for lbl in song.diff_labels.values()):
+                    return False
         elif tag == "custom":
             if not any(value == t.lower() for t in song.custom_tags):
                 return False
