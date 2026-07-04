@@ -16,6 +16,14 @@ class InstallManager:
     def cancel(self) -> None:
         self._gen += 1
 
+    def _dispatch(self, callback) -> None:
+        """Schedule callback on the host's event loop, swallowing errors from a
+        torn-down UI (e.g. tk.TclError after the window closed mid-install)."""
+        try:
+            self._after(0, callback)
+        except Exception:
+            pass
+
     def trigger(self, song_id: str) -> None:
         if not self.has_handler():
             self._status_cb(
@@ -57,13 +65,13 @@ class InstallManager:
                         if name.startswith(song_id + " ") or name == song_id:
                             if self._is_complete(entry):
                                 if gen == self._gen:
-                                    self._after(0, lambda: self._on_complete(gen))
+                                    self._dispatch(lambda: self._on_complete(gen))
                                 return
                 except Exception:
                     pass
                 time.sleep(1)
             if gen == self._gen:
-                self._after(0, lambda: self._on_timeout(song_id, gen))
+                self._dispatch(lambda: self._on_timeout(song_id, gen))
 
         threading.Thread(target=worker, daemon=True).start()
 
