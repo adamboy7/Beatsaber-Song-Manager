@@ -74,7 +74,12 @@ class MediaPlayer:
         self._volume_changed_while_paused: bool = False
 
     def start_media_keys(self, after_fn, on_stop=None, on_next=None, on_prev=None) -> None:
-        from pynput import keyboard as pynput_kb
+        try:
+            from pynput import keyboard as pynput_kb
+        except Exception as exc:
+            print(f"Media keys unavailable (pynput import failed): {exc}")
+            self._kb_listener = None
+            return
 
         def on_press(key):
             if key == pynput_kb.Key.media_play_pause:
@@ -86,9 +91,13 @@ class MediaPlayer:
             elif key == pynput_kb.Key.media_previous and on_prev is not None:
                 after_fn(0, on_prev)
 
-        self._kb_listener = pynput_kb.Listener(on_press=on_press)
-        self._kb_listener.daemon = True
-        self._kb_listener.start()
+        try:
+            self._kb_listener = pynput_kb.Listener(on_press=on_press)
+            self._kb_listener.daemon = True
+            self._kb_listener.start()
+        except Exception as exc:
+            print(f"Media keys unavailable (listener failed to start): {exc}")
+            self._kb_listener = None
 
     def stop_listener(self) -> None:
         if self._kb_listener:
@@ -107,7 +116,7 @@ class MediaPlayer:
             import ctypes
             ntdll = ctypes.WinDLL("ntdll")
             kernel32 = ctypes.WinDLL("kernel32")
-            handle = kernel32.OpenProcess(0x1F0FFF, False, self._audio_proc.pid)
+            handle = kernel32.OpenProcess(0x0800, False, self._audio_proc.pid)
             if not handle:
                 # OpenProcess returned NULL (process exited between poll() and OpenProcess,
                 # AV blocked the handle, insufficient privileges, etc.). Don't flip the
@@ -214,7 +223,7 @@ class MediaPlayer:
             if self._job:
                 try:
                     kernel32 = ctypes.WinDLL("kernel32")
-                    h = kernel32.OpenProcess(0x1F0FFF, False, self._audio_proc.pid)
+                    h = kernel32.OpenProcess(0x0101, False, self._audio_proc.pid)
                     if h:
                         kernel32.AssignProcessToJobObject(self._job, h)
                         kernel32.CloseHandle(h)
