@@ -80,7 +80,7 @@ def replace_audio(audio_path: Path, new_path: str, ffmpeg_path: str) -> None:
             creation_flag = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             cmd = [
                 ffmpeg_path, "-y", "-i", str(new_path),
-                "-c:a", "libvorbis", "-q:a", "5", tmp_str,
+                "-c:a", "libvorbis", "-q:a", "5", "-f", "ogg", tmp_str,
             ]
             result = subprocess.run(
                 cmd,
