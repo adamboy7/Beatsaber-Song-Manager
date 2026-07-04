@@ -146,6 +146,14 @@ class SongBrowser(
 
     def _on_close(self):
         self._stop_idle_animation()
+        for _attr in ("_player_tick_id", "_idle_anim_id", "_volume_apply_id"):
+            _handle = getattr(self, _attr, None)
+            if _handle is not None:
+                try:
+                    self.after_cancel(_handle)
+                except Exception:
+                    pass
+                setattr(self, _attr, None)
         self._install_manager.cancel()
         self._playlist_installer.cancel()
         self._media_player.stop_listener()
