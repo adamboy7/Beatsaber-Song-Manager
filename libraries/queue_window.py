@@ -825,6 +825,9 @@ class QueueWindow(tk.Toplevel):
             self._placeholder_thumb = ImageTk.PhotoImage(placeholder)
         except Exception:
             self._placeholder_thumb = self._browser._make_placeholder()
+            self._placeholder_thumb = tk.PhotoImage(
+                width=_QUEUE_THUMB[0], height=_QUEUE_THUMB[1]
+            )
         return self._placeholder_thumb
 
     def _load_thumb(self, song: "SongInfo") -> ImageTk.PhotoImage:
