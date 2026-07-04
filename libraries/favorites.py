@@ -18,7 +18,7 @@ def favorite_level_id(song: SongInfo) -> str:
 def backup_player_data(player_dat_path: Path, raw: str) -> None:
     bak_dir = Path(__file__).parent.parent / "backups"
     bak_dir.mkdir(exist_ok=True)
-    stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
     (bak_dir / f"PlayerData_{stamp}.dat.bak").write_text(raw, encoding="utf-8")
     # Build the sibling backup name by string concatenation rather than
     # `.with_suffix(".dat.bak")` — the multi-dot behaviour of `with_suffix`
@@ -69,15 +69,18 @@ def confirm_player_data_write(parent=None) -> bool:
 def _atomic_write_player_data(
     player_dat_path: Path,
     content: str,
-    mtime_before: float,
+    mtime_before: int,
     parent=None,
 ) -> bool:
     """Write content to player_dat_path atomically, aborting if mtime changed.
 
+    ``mtime_before`` is an ``st_mtime_ns`` value — nanosecond resolution avoids
+    the 1–2 s filesystem-granular false-equal from two writes in the same tick.
+
     Returns True on success. Shows an error and returns False otherwise.
     """
     try:
-        if player_dat_path.stat().st_mtime != mtime_before:
+        if player_dat_path.stat().st_mtime_ns != mtime_before:
             messagebox.showerror(
                 "PlayerData changed",
                 "PlayerData.dat was modified by another process while we were updating it. "
@@ -104,7 +107,7 @@ def add_to_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: set[st
     if not confirm_player_data_write():
         return False
     try:
-        mtime_before = player_dat_path.stat().st_mtime
+        mtime_before = player_dat_path.stat().st_mtime_ns
         raw = player_dat_path.read_text(encoding="utf-8", errors="replace")
         data = json.loads(raw)
         players = data.get("localPlayers", [])
@@ -133,7 +136,7 @@ def remove_from_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: s
     if not confirm_player_data_write():
         return False
     try:
-        mtime_before = player_dat_path.stat().st_mtime
+        mtime_before = player_dat_path.stat().st_mtime_ns
         raw = player_dat_path.read_text(encoding="utf-8", errors="replace")
         data = json.loads(raw)
         players = data.get("localPlayers", [])
