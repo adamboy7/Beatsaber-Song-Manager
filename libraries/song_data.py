@@ -315,6 +315,22 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
     except Exception:
         pass
 
+    try:
+        for entry in custom_levels.iterdir():
+            if not entry.is_dir():
+                continue
+            has_edit_bak = any(
+                (entry / bak_name).exists()
+                for bak_name in ("Info.dat.bak", "info.dat.bak", "INFO.DAT.bak")
+            )
+            if not has_edit_bak:
+                continue
+            recomputed = compute_song_hash(entry)
+            if recomputed:
+                result[entry.name] = recomputed
+    except Exception:
+        pass
+
     # Drop stale entries (folder gone) and persist if we touched anything.
     if dirty or len(new_cache) != len(cache):
         try:
@@ -328,10 +344,18 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
     return result
 
 
+def _has_info_dat(folder: Path) -> bool:
+    """True if the folder contains an Info.dat (case-insensitive)."""
+    return any(
+        (folder / name).exists()
+        for name in ("Info.dat", "info.dat", "INFO.DAT")
+    )
+
+
 def load_songs(custom_levels: Path) -> list[SongInfo]:
     songs = []
     for entry in custom_levels.iterdir():
-        if entry.is_dir():
+        if entry.is_dir() and _has_info_dat(entry):
             songs.append(SongInfo(entry))
     # Newest folder first
     songs.sort(key=lambda s: s.created_at, reverse=True)
