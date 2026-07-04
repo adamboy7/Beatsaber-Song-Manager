@@ -17,6 +17,7 @@ import io
 import json
 import base64
 import os
+import re
 import tempfile
 import threading
 import urllib.request
@@ -126,7 +127,10 @@ class BrowserPlaylistsMixin:
             hashes = load_song_hashes(self.custom_levels)
             for song in songs:
                 song.song_hash = hashes.get(song.folder.name, "")
-            self.after(0, lambda: self._maybe_apply_loaded(gen, songs))
+            try:
+                self.after(0, lambda: self._maybe_apply_loaded(gen, songs))
+            except tk.TclError:
+                pass
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -294,7 +298,7 @@ class BrowserPlaylistsMixin:
                     Image.open(song.cover_path).convert("RGB").save(buf, format="JPEG")
                     image_data = base64.b64encode(buf.getvalue()).decode("ascii")
                 except Exception:
-                    pass
+                    continue
                 break
 
         playlist = {
@@ -349,9 +353,15 @@ class BrowserPlaylistsMixin:
 
     def _on_playlist_drop(self, event) -> None:
         self.status_bar.config(text=getattr(self, "_drag_prev_status", ""))
-        path = self.tk.splitlist(event.data)[0]
+        paths = self.tk.splitlist(event.data)
+        path = paths[0]
         if Path(path).suffix.lower() not in {".bplist", ".json"}:
             return
+        if len(paths) > 1:
+            self.status_bar.config(
+                text=f"Loading only '{Path(path).name}' — {len(paths) - 1} other "
+                     "dropped file(s) ignored (drop one playlist at a time)."
+            )
         self._load_playlist_to_queue(path, anchor=self)
 
     def _open_playlist(self) -> None:
@@ -385,6 +395,8 @@ class BrowserPlaylistsMixin:
             self._notify_playlist_art_window()
         else:
             self._playlist_art_locked = False
+            self._playlist_art_b64 = None
+            self._playlist_art_first_song_key = None
 
         hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}
 
@@ -398,6 +410,8 @@ class BrowserPlaylistsMixin:
                 missing.append(entry)
 
         if not missing:
+            self._pending_playlist_entries = None
+            self._pending_playlist_queue = []
             self._play_queue(found)
             title = data.get("playlistTitle", Path(path).stem)
             self.status_bar.config(text=f"Playlist '{title}': {len(found)} songs queued")
@@ -483,12 +497,15 @@ class BrowserPlaylistsMixin:
         hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}
         found: list[SongInfo] = []
         missing_count = 0
+        broken_count = 0
         for entry in entries:
             h = (entry.get("hash") or "").upper()
             if h in hash_to_song:
                 song = hash_to_song[h]
                 if song.audio_path:
                     found.append(song)
+                else:
+                    broken_count += 1
             else:
                 missing_count += 1
 
@@ -502,16 +519,18 @@ class BrowserPlaylistsMixin:
 
         title = data.get("playlistTitle", Path(path).stem)
         msg = f"Appended {len(found)} songs from '{title}'"
-        if missing_count:
-            msg += f"  •  {missing_count} not installed (skipped)"
+        skipped = missing_count + broken_count
+        if skipped:
+            msg += f"  •  {skipped} not installed (skipped)"
         self.status_bar.config(text=msg)
 
     def _install_next_playlist_song(self) -> None:
-        if not self._pending_playlist_queue:
-            return
-        entry = self._pending_playlist_queue.pop(0)
-        song_id = entry.get("key") or entry.get("id")
-        self._install_manager.trigger(song_id)
+        while self._pending_playlist_queue:
+            entry = self._pending_playlist_queue.pop(0)
+            song_id = entry.get("key") or entry.get("id")
+            if song_id:
+                self._install_manager.trigger(song_id)
+                return
 
     def _install_playlist_from_url(self, url: str) -> None:
         """Download a remote .bplist and install via Mod Assistant."""
@@ -530,16 +549,26 @@ class BrowserPlaylistsMixin:
 
         def _download():
             try:
-                filename = url.rstrip("/").split("/")[-1]
+                from urllib.parse import urlparse
+                filename = urlparse(url).path.rstrip("/").split("/")[-1]
+                filename = re.sub(r'[^A-Za-z0-9._-]', "_", filename)
+                if not filename:
+                    filename = "playlist"
                 if not filename.lower().endswith((".bplist", ".json")):
                     filename += ".bplist"
                 fd, tmp_str = tempfile.mkstemp(suffix="_" + filename)
                 os.close(fd)
                 tmp_path = Path(tmp_str)
                 urllib.request.urlretrieve(url, tmp_path)
-                self.after(0, lambda: self._on_playlist_url_downloaded(tmp_path))
+                try:
+                    self.after(0, lambda: self._on_playlist_url_downloaded(tmp_path))
+                except tk.TclError:
+                    pass
             except Exception as exc:
-                self.after(0, lambda e=exc: self.status_bar.config(text=f"Download failed: {e}"))
+                try:
+                    self.after(0, lambda e=exc: self.status_bar.config(text=f"Download failed: {e}"))
+                except tk.TclError:
+                    pass
 
         threading.Thread(target=_download, daemon=True).start()
 
@@ -660,6 +689,7 @@ class BrowserPlaylistsMixin:
 
     def _open_playlist_art_window(self):
         if self._playlist_art_window and self._playlist_art_window.winfo_exists():
+            self._playlist_art_window.deiconify()
             self._playlist_art_window.lift()
             self._playlist_art_window.focus_force()
             return
