@@ -365,23 +365,28 @@ class BrowserPaginationMixin:
     def _extract_song_id(self, query: str) -> str | None:
         """Return the BeatSaver song ID if query is a one-click or map URL, else None.
 
-        BeatSaver keys are short hex strings (currently 1–6 chars in the wild);
-        we bound the capture so a copy/paste accident like
-        `https://beatsaver.com/maps/abc/comments` doesn't silently strip the
-        trailing path and offer to install `abc`.
+        BeatSaver keys are short lowercase hex strings (1–6 chars in the wild);
+        we restrict the capture to hex digits and bound the length so a
+        copy/paste accident like `https://beatsaver.com/maps/abcz999/comments`
+        doesn't silently strip the trailing path and offer to install a
+        non-key.
         """
         q = query.strip()
-        m = re.match(r'^beatsaver://([A-Za-z0-9]{1,8})(?:[/?#]|$)', q, re.IGNORECASE)
+        m = re.match(r'^beatsaver://([0-9a-fA-F]{1,7})(?:[/?#]|$)', q, re.IGNORECASE)
         if m:
             return m.group(1).lower()
-        m = re.match(r'^https?://beatsaver\.com/maps/([A-Za-z0-9]{1,8})(?:[/?#]|$)', q, re.IGNORECASE)
+        m = re.match(r'^https?://beatsaver\.com/maps/([0-9a-fA-F]{1,7})(?:[/?#]|$)', q, re.IGNORECASE)
         if m:
             return m.group(1).lower()
         return None
 
     def _extract_playlist_url(self, query: str) -> str | None:
-        """Return the inner HTTP URL if query is a bsplaylist:// one-click URL, else None."""
-        m = re.match(r'^bsplaylist://playlist/(https?://\S+)', query.strip(), re.IGNORECASE)
+        """Return the inner HTTP URL if query is a bsplaylist:// one-click URL, else None.
+
+        Accepts both the `bsplaylist://playlist/<url>` form and the shorter
+        legacy `bsplaylist://<url>` form some tools emit.
+        """
+        m = re.match(r'^bsplaylist://(?:playlist/)?(https?://\S+)', query.strip(), re.IGNORECASE)
         return m.group(1) if m else None
 
     def _on_search(self, *_):
@@ -487,7 +492,10 @@ class BrowserPaginationMixin:
             hashes = load_song_hashes(self.custom_levels)
             for song in songs:
                 song.song_hash = hashes.get(song.folder.name, "")
-            self.after(0, lambda: self._maybe_after_install_load(gen, songs))
+            try:
+                self.after(0, lambda: self._maybe_after_install_load(gen, songs))
+            except tk.TclError:
+                pass
 
         threading.Thread(target=worker, daemon=True).start()
 
