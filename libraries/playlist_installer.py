@@ -63,6 +63,14 @@ class PlaylistInstaller:
         self._gen += 1
         self._stop_server()
 
+    def _dispatch(self, callback) -> None:
+        """Schedule callback on the host's event loop, swallowing errors from a
+        torn-down UI (e.g. tk.TclError after the window closed mid-install)."""
+        try:
+            self._after(0, callback)
+        except Exception:
+            pass
+
     def install(
         self,
         playlist_path: Path,
@@ -227,7 +235,7 @@ class PlaylistInstaller:
                     # moment to finalize the last folder, then complete.
                     time.sleep(2)
                     if gen == self._gen:
-                        self._after(0, lambda: self._on_complete(gen, True))
+                        self._dispatch(lambda: self._on_complete(gen, True))
                     return
 
                 if current != last_count:
@@ -239,8 +247,7 @@ class PlaylistInstaller:
                     # iff at least one expected song made it in before the
                     # stall (matches the post-timeout heuristic below).
                     if gen == self._gen:
-                        self._after(
-                            0,
+                        self._dispatch(
                             lambda: self._on_complete(gen, last_count > 0),
                         )
                     return
@@ -249,8 +256,8 @@ class PlaylistInstaller:
 
             # Hit timeout — surface whatever we got.
             if gen == self._gen:
-                self._after(
-                    0, lambda: self._on_complete(gen, last_count > 0)
+                self._dispatch(
+                    lambda: self._on_complete(gen, last_count > 0)
                 )
 
         threading.Thread(target=worker, daemon=True).start()
