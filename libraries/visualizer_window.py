@@ -29,9 +29,7 @@ if TYPE_CHECKING:
 
 
 _BG = "#0d0d1a"
-# ffmpeg color literal (no leading '#'); two entries so each stereo channel
-# gets the same Beat Saber magenta when cmode=separate is used.
-_BAR_COLOR_HEX = "c724b1"
+_BAR_COLOR_HEX = ACCENT_COLOR.lstrip("#")
 _MIN_W, _MIN_H = 240, 80
 _DEFAULT_W = 480
 _FPS = 30
@@ -44,7 +42,7 @@ def _suspend_pid(pid: int) -> bool:
     try:
         kernel32 = ctypes.WinDLL("kernel32")
         ntdll = ctypes.WinDLL("ntdll")
-        handle = kernel32.OpenProcess(0x1F0FFF, False, pid)
+        handle = kernel32.OpenProcess(0x0800, False, pid)
         if not handle:
             return False
         try:
@@ -59,7 +57,7 @@ def _resume_pid(pid: int) -> bool:
     try:
         kernel32 = ctypes.WinDLL("kernel32")
         ntdll = ctypes.WinDLL("ntdll")
-        handle = kernel32.OpenProcess(0x1F0FFF, False, pid)
+        handle = kernel32.OpenProcess(0x0800, False, pid)
         if not handle:
             return False
         try:
