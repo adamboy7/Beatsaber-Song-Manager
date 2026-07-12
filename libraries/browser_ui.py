@@ -576,6 +576,7 @@ class BrowserUIMixin:
         if cw > 1:
             self.canvas.itemconfig(self.canvas_window, width=cw)
 
+        self._hide_mod_tooltip()
         for w in self.list_frame.winfo_children():
             w.destroy()
         self._row_frames.clear()
@@ -752,12 +753,16 @@ class BrowserUIMixin:
             w.bind("<Button-3>",        lambda e, i=idx, s=song: self._on_right_click(e, i, s))
             w.bind("<Enter>",           lambda e, r=row, s=sep: self._hover(r, s, True))
             w.bind("<Leave>",           lambda e, r=row, s=sep: self._hover(r, s, False))
-            w.bind("<MouseWheel>",      self._on_mousewheel)
+            w.bind("<MouseWheel>",      lambda e: (self._hide_mod_tooltip(), self._on_mousewheel(e)))
             if w in browser_targets:
                 w.bind("<Control-Button-1>",
                        lambda _, s=song: webbrowser.open(f"https://beatsaver.com/maps/{s.song_id}") if s.song_id else None)
             else:
                 w.bind("<Control-Button-1>", lambda e, i=idx: self._select(i, ctrl_held=True))
+
+        # Mod tooltip only triggers off the song art thumbnail, not the whole row.
+        thumb_lbl.bind("<Enter>", lambda e, sg=song: self._show_mod_tooltip(e, sg), add="+")
+        thumb_lbl.bind("<Leave>", lambda e: self._hide_mod_tooltip(), add="+")
 
     # ── Hover / selection / row coloring ──────────────────────────────────────
 
@@ -766,6 +771,46 @@ class BrowserUIMixin:
             return
         bg = HOVER_BG if entering else ITEM_BG
         self._recolor_row(row, bg)
+
+    def _show_mod_tooltip(self, event: tk.Event, song: SongInfo):
+        """Show a small tooltip listing required/suggested mods for a row.
+
+        No-ops when the song needs no mods at all.
+        """
+        self._hide_mod_tooltip()
+        if not (song.mod_required or song.mod_suggested):
+            return
+
+        lines = []
+        if song.mod_required:
+            lines.append("Required: " + ", ".join(sorted(song.mod_required)))
+        if song.mod_suggested:
+            lines.append("Suggested: " + ", ".join(sorted(song.mod_suggested)))
+
+        tip = tk.Toplevel(self)
+        tip.wm_overrideredirect(True)
+        try:
+            tip.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        tip.wm_geometry(f"+{event.x_root + 14}+{event.y_root + 12}")
+
+        tk.Label(
+            tip, text="\n".join(lines), justify="left",
+            bg="#1e1e1e", fg=TEXT_COLOR, font=("Segoe UI", 9),
+            relief="solid", bd=1, padx=6, pady=4,
+        ).pack()
+
+        self._mod_tooltip = tip
+
+    def _hide_mod_tooltip(self, *_):
+        tip = getattr(self, "_mod_tooltip", None)
+        if tip is not None:
+            try:
+                tip.destroy()
+            except tk.TclError:
+                pass
+            self._mod_tooltip = None
 
     def _row_is_selected(self, row: tk.Frame) -> bool:
         return row.cget("bg") == SELECTED_BG

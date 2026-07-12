@@ -133,6 +133,10 @@ All tags use `{tag}:value` syntax and are case-insensitive. Multiple tags can be
 | `{bpm}:OP N` | `<=`, `>=`, `<`, `>`, `=` + number | Filter by BPM — combine two for a range |
 | `{difficulty}:NAME` | `easy`, `normal`, `hard`, `expert`, `expertplus` or `0`–`4` | Only songs that include this difficulty |
 | `{custom}:TAG` | any text | Only songs with this custom tag (exact match, case-insensitive) |
+| `{chroma}:y` / `:n` | `y` or `n` | Only songs that **require** Chroma / that don't |
+| `{noodle}:y` / `:n` | `y` or `n` | Only songs that **require** Noodle Extensions / that don't |
+| `{extensions}:y` / `:n` | `y` or `n` | Only songs that **require** Mapping Extensions / that don't |
+| `{cinema}:y` / `:n` | `y` or `n` | Only songs that suggest/require Cinema or ship a `cinema-video.json` / that don't |
 
 **Examples**
 
@@ -160,6 +164,11 @@ Expert+ songs without a full combo.
 {difficulty}:4 {favorite}:y
 ```
 Favorited Expert+ songs (numeric shorthand for difficulty).
+
+```
+{noodle}:n {chroma}:n {extensions}:n
+```
+Songs that don't require any mods beyond the base game.
 
 ### Installing from the Search Bar
 

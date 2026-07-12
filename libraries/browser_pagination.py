@@ -39,8 +39,14 @@ _DIFF_NAME_TO_INT = {
 
 _BPM_OP_RE = re.compile(r'^(<=|>=|<|>|==|=)?(\d+(?:\.\d+)?)$')
 
-_KNOWN_TAGS = {"artist", "mapper", "title", "unplayed", "favorite", "fullcombo", "fc", "bpm", "difficulty", "custom"}
-_YN_TAGS    = {"unplayed", "favorite", "fullcombo", "fc"}
+_KNOWN_TAGS = {
+    "artist", "mapper", "title", "unplayed", "favorite", "fullcombo", "fc",
+    "bpm", "difficulty", "custom", "chroma", "noodle", "cinema", "extensions",
+}
+_YN_TAGS    = {
+    "unplayed", "favorite", "fullcombo", "fc", "chroma", "noodle", "cinema",
+    "extensions",
+}
 
 
 def _has_invalid_tags(tags: list[tuple[str, str]]) -> bool:
@@ -127,6 +133,26 @@ def _song_matches_tags(
                     return False
         elif tag == "custom":
             if not any(value == t.lower() for t in song.custom_tags):
+                return False
+        elif tag == "chroma":
+            if value == "y" and not song.requires_chroma:
+                return False
+            if value == "n" and song.requires_chroma:
+                return False
+        elif tag == "noodle":
+            if value == "y" and not song.requires_noodle:
+                return False
+            if value == "n" and song.requires_noodle:
+                return False
+        elif tag == "cinema":
+            if value == "y" and not song.has_cinema:
+                return False
+            if value == "n" and song.has_cinema:
+                return False
+        elif tag == "extensions":
+            if value == "y" and not song.requires_mapping_extensions:
+                return False
+            if value == "n" and song.requires_mapping_extensions:
                 return False
     return True
 

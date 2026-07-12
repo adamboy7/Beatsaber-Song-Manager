@@ -22,12 +22,21 @@ def save_custom_tags(folder: Path, tags: frozenset | set) -> None:
     )
 
 
+def _has_cinema_video(folder: Path) -> bool:
+    """True if a Cinema mod video manifest exists in the folder (case-insensitive)."""
+    for name in ("cinema-video.json", "Cinema-Video.json", "CINEMA-VIDEO.JSON"):
+        if (folder / name).exists():
+            return True
+    return False
+
+
 class SongInfo:
     __slots__ = (
         "folder", "song_id", "display_name",
         "song_name", "sub_name", "author",
         "mapper", "bpm", "cover_path", "audio_path", "created_at",
         "diff_labels", "difficulties", "song_hash", "custom_tags",
+        "mod_required", "mod_suggested", "has_cinema_video",
     )
 
     def __init__(self, folder: Path):
@@ -45,6 +54,9 @@ class SongInfo:
         self.difficulties: set[int] = set()
         self.song_hash: str = ""
         self.custom_tags: frozenset[str] = frozenset()
+        self.mod_required: frozenset[str] = frozenset()
+        self.mod_suggested: frozenset[str] = frozenset()
+        self.has_cinema_video: bool = False
         # Use st_birthtime (Windows/macOS) with st_ctime as fallback.
         # A racy filesystem (folder deleted mid-scan, permission denied)
         # shouldn't take down the whole load_songs() call.
@@ -113,6 +125,19 @@ class SongInfo:
                 _DIFF_STR_TO_INT = {"Easy": 0, "Normal": 1, "Hard": 2, "Expert": 3, "ExpertPlus": 4}
                 standard_labels: dict[int, str] = {}
                 other_labels:    dict[int, str] = {}
+                required: set[str] = set()
+                suggested: set[str] = set()
+
+                def _collect_mods(custom: dict) -> None:
+                    for name in custom.get("_requirements", custom.get("requirements", [])) or []:
+                        name = str(name).strip()
+                        if name and name.lower() != "none":
+                            required.add(name)
+                    for name in custom.get("_suggestions", custom.get("suggestions", [])) or []:
+                        name = str(name).strip()
+                        if name and name.lower() != "none":
+                            suggested.add(name)
+
                 if is_v4:
                     for bm in data.get("difficultyBeatmaps", []):
                         char = bm.get("characteristic", "")
@@ -121,6 +146,7 @@ class SongInfo:
                             continue
                         self.difficulties.add(diff_int)
                         custom = bm.get("customData", {})
+                        _collect_mods(custom)
                         label = custom.get("difficultyLabel", "").strip()
                         if not label:
                             continue
@@ -137,6 +163,7 @@ class SongInfo:
                                 continue
                             self.difficulties.add(diff_int)
                             custom = bm.get("_customData", bm.get("customData", {}))
+                            _collect_mods(custom)
                             label = custom.get("_difficultyLabel", custom.get("difficultyLabel", "")).strip()
                             if not label:
                                 continue
@@ -145,9 +172,12 @@ class SongInfo:
                             else:
                                 other_labels.setdefault(diff_int, label)
                 self.diff_labels = {**other_labels, **standard_labels}
+                self.mod_required = frozenset(required)
+                self.mod_suggested = frozenset(suggested)
             except Exception:
                 pass
 
+        self.has_cinema_video = _has_cinema_video(self.folder)
         self.custom_tags = _load_custom_tags(self.folder)
 
         # Build display name
@@ -170,6 +200,30 @@ class SongInfo:
         if self.mapper:
             parts.append(f"mapped by {self.mapper}")
         return "  •  ".join(parts)
+
+    @property
+    def requires_chroma(self) -> bool:
+        return any("chroma" in m.lower() for m in self.mod_required)
+
+    @property
+    def requires_noodle(self) -> bool:
+        return any("noodle" in m.lower() for m in self.mod_required)
+
+    @property
+    def requires_mapping_extensions(self) -> bool:
+        return any("mapping extensions" in m.lower() for m in self.mod_required)
+
+    @property
+    def has_cinema(self) -> bool:
+        """True when Cinema is recommended/required or a cinema-video.json is present.
+
+        A map would essentially never *require* Cinema (it's a purely visual
+        mod), but it's checked here too for completeness.
+        """
+        if self.has_cinema_video:
+            return True
+        return any("cinema" in m.lower() for m in self.mod_suggested) or \
+            any("cinema" in m.lower() for m in self.mod_required)
 
 
 def compute_song_hash(song_folder: Path, info_file: Path | None = None) -> str:
