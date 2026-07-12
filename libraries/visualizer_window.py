@@ -81,10 +81,15 @@ class VisualizerWindow(tk.Toplevel):
         self._browser = browser
 
         self._current_song: "SongInfo | None" = None
-        # Identity-only — duplicate SongInfo references in the queue still
-        # represent the "same playing item" so we don't restart the stream
-        # when the queue loops to the same object.
+        # Duplicate SongInfo references in the queue (the same song played
+        # back-to-back) represent the "same playing item" identity-wise, so
+        # id() alone can't detect a fresh playback of it. We additionally
+        # track MediaPlayer._play_start, which gets a new value every time
+        # play() actually (re)launches audio — including a same-song repeat —
+        # so a change in play_start while the id is unchanged still counts as
+        # a new playback session (see _tick).
         self._current_song_id: int | None = None
+        self._current_play_start: float | None = None
 
         # Streaming ffmpeg subprocess + reader thread state.
         self._ffmpeg_proc: subprocess.Popen | None = None
@@ -230,15 +235,34 @@ class VisualizerWindow(tk.Toplevel):
             paused = bool(mp._audio_paused)
             stopped = bool(mp._stopped)
             song_id = id(song) if song is not None else None
+            play_start = mp._play_start if song is not None else None
 
-            # Song change: restart the stream.
-            if song_id != self._current_song_id:
+            # A repeat of the identical SongInfo object played back-to-back
+            # (e.g. the same song twice in a queue) keeps the same id(), but
+            # MediaPlayer hands it a fresh _play_start every time play()
+            # (re)launches audio. Treat that as a new playback session too,
+            # so per-song state (Cinema video-ended tracking, cover art,
+            # elapsed-based seeking) resets just like an actual song change
+            # would. Excluded when play_start is None (that's a stop, handled
+            # separately below) or when already stopped.
+            is_repeat_restart = (
+                song_id is not None
+                and song_id == self._current_song_id
+                and play_start is not None
+                and play_start != self._current_play_start
+                and not stopped
+            )
+
+            # Song change (or a same-song restart): restart the stream.
+            if song_id != self._current_song_id or is_repeat_restart:
                 self._current_song_id = song_id
+                self._current_play_start = play_start
                 self._current_song = song
                 self._on_song_changed(song)
                 self._was_paused = paused
                 self._was_stopped = stopped
             else:
+                self._current_play_start = play_start
                 # Pause / resume transitions.
                 if stopped and not self._was_stopped:
                     self._stop_stream()
