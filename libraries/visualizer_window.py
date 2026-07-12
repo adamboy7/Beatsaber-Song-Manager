@@ -134,6 +134,10 @@ class VisualizerWindow(tk.Toplevel):
         self._was_zoomed: bool = False
         self._pre_zoom_size: int = _DEFAULT_W
 
+        # Fullscreen state.
+        self._is_fullscreen: bool = False
+        self._pre_fullscreen_geometry: str | None = None
+
         self.title("Visualizer")
         self.configure(bg=_BG)
         self.geometry(f"{_DEFAULT_W}x{_DEFAULT_W}")
@@ -169,6 +173,11 @@ class VisualizerWindow(tk.Toplevel):
         self._name_label.bind("<Button-3>", self._on_right_click)
         self.bind("<Configure>", self._on_window_configure)
         self.bind("<space>", lambda _e: self._browser._media_player.toggle_pause())
+        # Fullscreen toggles. F11 / Alt+Enter switch in and out; Escape only
+        # exits (never enters) so it stays a safe "get me out" key.
+        self.bind("<F11>", self._toggle_fullscreen)
+        self.bind("<Alt-Return>", self._toggle_fullscreen)
+        self.bind("<Escape>", self._exit_fullscreen)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Sync to whatever is currently playing right when the window opens.
@@ -200,6 +209,11 @@ class VisualizerWindow(tk.Toplevel):
         if event.widget is not self or self._enforcing_aspect:
             return
 
+        # While fullscreen the window intentionally isn't square — don't try to
+        # snap it back to a 1:1 aspect ratio or we'd break out of fullscreen.
+        if self._is_fullscreen:
+            return
+
         state = self.wm_state()
 
         if state == 'zoomed':
@@ -225,6 +239,67 @@ class VisualizerWindow(tk.Toplevel):
         self._enforcing_aspect = True
         self.geometry(f"{event.width}x{event.width}")
         self.after_idle(lambda: setattr(self, "_enforcing_aspect", False))
+
+    # ── Fullscreen ────────────────────────────────────────────────────────────
+
+    def _toggle_fullscreen(self, _event: "tk.Event | None" = None):
+        if self._is_fullscreen:
+            self._exit_fullscreen()
+        else:
+            self._enter_fullscreen()
+        return "break"
+
+    def _enter_fullscreen(self):
+        if self._is_fullscreen:
+            return
+        self._is_fullscreen = True
+        # Remember the windowed geometry so we can restore it on exit.
+        try:
+            self._pre_fullscreen_geometry = self.geometry()
+        except tk.TclError:
+            self._pre_fullscreen_geometry = None
+        # Hide the name/status labels and drop the canvas padding so the
+        # visualization — the frequency bars or, for a Cinema video, the video
+        # itself — fills the entire screen edge to edge.
+        try:
+            self._name_label.pack_forget()
+            self._status_label.pack_forget()
+            self._canvas.pack_configure(padx=0, pady=0)
+        except tk.TclError:
+            pass
+        # -fullscreen drops the title bar and covers the taskbar. The canvas
+        # <Configure> that follows restarts the ffmpeg stream at the new size
+        # (via the debounced resize handler), so bars/video re-render full-res.
+        try:
+            self.attributes("-fullscreen", True)
+        except tk.TclError:
+            pass
+
+    def _exit_fullscreen(self, _event: "tk.Event | None" = None):
+        if not self._is_fullscreen:
+            return
+        self._is_fullscreen = False
+        try:
+            self.attributes("-fullscreen", False)
+        except tk.TclError:
+            pass
+        # Restore the labels around the canvas (name on top, status on bottom)
+        # and the canvas padding.
+        try:
+            self._name_label.pack(fill="x", before=self._canvas)
+            self._canvas.pack_configure(padx=8, pady=(0, 8))
+            self._status_label.pack(fill="x", side="bottom")
+        except tk.TclError:
+            pass
+        # Restore the pre-fullscreen (square) geometry.
+        if self._pre_fullscreen_geometry:
+            self._enforcing_aspect = True
+            try:
+                self.geometry(self._pre_fullscreen_geometry)
+            except tk.TclError:
+                pass
+            self.after_idle(lambda: setattr(self, "_enforcing_aspect", False))
+        return "break"
 
     # ── Periodic tick: react to playback state, blit latest frame ─────────────
 
