@@ -159,6 +159,43 @@ def _move_child(child_hwnd: int, w: int, h: int) -> None:
     user32.MoveWindow(wintypes.HWND(child_hwnd), 0, 0, w, h, True)
 
 
+def _force_foreground(hwnd: int) -> None:
+    """Make ``hwnd`` the foreground window and give it keyboard focus.
+
+    SetForegroundWindow is normally refused for a window whose thread doesn't
+    already own the foreground, so we temporarily AttachThreadInput to the
+    current foreground thread (ffplay's) — the standard Win32 focus-steal dance.
+    Needed because spawning ffplay grabs the OS foreground away from our Tk
+    window, which otherwise leaves the fullscreen exit hotkeys dead until a click.
+    """
+    try:
+        user32 = _user32()
+        kernel32 = ctypes.WinDLL("kernel32")
+        user32.GetForegroundWindow.restype = ctypes.c_void_p
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, wintypes.LPDWORD]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+
+        target = wintypes.HWND(hwnd)
+        fg = user32.GetForegroundWindow()
+        cur = kernel32.GetCurrentThreadId()
+        tgt_thread = user32.GetWindowThreadProcessId(target, None)
+        fg_thread = (user32.GetWindowThreadProcessId(wintypes.HWND(fg), None)
+                     if fg else 0)
+
+        attached = [t for t in {fg_thread, tgt_thread} if t and t != cur]
+        for t in attached:
+            user32.AttachThreadInput(cur, t, True)
+        try:
+            user32.BringWindowToTop(target)
+            user32.SetForegroundWindow(target)
+            user32.SetFocus(target)
+        finally:
+            for t in attached:
+                user32.AttachThreadInput(cur, t, False)
+    except Exception:
+        pass
+
+
 def _suspend_pid(pid: int) -> bool:
     try:
         kernel32 = ctypes.WinDLL("kernel32")
@@ -396,11 +433,10 @@ class VisualizerWindow(tk.Toplevel):
         except tk.TclError:
             pass
         # Keep keyboard focus on the window so Escape / F11 / Alt+Enter keep
-        # working without having to click the video first.
-        try:
-            self.focus_force()
-        except tk.TclError:
-            pass
+        # working without having to click the video first. Reassert shortly after
+        # too, in case the debounced ffplay relaunch steals foreground.
+        self._grab_keyboard_focus()
+        self.after(150, self._grab_keyboard_focus)
 
     def _exit_fullscreen(self, _event: "tk.Event | None" = None):
         if not self._is_fullscreen:
@@ -427,6 +463,27 @@ class VisualizerWindow(tk.Toplevel):
                 pass
             self.after_idle(lambda: setattr(self, "_enforcing_aspect", False))
         return "break"
+
+    def _grab_keyboard_focus(self):
+        """Return OS foreground + Tk keyboard focus to this window.
+
+        Used after entering fullscreen / (re)embedding ffplay so Escape, F11 and
+        Alt+Enter keep working without the user having to click the video first.
+        """
+        try:
+            self.lift()
+            self.focus_force()
+        except tk.TclError:
+            pass
+        try:
+            user32 = _user32()
+            user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
+            user32.GetAncestor.restype = ctypes.c_void_p
+            root = user32.GetAncestor(wintypes.HWND(self.winfo_id()), 2)  # GA_ROOT
+            if root:
+                _force_foreground(root)
+        except Exception:
+            pass
 
     # ── Periodic tick: react to playback state, blit latest frame ─────────────
 
@@ -749,14 +806,13 @@ class VisualizerWindow(tk.Toplevel):
         self._suspended = False
         self._clear_canvas()
         self._set_status("")
-        # Spawning the ffplay window steals foreground focus; while fullscreen
-        # that would break the Escape / F11 / Alt+Enter exit keys until the user
-        # clicked. Reclaim focus for the Tk window.
+        # Spawning the ffplay window steals the OS foreground; while fullscreen
+        # that breaks the Escape / F11 / Alt+Enter exit keys until the user
+        # clicks. Pull foreground + keyboard focus back to our window (twice, to
+        # beat any late activation by ffplay).
         if self._is_fullscreen:
-            try:
-                self.focus_force()
-            except tk.TclError:
-                pass
+            self._grab_keyboard_focus()
+            self.after(120, self._grab_keyboard_focus)
         return True
 
     def _resize_ffplay_child(self):
