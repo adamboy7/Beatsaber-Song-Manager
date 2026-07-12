@@ -395,6 +395,12 @@ class VisualizerWindow(tk.Toplevel):
             self.attributes("-fullscreen", True)
         except tk.TclError:
             pass
+        # Keep keyboard focus on the window so Escape / F11 / Alt+Enter keep
+        # working without having to click the video first.
+        try:
+            self.focus_force()
+        except tk.TclError:
+            pass
 
     def _exit_fullscreen(self, _event: "tk.Event | None" = None):
         if not self._is_fullscreen:
@@ -743,6 +749,14 @@ class VisualizerWindow(tk.Toplevel):
         self._suspended = False
         self._clear_canvas()
         self._set_status("")
+        # Spawning the ffplay window steals foreground focus; while fullscreen
+        # that would break the Escape / F11 / Alt+Enter exit keys until the user
+        # clicked. Reclaim focus for the Tk window.
+        if self._is_fullscreen:
+            try:
+                self.focus_force()
+            except tk.TclError:
+                pass
         return True
 
     def _resize_ffplay_child(self):
