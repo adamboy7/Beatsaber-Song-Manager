@@ -37,6 +37,7 @@ class SongInfo:
         "mapper", "bpm", "cover_path", "audio_path", "created_at",
         "diff_labels", "difficulties", "song_hash", "custom_tags",
         "mod_required", "mod_suggested", "has_cinema_video",
+        "cinema_video_path", "cinema_video_offset_ms", "cinema_video_duration_s",
     )
 
     def __init__(self, folder: Path):
@@ -57,6 +58,11 @@ class SongInfo:
         self.mod_required: frozenset[str] = frozenset()
         self.mod_suggested: frozenset[str] = frozenset()
         self.has_cinema_video: bool = False
+        # Set only when a Cinema-configured video is actually present on disk
+        # (the manifest can reference a video the user hasn't downloaded yet).
+        self.cinema_video_path: Path | None = None
+        self.cinema_video_offset_ms: int = 0
+        self.cinema_video_duration_s: int = 0
         # Use st_birthtime (Windows/macOS) with st_ctime as fallback.
         # A racy filesystem (folder deleted mid-scan, permission denied)
         # shouldn't take down the whole load_songs() call.
@@ -178,6 +184,8 @@ class SongInfo:
                 pass
 
         self.has_cinema_video = _has_cinema_video(self.folder)
+        if self.has_cinema_video:
+            self._parse_cinema_video()
         self.custom_tags = _load_custom_tags(self.folder)
 
         # Build display name
@@ -187,6 +195,41 @@ class SongInfo:
                 self.display_name += f" {self.sub_name}"
         else:
             self.display_name = self.folder.name
+
+    def _parse_cinema_video(self) -> None:
+        """Read cinema-video.json for the video filename / offset / duration.
+
+        cinema_video_path is only set if the referenced video file actually
+        exists in the song folder — the manifest can reference a video the
+        user hasn't downloaded in-game yet.
+        """
+        for name in ("cinema-video.json", "Cinema-Video.json", "CINEMA-VIDEO.JSON"):
+            candidate = self.folder / name
+            if not candidate.exists():
+                continue
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8", errors="replace"))
+            except Exception:
+                return
+            video_filename = data.get("videoFile", "")
+            if video_filename:
+                vp = self.folder / video_filename
+                if vp.exists():
+                    self.cinema_video_path = vp
+            try:
+                self.cinema_video_offset_ms = int(data.get("offset", 0) or 0)
+            except (TypeError, ValueError):
+                self.cinema_video_offset_ms = 0
+            try:
+                self.cinema_video_duration_s = int(data.get("duration", 0) or 0)
+            except (TypeError, ValueError):
+                self.cinema_video_duration_s = 0
+            return
+
+    @property
+    def has_playable_cinema_video(self) -> bool:
+        """True when a Cinema video is configured *and* the file is downloaded."""
+        return self.cinema_video_path is not None
 
     @property
     def bpm_str(self) -> str:

@@ -6,6 +6,13 @@ pace and blits them onto a Tk canvas in sync with playback. The ffmpeg
 process is suspended/resumed alongside ffplay so the bars track pause
 state, and is restarted with ``-ss <elapsed>`` on song change or window
 resize.
+
+If the current song has a downloaded Cinema mod video (``cinema-video.json``
+plus the referenced video file present in the song folder), the window
+instead decodes and plays that video, seeked/paced to line up with the
+song's own audio playback (accounting for Cinema's configured offset and
+duration). Once the video's window has elapsed, playback falls back to the
+frequency-bar spectrum for the remainder of the song.
 """
 
 from __future__ import annotations
@@ -87,6 +94,11 @@ class VisualizerWindow(tk.Toplevel):
         self._latest_frame: bytes | None = None
         self._stream_w = 0
         self._stream_h = 0
+        # "spectrum" (default showfreqs bars) or "video" (Cinema mod video).
+        self._stream_mode: str = "spectrum"
+        # Set once a video stream has hit EOF/error for the current song, so
+        # we don't keep retrying to decode it for the rest of the song.
+        self._video_ended: bool = False
 
         # Playback-state mirrors so we only act on transitions.
         self._was_paused = False
@@ -241,15 +253,33 @@ class VisualizerWindow(tk.Toplevel):
                     self._suspend_stream()
                 elif not paused and self._was_paused:
                     self._resume_stream()
+                elif (
+                    not stopped and not paused and song is not None
+                    and self._ffmpeg_proc is not None
+                ):
+                    # Same song, same play/pause state — but a Cinema video's
+                    # active window (offset..offset+duration) may have just
+                    # started or ended, which means the stream should switch
+                    # between video and spectrum mode.
+                    elapsed = mp.elapsed_seconds() or 0.0
+                    if self._desired_mode(song, elapsed) != self._stream_mode:
+                        self._restart_stream_at_elapsed()
                 self._was_paused = paused
                 self._was_stopped = stopped
 
             # Watchdog: ffmpeg exited unexpectedly (file ended, decode error,
-            # etc.) — clear the canvas so we don't keep showing the last frame
-            # frozen on screen.
+            # etc.).
             proc = self._ffmpeg_proc
             if proc is not None and proc.poll() is not None and not stopped:
-                self._stop_stream()
+                if self._stream_mode == "video" and song is not None and not paused:
+                    # The Cinema video decoded to its end (or errored out)
+                    # while the song keeps playing — fall back to the
+                    # frequency-bar spectrum for the rest of the song instead
+                    # of leaving a frozen frame on screen.
+                    self._video_ended = True
+                    self._restart_stream_at_elapsed()
+                else:
+                    self._stop_stream()
 
             # Advance y-scale animation.
             if self._y_scale_anim_start is not None:
@@ -272,6 +302,7 @@ class VisualizerWindow(tk.Toplevel):
     def _on_song_changed(self, song: "SongInfo | None"):
         self._stop_stream()
         self._clear_canvas()
+        self._video_ended = False
 
         if song is None:
             self._name_label.config(text="")
@@ -305,6 +336,30 @@ class VisualizerWindow(tk.Toplevel):
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
         self._start_stream(song, elapsed)
 
+    # ── Cinema video mode selection ──────────────────────────────────────────
+
+    def _video_pos(self, song: "SongInfo", elapsed: float) -> float:
+        """Cinema video-timeline position for a given song-elapsed time.
+
+        Cinema's ``offset`` (ms) shifts the video relative to the song: the
+        video should be showing ``elapsed + offset/1000`` seconds into its
+        own timeline.
+        """
+        return elapsed + (song.cinema_video_offset_ms / 1000.0)
+
+    def _desired_mode(self, song: "SongInfo | None", elapsed: float) -> str:
+        if song is None or not song.has_playable_cinema_video:
+            return "spectrum"
+        if self._video_ended:
+            return "spectrum"
+        video_pos = self._video_pos(song, elapsed)
+        if video_pos < 0:
+            return "spectrum"  # video hasn't started yet
+        duration = song.cinema_video_duration_s
+        if duration and video_pos >= duration:
+            return "spectrum"  # video has finished; song is still playing
+        return "video"
+
     # ── ffmpeg streaming ─────────────────────────────────────────────────────
 
     def _start_stream(self, song: "SongInfo", elapsed: float):
@@ -323,6 +378,40 @@ class VisualizerWindow(tk.Toplevel):
         with self._frame_lock:
             self._latest_frame = None
 
+        mode = self._desired_mode(song, elapsed)
+        self._stream_mode = mode
+
+        if mode == "video":
+            cmd = self._build_video_cmd(ffmpeg, song, elapsed, w, h)
+        else:
+            cmd = self._build_spectrum_cmd(ffmpeg, song, elapsed, w, h)
+
+        try:
+            self._ffmpeg_proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                bufsize=0,
+            )
+        except Exception as exc:
+            self._ffmpeg_proc = None
+            self._set_status(f"ffmpeg failed to start: {exc}")
+            return
+
+        self._set_status("")
+        self._suspended = False
+        self._reader_stop.clear()
+        thread = threading.Thread(
+            target=self._reader_loop,
+            args=(self._ffmpeg_proc, w, h, self._reader_stop),
+            daemon=True,
+        )
+        self._reader_thread = thread
+        thread.start()
+
+    def _build_spectrum_cmd(self, ffmpeg: str, song: "SongInfo", elapsed: float,
+                             w: int, h: int) -> list[str]:
         # showfreqs renders a real-time frequency-bar frame per video frame.
         # `-re` paces input at native sample rate so the output frame rate
         # tracks wall-clock time, matching ffplay's audio playback.
@@ -353,30 +442,39 @@ class VisualizerWindow(tk.Toplevel):
             "-r", str(_FPS),
             "pipe:1",
         ]
+        return cmd
 
-        try:
-            self._ffmpeg_proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                bufsize=0,
-            )
-        except Exception as exc:
-            self._ffmpeg_proc = None
-            self._set_status(f"ffmpeg failed to start: {exc}")
-            return
-
-        self._set_status("")
-        self._suspended = False
-        self._reader_stop.clear()
-        thread = threading.Thread(
-            target=self._reader_loop,
-            args=(self._ffmpeg_proc, w, h, self._reader_stop),
-            daemon=True,
-        )
-        self._reader_thread = thread
-        thread.start()
+    def _build_video_cmd(self, ffmpeg: str, song: "SongInfo", elapsed: float,
+                          w: int, h: int) -> list[str]:
+        # Decode the Cinema video, seeked to the point in its own timeline
+        # that matches the song's current elapsed time (adjusted for the
+        # mapper's configured offset). `-an` drops any audio track in the
+        # video file — the song's own audio is already playing via ffplay.
+        # scale+pad letterboxes the video to fit the (square) canvas without
+        # distorting its aspect ratio.
+        video_pos = max(0.0, self._video_pos(song, elapsed))
+        cmd = [
+            ffmpeg,
+            "-nostdin",
+            "-v", "error",
+            "-re",
+        ]
+        if video_pos > 0.1:
+            cmd += ["-ss", f"{video_pos:.2f}"]
+        cmd += [
+            "-i", str(song.cinema_video_path),
+            "-an",
+            "-vf",
+            (
+                f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"
+            ),
+            "-f", "rawvideo",
+            "-pix_fmt", "rgb24",
+            "-r", str(_FPS),
+            "pipe:1",
+        ]
+        return cmd
 
     def _reader_loop(self, proc: subprocess.Popen, w: int, h: int,
                      stop_event: threading.Event):
@@ -412,6 +510,10 @@ class VisualizerWindow(tk.Toplevel):
             return
         if _suspend_pid(proc.pid):
             self._suspended = True
+            if self._stream_mode == "video":
+                # Video just freezes on the last decoded frame — no bar/art
+                # crossfade animation to run.
+                return
             self._y_scale_anim_from = self._y_scale
             self._y_scale_target = 0.0
             self._y_scale_anim_start = time.time()
@@ -427,6 +529,8 @@ class VisualizerWindow(tk.Toplevel):
             self._latest_frame = None
         if _resume_pid(proc.pid):
             self._suspended = False
+            if self._stream_mode == "video":
+                return
             self._y_scale_anim_from = self._y_scale
             self._y_scale_target = 1.0
             self._y_scale_anim_start = time.time()
@@ -472,6 +576,10 @@ class VisualizerWindow(tk.Toplevel):
         with self._frame_lock:
             data = self._latest_frame
             self._latest_frame = None
+
+        if self._stream_mode == "video":
+            self._blit_video_frame(data)
+            return
 
         animating = self._y_scale_anim_start is not None
 
@@ -536,6 +644,27 @@ class VisualizerWindow(tk.Toplevel):
                 self._canvas.itemconfig(self._image_id, image=photo)
             # Keep a reference so Python doesn't GC the PhotoImage while Tk
             # still has the handle.
+            self._photo = photo
+        except tk.TclError:
+            pass
+
+    def _blit_video_frame(self, data: bytes | None):
+        """Blit a decoded Cinema video frame (no bars/background compositing)."""
+        if data is None:
+            return  # keep whatever's already on the canvas — nothing new decoded yet.
+        try:
+            img = Image.frombytes("RGB", (self._stream_w, self._stream_h), data)
+        except Exception:
+            return
+        try:
+            photo = ImageTk.PhotoImage(img)
+        except Exception:
+            return
+        try:
+            if self._image_id is None:
+                self._image_id = self._canvas.create_image(0, 0, image=photo, anchor="nw")
+            else:
+                self._canvas.itemconfig(self._image_id, image=photo)
             self._photo = photo
         except tk.TclError:
             pass
