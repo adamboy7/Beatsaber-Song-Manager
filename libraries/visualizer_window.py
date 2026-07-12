@@ -9,15 +9,16 @@ resize.
 
 If the current song has a downloaded Cinema mod video (``cinema-video.json``
 plus the referenced video file present in the song folder), the window
-instead decodes and plays that video, seeked/paced to line up with the
-song's own audio playback (accounting for Cinema's configured offset and
-duration). Once the video's window has elapsed, playback falls back to the
-frequency-bar spectrum for the remainder of the song.
+instead plays that video in an embedded ffplay window (reparented into the
+canvas), seeked to line up with the song's own audio playback (accounting for
+Cinema's configured offset and duration). Once the video's window has elapsed,
+playback falls back to the frequency-bar spectrum for the remainder of the song.
 """
 
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 import subprocess
 import threading
 import time
@@ -27,7 +28,7 @@ from typing import TYPE_CHECKING
 import tkinter as tk
 from PIL import Image, ImageEnhance, ImageTk
 
-from libraries.audio_utils import find_ffmpeg
+from libraries.audio_utils import find_ffmpeg, find_ffplay
 from libraries.constants import ACCENT_COLOR, SUBTEXT_COLOR
 
 if TYPE_CHECKING:
@@ -43,6 +44,119 @@ _FPS = 30
 _FRAME_BYTES_PER_PX = 3  # rgb24
 _PIPE_READ_CHUNK = 65536
 _ANIM_DURATION = 0.25  # seconds for pause/resume y-scale animation
+_FFPLAY_TITLE = "BSM_Cinema_Video"  # window title used to spot the ffplay window
+
+# ── Win32 constants for embedding ffplay's SDL window into the Tk canvas ──────
+_GWL_STYLE = -16
+_WS_CHILD = 0x40000000
+_WS_POPUP = 0x80000000
+_WS_CAPTION = 0x00C00000
+_WS_THICKFRAME = 0x00040000
+_SWP_NOMOVE = 0x0002
+_SWP_NOSIZE = 0x0001
+_SWP_NOZORDER = 0x0004
+_SWP_FRAMECHANGED = 0x0020
+_SW_SHOW = 5
+_LONG_PTR = ctypes.c_ssize_t
+
+
+def _user32():
+    return ctypes.WinDLL("user32", use_last_error=True)
+
+
+def _find_hwnd_for_pid(pid: int, timeout: float = 3.0) -> int | None:
+    """Find the top-level, visible window owned by ``pid`` (ffplay's SDL window).
+
+    ffplay has no ``-wid`` option, so we launch it, wait for it to create its
+    window, and locate that window by process id before reparenting it.
+    """
+    user32 = _user32()
+    EnumWindowsProc = ctypes.WINFUNCTYPE(
+        wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+    )
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND, ctypes.POINTER(wintypes.DWORD)
+    ]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+
+    found: list[int] = []
+
+    def _cb(hwnd, _lparam):
+        wpid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+        if wpid.value == pid and user32.IsWindowVisible(hwnd):
+            found.append(int(hwnd))
+            return False
+        return True
+
+    proc = EnumWindowsProc(_cb)
+    user32.EnumWindows.argtypes = [EnumWindowsProc, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        found.clear()
+        user32.EnumWindows(proc, 0)
+        if found:
+            return found[0]
+        time.sleep(0.03)
+    return None
+
+
+def _embed_child(child_hwnd: int, parent_hwnd: int, w: int, h: int) -> None:
+    """Reparent ``child_hwnd`` into ``parent_hwnd`` as a borderless child filling it."""
+    user32 = _user32()
+    get_long = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
+    set_long = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+    get_long.argtypes = [wintypes.HWND, ctypes.c_int]
+    get_long.restype = _LONG_PTR
+    set_long.argtypes = [wintypes.HWND, ctypes.c_int, _LONG_PTR]
+    set_long.restype = _LONG_PTR
+    user32.SetParent.argtypes = [wintypes.HWND, wintypes.HWND]
+    user32.SetParent.restype = wintypes.HWND
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+    ]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.MoveWindow.argtypes = [
+        wintypes.HWND, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, wintypes.BOOL,
+    ]
+    user32.MoveWindow.restype = wintypes.BOOL
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.EnableWindow.argtypes = [wintypes.HWND, wintypes.BOOL]
+    user32.EnableWindow.restype = wintypes.BOOL
+
+    child = wintypes.HWND(child_hwnd)
+    parent = wintypes.HWND(parent_hwnd)
+
+    style = get_long(child, _GWL_STYLE)
+    style = (style & ~_WS_POPUP & ~_WS_CAPTION & ~_WS_THICKFRAME) | _WS_CHILD
+    set_long(child, _GWL_STYLE, style)
+    user32.SetParent(child, parent)
+    user32.SetWindowPos(
+        child, None, 0, 0, 0, 0,
+        _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_FRAMECHANGED,
+    )
+    user32.MoveWindow(child, 0, 0, w, h, True)
+    user32.ShowWindow(child, _SW_SHOW)
+    # Disable input on the child so clicks/keys fall through to the Tk parent —
+    # keeps our space-to-pause binding working and stops ffplay's own seek/pause
+    # hotkeys from desyncing the video from the audio.
+    user32.EnableWindow(child, False)
+
+
+def _move_child(child_hwnd: int, w: int, h: int) -> None:
+    user32 = _user32()
+    user32.MoveWindow.argtypes = [
+        wintypes.HWND, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, wintypes.BOOL,
+    ]
+    user32.MoveWindow.restype = wintypes.BOOL
+    user32.MoveWindow(wintypes.HWND(child_hwnd), 0, 0, w, h, True)
 
 
 def _suspend_pid(pid: int) -> bool:
@@ -101,6 +215,13 @@ class VisualizerWindow(tk.Toplevel):
         self._stream_h = 0
         # "spectrum" (default showfreqs bars) or "video" (Cinema mod video).
         self._stream_mode: str = "spectrum"
+        # Embedded-ffplay video backend: when a Cinema video is playing we prefer
+        # to hand it to ffplay (GPU-accelerated, full framerate) reparented into
+        # the canvas, rather than decoding it frame-by-frame through the pipe.
+        # Falls back to the pipe path if ffplay is missing or embedding fails.
+        self._ffplay_proc: subprocess.Popen | None = None
+        self._ffplay_hwnd: int | None = None
+        self._use_ffplay_video: bool = False
         # Set once a video stream has hit EOF/error for the current song, so
         # we don't keep retrying to decode it for the rest of the song.
         self._video_ended: bool = False
@@ -354,7 +475,8 @@ class VisualizerWindow(tk.Toplevel):
                     self._resume_stream()
                 elif (
                     not stopped and not paused and song is not None
-                    and self._ffmpeg_proc is not None
+                    and (self._ffmpeg_proc is not None
+                         or self._ffplay_proc is not None)
                 ):
                     # Same song, same play/pause state — but a Cinema video's
                     # active window (offset..offset+duration) may have just
@@ -366,19 +488,21 @@ class VisualizerWindow(tk.Toplevel):
                 self._was_paused = paused
                 self._was_stopped = stopped
 
-            # Watchdog: ffmpeg exited unexpectedly (file ended, decode error,
-            # etc.).
+            # Watchdog: the spectrum ffmpeg stream exited (song ended or decode
+            # error). (Cinema video runs through ffplay, watched separately below.)
             proc = self._ffmpeg_proc
             if proc is not None and proc.poll() is not None and not stopped:
-                if self._stream_mode == "video" and song is not None and not paused:
-                    # The Cinema video decoded to its end (or errored out)
-                    # while the song keeps playing — fall back to the
-                    # frequency-bar spectrum for the rest of the song instead
-                    # of leaving a frozen frame on screen.
-                    self._video_ended = True
-                    self._restart_stream_at_elapsed()
-                else:
-                    self._stop_stream()
+                self._stop_stream()
+
+            # Embedded-ffplay watchdog: -autoexit makes ffplay quit when the clip
+            # reaches its end. Fall back to the frequency-bar spectrum for the
+            # rest of the song. (While paused the process is merely suspended, so
+            # poll() is None and this doesn't misfire.)
+            fproc = self._ffplay_proc
+            if (self._use_ffplay_video and fproc is not None
+                    and fproc.poll() is not None and not stopped and not paused):
+                self._video_ended = True
+                self._restart_stream_at_elapsed()
 
             # Advance y-scale animation.
             if self._y_scale_anim_start is not None:
@@ -479,11 +603,18 @@ class VisualizerWindow(tk.Toplevel):
 
         mode = self._desired_mode(song, elapsed)
         self._stream_mode = mode
+        self._use_ffplay_video = False
 
         if mode == "video":
-            cmd = self._build_video_cmd(ffmpeg, song, elapsed, w, h)
-        else:
-            cmd = self._build_spectrum_cmd(ffmpeg, song, elapsed, w, h)
+            # Cinema videos play via an embedded ffplay window (hardware-
+            # accelerated, native framerate) reparented into the canvas.
+            if self._try_start_ffplay_video(song, elapsed, w, h):
+                return
+            # ffplay couldn't be embedded — fall back to the frequency-bar
+            # spectrum for this stream instead of the video.
+            self._stream_mode = "spectrum"
+
+        cmd = self._build_spectrum_cmd(ffmpeg, song, elapsed, w, h)
 
         try:
             self._ffmpeg_proc = subprocess.Popen(
@@ -543,37 +674,111 @@ class VisualizerWindow(tk.Toplevel):
         ]
         return cmd
 
-    def _build_video_cmd(self, ffmpeg: str, song: "SongInfo", elapsed: float,
-                          w: int, h: int) -> list[str]:
-        # Decode the Cinema video, seeked to the point in its own timeline
-        # that matches the song's current elapsed time (adjusted for the
-        # mapper's configured offset). `-an` drops any audio track in the
-        # video file — the song's own audio is already playing via ffplay.
-        # scale+pad letterboxes the video to fit the (square) canvas without
-        # distorting its aspect ratio.
+    # ── Embedded ffplay video backend ────────────────────────────────────────
+
+    def _try_start_ffplay_video(self, song: "SongInfo", elapsed: float,
+                                 w: int, h: int) -> bool:
+        """Launch ffplay for the Cinema video and reparent it into the canvas.
+
+        Returns True if ffplay was started and successfully embedded; False if
+        ffplay is unavailable or embedding failed (caller then falls back to the
+        pipe decode path).
+        """
+        ffplay = find_ffplay()
+        if ffplay is None:
+            return False
+        video_path = song.cinema_video_path
+        if not video_path:
+            return False
+
         video_pos = max(0.0, self._video_pos(song, elapsed))
+        # Spawn the window off-screen so the un-parented SDL window doesn't flash
+        # on top of everything before we pull it into the canvas.
         cmd = [
-            ffmpeg,
-            "-nostdin",
-            "-v", "error",
-            "-re",
+            ffplay,
+            "-hide_banner",
+            "-loglevel", "error",
+            "-noborder",
+            "-left", "32000", "-top", "32000",
+            "-x", str(w), "-y", str(h),
+            "-window_title", _FFPLAY_TITLE,
+            "-autoexit",
+            "-an",  # the song's audio is already playing via the media player
         ]
         if video_pos > 0.1:
             cmd += ["-ss", f"{video_pos:.2f}"]
-        cmd += [
-            "-i", str(song.cinema_video_path),
-            "-an",
-            "-vf",
-            (
-                f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"
-            ),
-            "-f", "rawvideo",
-            "-pix_fmt", "rgb24",
-            "-r", str(_FPS),
-            "pipe:1",
-        ]
-        return cmd
+        cmd += ["-i", str(video_path)]
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        except Exception:
+            return False
+
+        hwnd = _find_hwnd_for_pid(proc.pid, timeout=3.0)
+        if hwnd is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            return False
+
+        try:
+            parent = self._canvas.winfo_id()
+            _embed_child(hwnd, parent, w, h)
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            return False
+
+        self._ffplay_proc = proc
+        self._ffplay_hwnd = hwnd
+        self._use_ffplay_video = True
+        self._suspended = False
+        self._clear_canvas()
+        self._set_status("")
+        return True
+
+    def _resize_ffplay_child(self):
+        hwnd = self._ffplay_hwnd
+        if hwnd is None:
+            return
+        w, h = self._canvas_size()
+        self._stream_w, self._stream_h = w, h
+        try:
+            _move_child(hwnd, w, h)
+        except Exception:
+            pass
+
+    def _stop_ffplay(self):
+        proc = self._ffplay_proc
+        if proc is not None:
+            # Resume first if suspended, so terminate() can actually reap it.
+            if self._suspended:
+                _resume_pid(proc.pid)
+                self._suspended = False
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=0.5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        try:
+                            proc.wait(timeout=0.5)
+                        except subprocess.TimeoutExpired:
+                            pass
+            except Exception:
+                pass
+        self._ffplay_proc = None
+        self._ffplay_hwnd = None
+        self._use_ffplay_video = False
 
     def _reader_loop(self, proc: subprocess.Popen, w: int, h: int,
                      stop_event: threading.Event):
@@ -604,21 +809,31 @@ class VisualizerWindow(tk.Toplevel):
                     self._latest_frame = frame
 
     def _suspend_stream(self):
+        if self._use_ffplay_video:
+            proc = self._ffplay_proc
+            if proc is not None and proc.poll() is None and not self._suspended:
+                # Freeze ffplay on its current frame; no bar/art animation.
+                if _suspend_pid(proc.pid):
+                    self._suspended = True
+            return
         proc = self._ffmpeg_proc
         if proc is None or proc.poll() is not None or self._suspended:
             return
         if _suspend_pid(proc.pid):
             self._suspended = True
-            if self._stream_mode == "video":
-                # Video just freezes on the last decoded frame — no bar/art
-                # crossfade animation to run.
-                return
             self._y_scale_anim_from = self._y_scale
             self._y_scale_target = 0.0
             self._y_scale_anim_start = time.time()
             self._y_scale_paused = False
 
     def _resume_stream(self):
+        if self._use_ffplay_video:
+            # ffplay's video-only clock is wall-clock based: a suspended-then-
+            # resumed process would jump ahead by the pause duration and drift
+            # out of sync with the audio. Relaunch seeked to the current elapsed
+            # position instead — elapsed already accounts for paused time.
+            self._restart_stream_at_elapsed()
+            return
         proc = self._ffmpeg_proc
         if proc is None or proc.poll() is not None or not self._suspended:
             return
@@ -628,14 +843,13 @@ class VisualizerWindow(tk.Toplevel):
             self._latest_frame = None
         if _resume_pid(proc.pid):
             self._suspended = False
-            if self._stream_mode == "video":
-                return
             self._y_scale_anim_from = self._y_scale
             self._y_scale_target = 1.0
             self._y_scale_anim_start = time.time()
             self._y_scale_paused = False
 
     def _stop_stream(self):
+        self._stop_ffplay()
         self._reader_stop.set()
         proc = self._ffmpeg_proc
         if proc is not None:
@@ -672,13 +886,13 @@ class VisualizerWindow(tk.Toplevel):
     def _blit_latest_frame(self):
         if self._stream_w <= 0 or self._stream_h <= 0:
             return
+        if self._use_ffplay_video:
+            # ffplay renders directly into its embedded child window; nothing to
+            # paint on the Tk canvas.
+            return
         with self._frame_lock:
             data = self._latest_frame
             self._latest_frame = None
-
-        if self._stream_mode == "video":
-            self._blit_video_frame(data)
-            return
 
         animating = self._y_scale_anim_start is not None
 
@@ -743,27 +957,6 @@ class VisualizerWindow(tk.Toplevel):
                 self._canvas.itemconfig(self._image_id, image=photo)
             # Keep a reference so Python doesn't GC the PhotoImage while Tk
             # still has the handle.
-            self._photo = photo
-        except tk.TclError:
-            pass
-
-    def _blit_video_frame(self, data: bytes | None):
-        """Blit a decoded Cinema video frame (no bars/background compositing)."""
-        if data is None:
-            return  # keep whatever's already on the canvas — nothing new decoded yet.
-        try:
-            img = Image.frombytes("RGB", (self._stream_w, self._stream_h), data)
-        except Exception:
-            return
-        try:
-            photo = ImageTk.PhotoImage(img)
-        except Exception:
-            return
-        try:
-            if self._image_id is None:
-                self._image_id = self._canvas.create_image(0, 0, image=photo, anchor="nw")
-            else:
-                self._canvas.itemconfig(self._image_id, image=photo)
             self._photo = photo
         except tk.TclError:
             pass
@@ -842,6 +1035,11 @@ class VisualizerWindow(tk.Toplevel):
         if size == self._last_canvas_size:
             return
         self._last_canvas_size = size
+        # For embedded ffplay, resize the child window live so it tracks the
+        # canvas during the drag (ffplay adapts its SDL surface to the new size);
+        # no ffmpeg restart needed.
+        if self._use_ffplay_video:
+            self._resize_ffplay_child()
         if self._resize_after_id:
             try:
                 self.after_cancel(self._resize_after_id)
@@ -859,6 +1057,19 @@ class VisualizerWindow(tk.Toplevel):
             return
         mp = self._browser._media_player
         if mp.playing_song is None or mp._stopped:
+            return
+        if self._use_ffplay_video:
+            # ffplay doesn't rescale its SDL surface when its window is merely
+            # moved, so a live MoveWindow leaves the video at its original size.
+            # Relaunch ffplay at the new canvas size (seeked to the current
+            # position) so the picture actually fills the resized/fullscreen
+            # window. Debounced, so this fires once after the drag settles.
+            self._restart_stream_at_elapsed()
+            if mp._audio_paused:
+                proc = self._ffplay_proc
+                if proc is not None and proc.poll() is None:
+                    _suspend_pid(proc.pid)
+                    self._suspended = True
             return
         self._restart_stream_at_elapsed()
         if mp._audio_paused:
