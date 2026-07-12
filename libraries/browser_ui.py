@@ -760,8 +760,10 @@ class BrowserUIMixin:
             else:
                 w.bind("<Control-Button-1>", lambda e, i=idx: self._select(i, ctrl_held=True))
 
-        # Mod tooltip only triggers off the song art thumbnail, not the whole row.
+        # Mod tooltip only triggers off the song art thumbnail, not the whole row,
+        # and follows the cursor while it stays over the art.
         thumb_lbl.bind("<Enter>", lambda e, sg=song: self._show_mod_tooltip(e, sg), add="+")
+        thumb_lbl.bind("<Motion>", self._move_mod_tooltip, add="+")
         thumb_lbl.bind("<Leave>", lambda e: self._hide_mod_tooltip(), add="+")
 
     # ── Hover / selection / row coloring ──────────────────────────────────────
@@ -802,6 +804,19 @@ class BrowserUIMixin:
         ).pack()
 
         self._mod_tooltip = tip
+
+    def _move_mod_tooltip(self, event: tk.Event):
+        """Reposition an already-shown tooltip to follow the cursor.
+
+        No-ops if there's no active tooltip (song needs no mods).
+        """
+        tip = getattr(self, "_mod_tooltip", None)
+        if tip is None:
+            return
+        try:
+            tip.wm_geometry(f"+{event.x_root + 14}+{event.y_root + 12}")
+        except tk.TclError:
+            pass
 
     def _hide_mod_tooltip(self, *_):
         tip = getattr(self, "_mod_tooltip", None)
