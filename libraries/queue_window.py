@@ -299,6 +299,8 @@ class QueueWindow(tk.Toplevel):
         if not b._queue:
             return
         if mp._stopped:
+            if not (0 <= b._queue_index < len(b._queue)):
+                b._queue_index = 0
             b._play_audio(b._queue[b._queue_index])
         else:
             mp.toggle_pause()

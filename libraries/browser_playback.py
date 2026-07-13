@@ -97,6 +97,8 @@ class BrowserPlaybackMixin:
         if not self._queue:
             return
         if mp._stopped:
+            if not (0 <= self._queue_index < len(self._queue)):
+                self._queue_index = 0
             self._play_audio(self._queue[self._queue_index])
         else:
             mp.toggle_pause()

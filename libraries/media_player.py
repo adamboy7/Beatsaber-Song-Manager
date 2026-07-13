@@ -185,7 +185,7 @@ class MediaPlayer:
             self._audio_proc.terminate()
         self._audio_proc = None
         self._audio_paused = False
-        self._stopped = False
+        self._stopped = True
         self.playing_song = None
         self._play_start = None
         self._pause_start = None
@@ -273,8 +273,8 @@ class MediaPlayer:
         if not song.audio_path:
             messagebox.showwarning("Play Audio", "This song has no audio file.")
             return
-        self._stopped = False
         self.stop()
+        self._stopped = False
         if self._launch_ffplay(song):
             self.song_duration = get_audio_duration(song.audio_path)
         else:
