@@ -441,7 +441,10 @@ class BrowserActionsMixin:
         self._cinema_downloads_active.discard(str(song.folder))
         song._parse()
         if rc == 0 and song.has_playable_cinema_video:
+            scroll_pos = self.canvas.yview()[0]
             self._render_list()
+            self.canvas.update_idletasks()
+            self.canvas.yview_moveto(scroll_pos)
             self.status_bar.config(text=f"Video downloaded for: {song.display_name}")
         elif attempt == 1:
             self.status_bar.config(
