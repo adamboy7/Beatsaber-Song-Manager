@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox
 
 from libraries.constants import ACCENT_COLOR, BG_COLOR, TEXT_COLOR, SUBTEXT_COLOR
@@ -291,6 +294,167 @@ class BrowserActionsMixin:
         self._render_list()
         self.status_bar.config(text=f"Updated info for: {song.display_name}")
 
+    # ── Cinema video download ─────────────────────────────────────────────────
+
+    def _beatsaber_install_dir(self) -> Path | None:
+        """Return the Beat Saber install root, or None if it can't be found.
+
+        Uses the active folder when it follows the standard
+        …\\Beat Saber\\Beat Saber_Data\\CustomLevels layout, otherwise falls
+        back to detecting the install through Steam.
+        """
+        custom = getattr(self, "custom_levels", None)
+        if custom is not None:
+            parts = [p.lower() for p in Path(custom).parts]
+            if parts[-2:] == ["beat saber_data", "customlevels"]:
+                return Path(custom).parent.parent
+        from libraries.steam_paths import find_beatsaber_custom_levels
+        detected = find_beatsaber_custom_levels()
+        if detected is not None:
+            return detected.parent.parent
+        return None
+
+    def _find_yt_dlp(self) -> Path | None:
+        """Look for yt-dlp.exe in Beat Saber\\Libs, then the active folder."""
+        install = self._beatsaber_install_dir()
+        if install is not None:
+            candidate = install / "Libs" / "yt-dlp.exe"
+            if candidate.exists():
+                return candidate
+        custom = getattr(self, "custom_levels", None)
+        if custom is not None:
+            candidate = Path(custom) / "yt-dlp.exe"
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _download_cinema_video(self, song: SongInfo):
+        if not song.cinema_video_id or not song.cinema_video_file:
+            messagebox.showerror(
+                "Download Video",
+                "This song's cinema-video.json has no YouTube video ID.",
+            )
+            return
+        active = set(getattr(self, "_cinema_downloads_active", ()))
+        if str(song.folder) in active:
+            return
+
+        yt_dlp = self._find_yt_dlp()
+        if yt_dlp is not None:
+            self._run_yt_dlp(yt_dlp, song)
+            return
+
+        if not messagebox.askyesno(
+            "yt-dlp Not Found",
+            "yt-dlp.exe is required to download videos but wasn't found.\n\n"
+            "Download it from github.com/yt-dlp/yt-dlp?",
+        ):
+            return
+
+        install = self._beatsaber_install_dir()
+        if install is not None and (install / "Libs").is_dir():
+            dest = install / "Libs" / "yt-dlp.exe"
+        else:
+            dest = Path(self.custom_levels) / "yt-dlp.exe"
+
+        url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+
+        def do_download():
+            import urllib.request
+            try:
+                self.after(0, lambda: self.status_bar.config(text="Downloading yt-dlp…"))
+
+                def report(block_num, block_size, total_size):
+                    if total_size > 0:
+                        pct = min(100, int(block_num * block_size * 100 / total_size))
+                        self.after(0, lambda p=pct: self.status_bar.config(
+                            text=f"Downloading yt-dlp… {p}%"
+                        ))
+
+                urllib.request.urlretrieve(url, dest, reporthook=report)
+                self.after(0, lambda: self._run_yt_dlp(dest, song))
+            except Exception as exc:
+                self.after(0, lambda e=exc: self.status_bar.config(
+                    text=f"yt-dlp download failed: {e}"
+                ))
+
+        threading.Thread(target=do_download, daemon=True).start()
+
+    def _run_yt_dlp(self, yt_dlp: Path, song: SongInfo, attempt: int = 1):
+        """Run yt-dlp the way Cinema does and refresh the song when done.
+
+        A failed first attempt is retried once automatically — YouTube
+        commonly 403s the very first extraction from a fresh yt-dlp
+        (stale signature negotiation) and the retry succeeds.
+        """
+        if not hasattr(self, "_cinema_downloads_active"):
+            self._cinema_downloads_active: set[str] = set()
+        self._cinema_downloads_active.add(str(song.folder))
+
+        out_path = song.folder / song.cinema_video_file
+        cmd = [
+            str(yt_dlp),
+            f"https://www.youtube.com/watch?v={song.cinema_video_id}",
+            "-f", "bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4]",
+            "--no-cache-dir",
+            "-o", str(out_path),
+            "--no-playlist", "--no-part",
+            "--recode-video", "mp4",
+            "--no-mtime",
+            "--socket-timeout", "10",
+            "--ignore-config",
+            "--newline",
+        ]
+        name = song.display_name
+        self.status_bar.config(text=f"Downloading video for: {name}")
+
+        def worker():
+            tail: list[str] = []
+            try:
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, errors="replace", creationflags=creationflags,
+                )
+                for line in proc.stdout:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    tail.append(line)
+                    if len(tail) > 15:
+                        tail.pop(0)
+                    if line.startswith("[download]") and "%" in line:
+                        self.after(0, lambda l=line: self.status_bar.config(
+                            text=f"Downloading video for {name}  •  {l.removeprefix('[download]').strip()}"
+                        ))
+                rc = proc.wait()
+            except Exception as exc:
+                rc = -1
+                tail.append(str(exc))
+            self.after(0, lambda: self._on_yt_dlp_done(
+                song, rc, "\n".join(tail), yt_dlp, attempt))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_yt_dlp_done(self, song: SongInfo, rc: int, output: str,
+                        yt_dlp: Path, attempt: int):
+        self._cinema_downloads_active.discard(str(song.folder))
+        song._parse()
+        if rc == 0 and song.has_playable_cinema_video:
+            self._render_list()
+            self.status_bar.config(text=f"Video downloaded for: {song.display_name}")
+        elif attempt == 1:
+            self.status_bar.config(
+                text=f"Video download failed for {song.display_name} — retrying…"
+            )
+            self.after(1000, lambda: self._run_yt_dlp(yt_dlp, song, attempt=2))
+        else:
+            self.status_bar.config(text=f"Video download failed for: {song.display_name}")
+            messagebox.showerror(
+                "Download Video Failed",
+                f"yt-dlp exited with code {rc}.\n\n{output}"[:2000],
+            )
+
     # ── Context menus ─────────────────────────────────────────────────────────
 
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
@@ -354,6 +518,13 @@ class BrowserActionsMixin:
             menu.add_command(label="More from This Mapper",
                              command=lambda: self.search_var.set(f"{{mapper}}:{song.mapper}"),
                              state="normal" if song.mapper else "disabled")
+        if song.has_cinema_video and not song.has_playable_cinema_video \
+                and song.cinema_video_id:
+            menu.add_separator()
+            downloading = str(song.folder) in getattr(self, "_cinema_downloads_active", ())
+            menu.add_command(label="Download Video",
+                             command=lambda: self._download_cinema_video(song),
+                             state="disabled" if downloading else "normal")
         menu.add_separator()
         menu.add_command(label="Open Folder…",
                          command=lambda: os.startfile(song.folder))

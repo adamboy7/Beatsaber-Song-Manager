@@ -22,6 +22,14 @@ def save_custom_tags(folder: Path, tags: frozenset | set) -> None:
     )
 
 
+def _cinema_safe_filename(title: str) -> str:
+    """Replicate Cinema's illegal-filesystem-char replacement so we derive the
+    same video filename the mod would (e.g. "DECO*27 … feat. Miku" becomes
+    "DECO_27 … feat_ Miku"). Cinema replaces invalid filename chars *and*
+    periods with underscores."""
+    return re.sub(r'[<>:"/\\|?*.\x00-\x1f]', "_", title)
+
+
 def _has_cinema_video(folder: Path) -> bool:
     """True if a Cinema mod video manifest exists in the folder (case-insensitive)."""
     for name in ("cinema-video.json", "Cinema-Video.json", "CINEMA-VIDEO.JSON"):
@@ -38,6 +46,7 @@ class SongInfo:
         "diff_labels", "difficulties", "song_hash", "custom_tags",
         "mod_required", "mod_suggested", "has_cinema_video",
         "cinema_video_path", "cinema_video_offset_ms", "cinema_video_duration_s",
+        "cinema_video_id", "cinema_video_file",
     )
 
     def __init__(self, folder: Path):
@@ -63,6 +72,10 @@ class SongInfo:
         self.cinema_video_path: Path | None = None
         self.cinema_video_offset_ms: int = 0
         self.cinema_video_duration_s: int = 0
+        # YouTube video ID and the filename Cinema will save the video under
+        # (explicit videoFile, or derived from the title like Cinema does).
+        self.cinema_video_id: str = ""
+        self.cinema_video_file: str = ""
         # Use st_birthtime (Windows/macOS) with st_ctime as fallback.
         # A racy filesystem (folder deleted mid-scan, permission denied)
         # shouldn't take down the whole load_songs() call.
@@ -211,8 +224,18 @@ class SongInfo:
                 data = json.loads(candidate.read_text(encoding="utf-8", errors="replace"))
             except Exception:
                 return
+            self.cinema_video_id = str(data.get("videoID", "") or "")
             video_filename = data.get("videoFile", "")
+            if not video_filename:
+                # Cinema derives the filename from the title when videoFile
+                # is absent from the manifest.
+                title = str(data.get("title", "") or "").strip()
+                if title:
+                    video_filename = _cinema_safe_filename(title) + ".mp4"
+                elif self.cinema_video_id:
+                    video_filename = self.cinema_video_id + ".mp4"
             if video_filename:
+                self.cinema_video_file = video_filename
                 vp = self.folder / video_filename
                 if vp.exists():
                     self.cinema_video_path = vp
