@@ -387,7 +387,13 @@ class BrowserPlaylistsMixin:
             messagebox.showinfo("Empty Playlist", "The playlist contains no songs.")
             return
 
-        img_b64 = data.get("image", "")
+        img_b64 = data.get("image", "") or ""
+        # BeatSaver exports raw base64, but some tools (PlaylistManager,
+        # web editors) store a data URI ("data:image/png;base64,...").
+        # Strip the prefix so both forms decode; raw base64 never starts
+        # with "data:".
+        if img_b64.startswith("data:") and "," in img_b64:
+            img_b64 = img_b64.split(",", 1)[1]
         if img_b64:
             self._playlist_art_b64 = img_b64
             self._playlist_art_locked = True
