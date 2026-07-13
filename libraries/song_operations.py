@@ -190,7 +190,7 @@ def clear_song_score(player_dat_path: Path, song: SongInfo) -> tuple[int, dict] 
     if not confirm_player_data_write():
         return None
     try:
-        mtime_before = player_dat_path.stat().st_mtime
+        mtime_before = player_dat_path.stat().st_mtime_ns
         raw = player_dat_path.read_text(encoding="utf-8", errors="replace")
         data = json.loads(raw)
         players = data.get("localPlayers", [])
