@@ -205,6 +205,10 @@ def pick_random_songs(filtered: list | None, unfiltered: list, n: int) -> list:
         picks += supplement
         remaining -= len(supplement)
     if remaining:
+        print(
+            f"Note: only {len(picks)} unique song(s) available; "
+            f"padding remaining {remaining} pick(s) with duplicates."
+        )
         picks += random.choices(unfiltered, k=remaining)
     return picks
 
