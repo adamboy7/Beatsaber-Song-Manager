@@ -75,9 +75,12 @@ class PlaylistArtWindow(tk.Toplevel):
         self.title("Playlist Art")
         self.configure(bg="#0d0d1a")
         self.resizable(False, False)
-        _icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Album.png")
-        self.iconphoto(False, _icon)
-        self._icon = _icon
+        try:
+            _icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Album.png")
+            self.iconphoto(False, _icon)
+            self._icon = _icon
+        except Exception:
+            pass  # missing icon shouldn't stop the window from opening
 
         self._lbl = tk.Label(self, bg="#0d0d1a", cursor="hand2")
         self._lbl.pack(padx=16, pady=16)

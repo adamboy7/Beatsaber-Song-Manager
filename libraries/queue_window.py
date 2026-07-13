@@ -100,9 +100,12 @@ class QueueWindow(tk.Toplevel):
         self.title("Playback Queue")
         self.configure(bg="#0d0d1a")
         self.geometry("420x500")
-        _icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Playlist.png")
-        self.iconphoto(False, _icon)
-        self._icon = _icon
+        try:
+            _icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Playlist.png")
+            self.iconphoto(False, _icon)
+            self._icon = _icon
+        except Exception:
+            pass  # missing icon shouldn't stop the window from opening
         self.minsize(340, 200)
 
         header = tk.Frame(self, bg="#0d0d1a")
