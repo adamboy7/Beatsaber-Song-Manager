@@ -356,6 +356,8 @@ class QueueWindow(tk.Toplevel):
         queue = self._browser._queue
         self._last_queue_len = len(queue)
         self._last_queue_index = self._browser._queue_index
+        self._last_stopped = self._browser._media_player._stopped
+        self._last_paused = self._browser._media_player._audio_paused
 
         if not queue:
             tk.Label(
@@ -867,15 +869,17 @@ class QueueWindow(tk.Toplevel):
         self._drag_target = None
 
     def _on_b1_motion(self, event: tk.Event, source_idx: int):
+        if self._drag_source is None:
+            return
         if abs(event.y_root - self._drag_start_y) > 5 and not self._dragging:
             self._dragging = True
             if len(self._selected) > 1:
-                self._selected = {self._drag_source} if self._drag_source is not None else set()
+                self._selected = {self._drag_source}
                 self._update_row_colors()
             if 0 <= self._drag_source < len(self._row_frames):
                 self._recolor_row(self._row_frames[self._drag_source],
                                   self._drag_source, "#222244")
-        if not self._dragging or self._drag_source is None:
+        if not self._dragging:
             return
         self._drag_target = self._find_gap_at_y(event.y_root)
         self._show_drop_indicator(self._drag_target)
