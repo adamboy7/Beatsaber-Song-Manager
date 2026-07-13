@@ -595,7 +595,9 @@ class QueueWindow(tk.Toplevel):
 
     def _add_random_songs(self, query: str, n: int):
         b = self._browser
-        all_songs = b.songs
+        all_songs = [s for s in b.songs if s.audio_path]
+        if not all_songs:
+            return
         queue_folders = {str(s.folder) for s in b._queue}
 
         filtered_not_in_queue = None
@@ -624,7 +626,9 @@ class QueueWindow(tk.Toplevel):
         query, n = r
 
         b = self._browser
-        all_songs = b.songs
+        all_songs = [s for s in b.songs if s.audio_path]
+        if not all_songs:
+            return
 
         # Exclude queue songs except the ones being replaced (they're leaving)
         replacing_folders = {str(b._queue[i].folder) for i in sorted_indices}
