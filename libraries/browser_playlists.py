@@ -632,7 +632,7 @@ class BrowserPlaylistsMixin:
 
     def _check_pending_playlist(self) -> None:
         # bsplaylist vs. per-song fallback contract:
-        #   * bsplaylist path: `_install_playlist_from_path` initializes
+        #   * bsplaylist path: `_load_playlist_from_path` initializes
         #     `_pending_playlist_queue = []` *after* launching Mod Assistant.
         #     The empty queue is load-bearing — it makes us fall through to the
         #     "everything is installed, queue the songs" branch below.
