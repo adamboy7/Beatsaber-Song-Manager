@@ -345,19 +345,27 @@ def compute_song_hash(song_folder: Path, info_file: Path | None = None) -> str:
     sha.update(info_bytes)
     for fn in diff_filenames:
         diff_path = song_folder / fn
-        if diff_path.exists():
-            try:
-                sha.update(diff_path.read_bytes())
-            except Exception as exc:
-                # If a referenced diff can't be read, the hash will differ from
-                # SongCore's — better to bail than to produce a wrong hash.
-                # Log so the silent dedupe/playlist-missing failure is at least
-                # diagnosable from stdout.
-                print(
-                    f"compute_song_hash: skipping {song_folder.name}: "
-                    f"could not read {fn}: {exc}"
-                )
-                return ""
+        if not diff_path.exists():
+            # A referenced diff that's missing (partial download, manual
+            # deletion) means our hash would differ from SongCore's — bail
+            # rather than produce a wrong hash, same as the unreadable case.
+            print(
+                f"compute_song_hash: skipping {song_folder.name}: "
+                f"missing referenced file {fn}"
+            )
+            return ""
+        try:
+            sha.update(diff_path.read_bytes())
+        except Exception as exc:
+            # If a referenced diff can't be read, the hash will differ from
+            # SongCore's — better to bail than to produce a wrong hash.
+            # Log so the silent dedupe/playlist-missing failure is at least
+            # diagnosable from stdout.
+            print(
+                f"compute_song_hash: skipping {song_folder.name}: "
+                f"could not read {fn}: {exc}"
+            )
+            return ""
     return sha.hexdigest().upper()
 
 
