@@ -155,6 +155,13 @@ class SongBrowser(
                 except Exception:
                     pass
                 setattr(self, _attr, None)
+        if self._visualizer_window is not None:
+            try:
+                if self._visualizer_window.winfo_exists():
+                    self._visualizer_window._on_close()
+            except Exception:
+                pass
+            self._visualizer_window = None
         self._install_manager.cancel()
         self._playlist_installer.cancel()
         self._media_player.stop_listener()
