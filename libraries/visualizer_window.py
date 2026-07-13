@@ -806,13 +806,15 @@ class VisualizerWindow(tk.Toplevel):
         self._suspended = False
         self._clear_canvas()
         self._set_status("")
-        # Spawning the ffplay window steals the OS foreground; while fullscreen
+        # Spawning the ffplay window steals the OS foreground — while fullscreen
         # that breaks the Escape / F11 / Alt+Enter exit keys until the user
-        # clicks. Pull foreground + keyboard focus back to our window (twice, to
-        # beat any late activation by ffplay).
-        if self._is_fullscreen:
-            self._grab_keyboard_focus()
-            self.after(120, self._grab_keyboard_focus)
+        # clicks, and even windowed it silently kicks focus to whatever window
+        # is now foreground (e.g. on every pause/resume of a Cinema video,
+        # since resuming re-spawns ffplay to reseek it). Pull foreground +
+        # keyboard focus back to our window (twice, to beat any late
+        # activation by ffplay) regardless of fullscreen state.
+        self._grab_keyboard_focus()
+        self.after(120, self._grab_keyboard_focus)
         return True
 
     def _resize_ffplay_child(self):
