@@ -7,6 +7,7 @@ from pathlib import Path
 from tkinter import messagebox
 
 from libraries.song_data import SongInfo
+from libraries.audio_utils import _local_dir
 
 
 def favorite_level_id(song: SongInfo) -> str:
@@ -16,7 +17,7 @@ def favorite_level_id(song: SongInfo) -> str:
 
 
 def backup_player_data(player_dat_path: Path, raw: str) -> None:
-    bak_dir = Path(__file__).parent.parent / "backups"
+    bak_dir = _local_dir() / "backups"
     bak_dir.mkdir(exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
     (bak_dir / f"PlayerData_{stamp}.dat.bak").write_text(raw, encoding="utf-8")
