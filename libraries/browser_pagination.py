@@ -30,7 +30,7 @@ from libraries.player_data import get_song_stats, song_level_ids
 from libraries.song_data import SongInfo, load_songs, load_song_hashes
 
 
-_TAG_RE = re.compile(r'\{(\w+)\}:(\S+)', re.IGNORECASE)
+_TAG_RE = re.compile(r'\{(\w+)\}:("[^"]*"|\S+)', re.IGNORECASE)
 
 _DIFF_NAME_TO_INT = {
     "easy": 0, "normal": 1, "hard": 2, "expert": 3, "expertplus": 4,
@@ -64,10 +64,15 @@ def _has_invalid_tags(tags: list[tuple[str, str]]) -> bool:
 
 def _parse_tags(query: str) -> tuple[list[tuple[str, str]], str]:
     tags: list[tuple[str, str]] = []
-    plain = _TAG_RE.sub(
-        lambda m: (tags.append((m.group(1).lower(), m.group(2).lower())) or ""),
-        query,
-    )
+
+    def _collect(m: "re.Match[str]") -> str:
+        value = m.group(2)
+        if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+            value = value[1:-1]
+        tags.append((m.group(1).lower(), value.lower()))
+        return ""
+
+    plain = _TAG_RE.sub(_collect, query)
     return tags, plain.strip()
 
 

@@ -516,10 +516,12 @@ class BrowserActionsMixin:
             menu.add_command(label="Copy Name", command=lambda: self._copy(song.display_name))
             menu.add_separator()
             menu.add_command(label="More from This Artist",
-                             command=lambda: self.search_var.set(f"{{artist}}:{song.author}"),
+                             command=lambda: self.search_var.set(
+                                 '{artist}:"%s"' % song.author.replace('"', '')),
                              state="normal" if song.author else "disabled")
             menu.add_command(label="More from This Mapper",
-                             command=lambda: self.search_var.set(f"{{mapper}}:{song.mapper}"),
+                             command=lambda: self.search_var.set(
+                                 '{mapper}:"%s"' % song.mapper.replace('"', '')),
                              state="normal" if song.mapper else "disabled")
         if song.has_cinema_video and not song.has_playable_cinema_video \
                 and song.cinema_video_id:
