@@ -407,9 +407,22 @@ class VisualizerWindow(tk.Toplevel):
             self._enter_fullscreen()
         return "break"
 
+    def _drop_frozen_video_child(self):
+        """Remove a suspended embedded-ffplay child before window transitions.
+
+        Fullscreen enter/exit makes Tk restyle, repack and resize windows, and
+        some of those Win32 calls synchronously message child windows — with a
+        suspended ffplay child that deadlocks the Tk thread. Kill the frozen
+        child first; the debounced resize handler relaunches it frozen at the
+        new size (elapsed is frozen while paused, so no sync is lost).
+        """
+        if self._use_ffplay_video and self._suspended:
+            self._stop_ffplay()
+
     def _enter_fullscreen(self):
         if self._is_fullscreen:
             return
+        self._drop_frozen_video_child()
         self._is_fullscreen = True
         # Remember the windowed geometry so we can restore it on exit.
         try:
@@ -441,6 +454,7 @@ class VisualizerWindow(tk.Toplevel):
     def _exit_fullscreen(self, _event: "tk.Event | None" = None):
         if not self._is_fullscreen:
             return
+        self._drop_frozen_video_child()
         self._is_fullscreen = False
         try:
             self.attributes("-fullscreen", False)
@@ -475,6 +489,8 @@ class VisualizerWindow(tk.Toplevel):
             self.focus_force()
         except tk.TclError:
             pass
+        if self._suspended and self._use_ffplay_video:
+            return
         try:
             user32 = _user32()
             user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
@@ -612,7 +628,7 @@ class VisualizerWindow(tk.Toplevel):
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
         self._start_stream(song, elapsed)
 
-    def _restart_stream_at_elapsed(self):
+    def _restart_stream_at_elapsed(self, bias: float = 0.0):
         song = self._current_song
         if song is None or not song.audio_path:
             return
@@ -620,7 +636,7 @@ class VisualizerWindow(tk.Toplevel):
             return
         self._stop_stream()
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
-        self._start_stream(song, elapsed)
+        self._start_stream(song, max(0.0, elapsed + bias))
 
     # ── Cinema video mode selection ──────────────────────────────────────────
 
@@ -823,6 +839,8 @@ class VisualizerWindow(tk.Toplevel):
             return
         w, h = self._canvas_size()
         self._stream_w, self._stream_h = w, h
+        if self._suspended:
+            return
         try:
             _move_child(hwnd, w, h)
         except Exception:
@@ -880,14 +898,17 @@ class VisualizerWindow(tk.Toplevel):
                 with self._frame_lock:
                     self._latest_frame = frame
 
+    _VIDEO_FREEZE_DELAY_S = 0.35
+
     def _suspend_stream(self):
         if self._use_ffplay_video:
-            proc = self._ffplay_proc
-            if proc is not None and proc.poll() is None and not self._suspended:
-                # Freeze ffplay on its current frame; no bar/art animation.
-                if _suspend_pid(proc.pid):
-                    self._suspended = True
-            return
+            if self._suspended:
+                return
+            self._relaunch_video_frozen()
+            if self._use_ffplay_video:
+                return
+            # The restart fell back to the spectrum stream (e.g. the video's
+            # window just ended) — fall through and freeze that instead.
         proc = self._ffmpeg_proc
         if proc is None or proc.poll() is not None or self._suspended:
             return
@@ -897,6 +918,44 @@ class VisualizerWindow(tk.Toplevel):
             self._y_scale_target = 0.0
             self._y_scale_anim_start = time.time()
             self._y_scale_paused = False
+
+    def _relaunch_video_frozen(self):
+        """Relaunch the embedded ffplay at the frozen elapsed position, then freeze it.
+
+        The suspend must NOT happen synchronously right after launch: ffplay's
+        window activation and our deferred _grab_keyboard_focus are still in
+        flight, and AttachThreadInput/SetFocus against a suspended process
+        hangs the Tk thread. Instead the video is seeked slightly *behind*
+        elapsed, allowed to play for _VIDEO_FREEZE_DELAY_S, and suspended once
+        settled — so the frame it freezes on still lands at ~elapsed.
+        """
+        self._restart_stream_at_elapsed(bias=-self._VIDEO_FREEZE_DELAY_S)
+        if not self._use_ffplay_video:
+            return
+        proc = self._ffplay_proc
+        if proc is None:
+            return
+        self.after(
+            int(self._VIDEO_FREEZE_DELAY_S * 1000),
+            lambda p=proc: self._deferred_video_suspend(p),
+        )
+
+    def _deferred_video_suspend(self, proc: subprocess.Popen):
+        """Freeze the relaunched ffplay, unless playback state changed meanwhile."""
+        try:
+            mp = self._browser._media_player
+        except Exception:
+            return
+        if (
+            self._use_ffplay_video
+            and self._ffplay_proc is proc  # not replaced by a newer relaunch
+            and proc.poll() is None
+            and not self._suspended
+            and mp._audio_paused  # user hasn't resumed during the delay
+            and not mp._stopped
+        ):
+            if _suspend_pid(proc.pid):
+                self._suspended = True
 
     def _resume_stream(self):
         if self._use_ffplay_video:
@@ -1130,30 +1189,32 @@ class VisualizerWindow(tk.Toplevel):
         mp = self._browser._media_player
         if mp.playing_song is None or mp._stopped:
             return
-        if self._use_ffplay_video:
-            # ffplay doesn't rescale its SDL surface when its window is merely
-            # moved, so a live MoveWindow leaves the video at its original size.
-            # Relaunch ffplay at the new canvas size (seeked to the current
-            # position) so the picture actually fills the resized/fullscreen
-            # window. Debounced, so this fires once after the drag settles.
+        # ffplay doesn't rescale its SDL surface when its window is merely
+        # moved, so a live MoveWindow leaves the video at its original size.
+        # Relaunch the stream at the new canvas size (seeked to the current
+        # position) so the picture actually fills the resized/fullscreen
+        # window. Debounced, so this fires once after the drag settles.
+        if not mp._audio_paused:
             self._restart_stream_at_elapsed()
-            if mp._audio_paused:
-                proc = self._ffplay_proc
-                if proc is not None and proc.poll() is None:
-                    _suspend_pid(proc.pid)
-                    self._suspended = True
             return
+        elapsed = mp.elapsed_seconds() or 0.0
+        if self._desired_mode(self._current_song, elapsed) == "video":
+            # Deferred freeze — suspending synchronously right after launch
+            # deadlocks against the pending focus grab.
+            self._relaunch_video_frozen()
+            if self._use_ffplay_video:
+                return
+            # Fell back to the spectrum stream — freeze that instead.
         self._restart_stream_at_elapsed()
-        if mp._audio_paused:
-            proc = self._ffmpeg_proc
-            if proc is not None and proc.poll() is None:
-                _suspend_pid(proc.pid)
-                self._suspended = True
-            self._y_scale = 0.0
-            self._y_scale_target = 0.0
-            self._y_scale_anim_start = None
-            self._y_scale_paused = True
-            self._show_bright_art()
+        proc = self._ffmpeg_proc
+        if proc is not None and proc.poll() is None:
+            _suspend_pid(proc.pid)
+            self._suspended = True
+        self._y_scale = 0.0
+        self._y_scale_target = 0.0
+        self._y_scale_anim_start = None
+        self._y_scale_paused = True
+        self._show_bright_art()
 
     # ── Context menu ─────────────────────────────────────────────────────────
 
@@ -1225,7 +1286,7 @@ class VisualizerWindow(tk.Toplevel):
         b.lift()
         b.focus_force()
 
-    # ── Refresh entry point (called from __init__ for initial state) ──────────
+    # ── Refresh entry point (called from __init__ for the initial state) ──────
 
     def _refresh_song(self, initial: bool = False):
         mp = self._browser._media_player
