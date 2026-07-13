@@ -374,22 +374,37 @@ class QueueWindow(tk.Toplevel):
             self._refresh_repeat_btn()
             return
 
+        cut_indices = self._valid_cut_indices()
         for i, song in enumerate(queue):
-            self._build_row(i, song)
+            self._build_row(i, song, cut_indices)
         self._refresh_nav_btns()
         self._refresh_play_btn()
         self._refresh_shuffle_btn()
         self._refresh_repeat_btn()
 
-    def _row_bg(self, idx: int) -> str:
+    def _valid_cut_indices(self) -> set:
+        """Indices of active cut marks, honoured only if the recorded SongInfo
+        is still at its recorded index (so one cut occurrence of a duplicated
+        song doesn't highlight its twin)."""
+        queue = self._browser._queue
+        cut_marks = getattr(self._browser, '_queue_cut_marks', None)
+        if not cut_marks:
+            return set()
+        return {i for i, s in cut_marks if 0 <= i < len(queue) and queue[i] is s}
+
+    def _row_bg(self, idx: int, cut_indices: set | None = None) -> str:
+        if cut_indices is None:
+            cut_indices = self._valid_cut_indices()
         if idx in self._selected:
             return SELECTED_BG
+        if idx in cut_indices:
+            return _CUT_BG
         if idx == self._browser._queue_index:
             return _QUEUE_PLAYING_BG
         return ITEM_BG
 
-    def _build_row(self, idx: int, song: "SongInfo"):
-        bg = self._row_bg(idx)
+    def _build_row(self, idx: int, song: "SongInfo", cut_indices: set | None = None):
+        bg = self._row_bg(idx, cut_indices)
         is_playing = (idx == self._browser._queue_index)
 
         row = tk.Frame(self._list_frame, bg=bg, cursor="fleur")
@@ -1105,15 +1120,7 @@ class QueueWindow(tk.Toplevel):
 
     def _update_row_colors(self):
         playing_idx = self._browser._queue_index
-        queue = self._browser._queue
-        cut_marks = getattr(self._browser, '_queue_cut_marks', None)
-        # Honour only marks whose recorded (index, song) still matches the
-        # current queue — that way a single occurrence of a duplicated song
-        # stays highlighted while its twin doesn't.
-        cut_indices = (
-            {i for i, s in cut_marks if 0 <= i < len(queue) and queue[i] is s}
-            if cut_marks else set()
-        )
+        cut_indices = self._valid_cut_indices()
         for i, row in enumerate(self._row_frames):
             if self._dragging and i == self._drag_source:
                 continue
