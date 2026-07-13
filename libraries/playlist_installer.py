@@ -44,6 +44,7 @@ class PlaylistInstaller:
         self._server: HTTPServer | None = None
         self._server_thread: threading.Thread | None = None
         self._keys: list[str] = []
+        self._baseline_count: int = 0
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -110,6 +111,7 @@ class PlaylistInstaller:
             return False
 
         self._keys = [k.lower() for k in expected_keys if k]
+        self._baseline_count = self._installed_count()
 
         # bsplaylist://playlist/<http url> — matches the format Mod
         # Assistant's OneClickInstaller expects (PR #492 in upstream).
@@ -180,9 +182,12 @@ class PlaylistInstaller:
         Mod Assistant names song folders ``<key> (<title> - <author>)``,
         so a prefix match against the BeatSaver key is a cheap and reliable
         completion signal.
+
+        When the playlist has no BeatSaver keys at all (hash-only entries),
+        fall back to the total folder count as a coarse progress proxy —
+        the watcher can then still observe new songs landing instead of
+        seeing eternal zero progress and giving up.
         """
-        if not self._keys:
-            return 0
         try:
             names = [
                 e.name.lower()
@@ -191,6 +196,8 @@ class PlaylistInstaller:
             ]
         except Exception:
             return 0
+        if not self._keys:
+            return len(names)
         count = 0
         for key in self._keys:
             prefix = key + " "
@@ -220,6 +227,7 @@ class PlaylistInstaller:
 
     def _spawn_watcher(self, gen: int, timeout: int) -> None:
         total = len(self._keys)
+        baseline = getattr(self, "_baseline_count", 0)
 
         def worker():
             deadline = time.monotonic() + max(timeout, 30)
@@ -244,11 +252,11 @@ class PlaylistInstaller:
                 elif time.monotonic() - stable_since > self.NO_PROGRESS_GIVEUP:
                     # Progress has stalled for too long — bail rather than
                     # waiting out the full DEFAULT_TIMEOUT. Report success
-                    # iff at least one expected song made it in before the
-                    # stall (matches the post-timeout heuristic below).
+                    # iff something NEW landed since install started (not
+                    # merely songs/folders that already existed).
                     if gen == self._gen:
                         self._dispatch(
-                            lambda: self._on_complete(gen, last_count > 0),
+                            lambda: self._on_complete(gen, last_count > baseline),
                         )
                     return
 
@@ -257,7 +265,7 @@ class PlaylistInstaller:
             # Hit timeout — surface whatever we got.
             if gen == self._gen:
                 self._dispatch(
-                    lambda: self._on_complete(gen, last_count > 0)
+                    lambda: self._on_complete(gen, last_count > baseline)
                 )
 
         threading.Thread(target=worker, daemon=True).start()
