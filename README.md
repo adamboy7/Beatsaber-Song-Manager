@@ -86,6 +86,7 @@ Right-click a song for:
 - **Copy Link** — copies the BeatSaver URL to clipboard
 - **Copy Name** — copies the song's display name
 - **More from This Artist / More from This Mapper** — instantly filters the library to that artist or mapper
+- **Download Video** — appears when a song ships a `cinema-video.json` whose video isn't downloaded yet. See [Cinema Video Support](#cinema-video-support).
 - **Open Folder…** — opens the song's folder in Explorer
 - **Delete** — disabled for favorited songs unless Shift is held
 
@@ -286,6 +287,28 @@ Access via **View → Playlist Art**. Only relevant when you're distributing a p
 - **Drag an image onto the window** — replaces the current art
 - **Right-click** — replace or export options
 - **Clear** — removes custom art and resets to inheriting the first song's image
+
+---
+
+## Visualizer Window
+
+Access via **View → Visualizer**. Shows a real-time frequency-bar spectrum synced to playback — or, when the current song has a downloaded Cinema video, the video itself.
+
+- **Space** — play/pause
+- **F11 / Alt+Enter** — toggle fullscreen (video or spectrum fills the screen edge to edge)
+- **Escape** — exit fullscreen
+
+### Cinema Video Support
+
+Many maps ship a `cinema-video.json` for the [Cinema mod](https://github.com/Kevga/BeatSaberCinema), which plays a YouTube video behind the map in-game. The app supports these videos outside the game:
+
+**Playback** — if the referenced video file is present in the song folder, the Visualizer plays it instead of the spectrum, seeked to stay in sync with the song's audio and honoring Cinema's configured offset and duration. Outside the video's window (before the offset, or after it ends), the spectrum shows instead. Playback uses an embedded hardware-accelerated ffplay window, falling back to software decoding if embedding fails.
+
+**Download** — the manifest often references a video you haven't downloaded in-game yet. Right-click the song → **Download Video** fetches it with yt-dlp using the same format and filename Cinema would (720p MP4, saved into the song folder), with download progress in the status bar. Failed downloads retry once automatically. Once finished, the video is immediately available in-game and in the Visualizer.
+
+yt-dlp is looked for in Beat Saber's `Libs` folder (where Cinema keeps it), then next to the application — the same place as ffmpeg. If it isn't found, the app offers to download it for you.
+
+The `{cinema}:y` search tag finds all songs with Cinema support — see [Search Tags](#search-tags).
 
 ---
 

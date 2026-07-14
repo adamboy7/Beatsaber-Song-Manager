@@ -19,6 +19,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox
 
+from libraries.audio_utils import _local_dir
 from libraries.constants import ACCENT_COLOR, BG_COLOR, TEXT_COLOR, SUBTEXT_COLOR
 from libraries.song_data import SongInfo, save_custom_tags
 from libraries.asset_editor import bak_files
@@ -315,17 +316,16 @@ class BrowserActionsMixin:
         return None
 
     def _find_yt_dlp(self) -> Path | None:
-        """Look for yt-dlp.exe in Beat Saber\\Libs, then the active folder."""
+        """Look for yt-dlp.exe in Beat Saber\\Libs, then next to the app
+        (same folder as ffmpeg — beside the exe or script)."""
         install = self._beatsaber_install_dir()
         if install is not None:
             candidate = install / "Libs" / "yt-dlp.exe"
             if candidate.exists():
                 return candidate
-        custom = getattr(self, "custom_levels", None)
-        if custom is not None:
-            candidate = Path(custom) / "yt-dlp.exe"
-            if candidate.exists():
-                return candidate
+        candidate = _local_dir() / "yt-dlp.exe"
+        if candidate.exists():
+            return candidate
         return None
 
     def _download_cinema_video(self, song: SongInfo):
@@ -355,7 +355,7 @@ class BrowserActionsMixin:
         if install is not None and (install / "Libs").is_dir():
             dest = install / "Libs" / "yt-dlp.exe"
         else:
-            dest = Path(self.custom_levels) / "yt-dlp.exe"
+            dest = _local_dir() / "yt-dlp.exe"
 
         url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 
