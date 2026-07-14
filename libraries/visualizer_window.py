@@ -595,6 +595,12 @@ class VisualizerWindow(tk.Toplevel):
                         self._y_scale_paused = True
 
             self._blit_latest_frame()
+        except tk.TclError:
+            self._tick_id = None  # window destroyed mid-tick
+            return
+        except Exception:
+            pass  # transient error; keep the tick loop alive
+        try:
             self._tick_id = self.after(33, self._tick)
         except tk.TclError:
             self._tick_id = None  # window destroyed mid-tick
