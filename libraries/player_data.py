@@ -10,14 +10,6 @@ DIFF_LABELS = {0: "Easy", 1: "Normal", 2: "Hard", 3: "Expert", 4: "ExpertPlus"}
 # Beat Saber maxRank int → display string
 RANK_LABELS = {0: "E", 1: "D", 2: "C", 3: "B", 4: "A", 5: "S", 6: "SS"}
 
-# Colour per rank for display
-RANK_COLORS = {
-    "SS": "#FFD700", "S": "#FFD700",
-    "A":  "#84e060", "B": "#60b4e0",
-    "C":  "#e0c060", "D": "#e08060",
-    "E":  "#888888", "DNF": "#555555",
-}
-
 
 def find_player_data() -> tuple["Path | None", str]:
     """Locate PlayerData.dat. Returns (path_or_None, debug_string)."""

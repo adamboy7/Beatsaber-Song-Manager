@@ -244,7 +244,6 @@ class VisualizerWindow(tk.Toplevel):
 
         # Streaming ffmpeg subprocess + reader thread state.
         self._ffmpeg_proc: subprocess.Popen | None = None
-        self._reader_thread: threading.Thread | None = None
         self._reader_stop = threading.Event()
         self._frame_lock = threading.Lock()
         self._latest_frame: bytes | None = None
@@ -275,7 +274,6 @@ class VisualizerWindow(tk.Toplevel):
         self._y_scale_anim_start: float | None = None
         self._last_freq_img: Image.Image | None = None
         self._bg_image_bright: Image.Image | None = None
-        self._y_scale_paused: bool = False
 
         # Tk-side state.
         self._photo: ImageTk.PhotoImage | None = None
@@ -592,7 +590,6 @@ class VisualizerWindow(tk.Toplevel):
                     self._y_scale_anim_start = None
                     if self._y_scale_target == 0.0:
                         self._show_bright_art()
-                        self._y_scale_paused = True
 
             self._blit_latest_frame()
         except tk.TclError:
@@ -722,7 +719,6 @@ class VisualizerWindow(tk.Toplevel):
             args=(self._ffmpeg_proc, w, h, self._reader_stop),
             daemon=True,
         )
-        self._reader_thread = thread
         thread.start()
 
     def _build_spectrum_cmd(self, ffmpeg: str, song: "SongInfo", elapsed: float,
@@ -923,7 +919,6 @@ class VisualizerWindow(tk.Toplevel):
             self._y_scale_anim_from = self._y_scale
             self._y_scale_target = 0.0
             self._y_scale_anim_start = time.time()
-            self._y_scale_paused = False
 
     def _relaunch_video_frozen(self):
         """Relaunch the embedded ffplay at the frozen elapsed position, then freeze it.
@@ -983,7 +978,6 @@ class VisualizerWindow(tk.Toplevel):
             self._y_scale_anim_from = self._y_scale
             self._y_scale_target = 1.0
             self._y_scale_anim_start = time.time()
-            self._y_scale_paused = False
 
     def _stop_stream(self):
         self._stop_ffplay()
@@ -1009,14 +1003,12 @@ class VisualizerWindow(tk.Toplevel):
             except Exception:
                 pass
         self._ffmpeg_proc = None
-        self._reader_thread = None
         with self._frame_lock:
             self._latest_frame = None
         self._y_scale = 1.0
         self._y_scale_target = 1.0
         self._y_scale_anim_start = None
         self._last_freq_img = None
-        self._y_scale_paused = False
 
     # ── Drawing ──────────────────────────────────────────────────────────────
 
@@ -1219,7 +1211,6 @@ class VisualizerWindow(tk.Toplevel):
         self._y_scale = 0.0
         self._y_scale_target = 0.0
         self._y_scale_anim_start = None
-        self._y_scale_paused = True
         self._show_bright_art()
 
     # ── Context menu ─────────────────────────────────────────────────────────

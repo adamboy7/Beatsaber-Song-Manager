@@ -77,14 +77,11 @@ class SongBrowser(
         self.player_stats: dict = {}
         self.favorite_ids: set[str] = set()
         self.player_dat_path: Path | None = None
-        player_dat, pd_debug = find_player_data()
+        player_dat, _ = find_player_data()
         if player_dat:
             self.player_dat_path = player_dat
             self.player_stats = load_player_stats(player_dat)
             self.favorite_ids = load_favorites(player_dat)
-            self.player_data_status = f"PlayerData: {len(self.player_stats)} entries  |  {player_dat.name}"
-        else:
-            self.player_data_status = f"PlayerData not found: {pd_debug}"
 
         self.title(WINDOW_TITLE)
         self.configure(bg=BG_COLOR)
