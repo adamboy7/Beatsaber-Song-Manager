@@ -23,6 +23,7 @@ import random
 import sys
 import threading
 import tkinter as tk
+from collections import OrderedDict
 from tkinter import messagebox
 from tkinterdnd2 import TkinterDnD
 from pathlib import Path
@@ -65,7 +66,7 @@ class SongBrowser(
         self.selected_index: int | None = None
         self.selected_indices: set[int] = set()
         self._selected_folders: set[str] = set()
-        self._thumbnails: dict[str, ImageTk.PhotoImage] = {}   # keep refs alive; keyed by folder path
+        self._thumbnails: OrderedDict[str, ImageTk.PhotoImage] = OrderedDict()   # LRU cache, keyed by folder path; keeps refs alive
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
         self._pending_install_id: str | None = None

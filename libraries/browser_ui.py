@@ -24,6 +24,8 @@ from libraries.constants import (
 from libraries.song_data import SongInfo
 from libraries.player_data import get_song_stats, format_diff_stats
 
+THUMBNAIL_CACHE_LIMIT = 300
+
 
 class BrowserUIMixin:
     """Menu/window construction, thumbnail caching, list rendering,
@@ -431,6 +433,7 @@ class BrowserUIMixin:
     def _load_thumbnail(self, song: SongInfo) -> ImageTk.PhotoImage:
         key = str(song.folder)
         if key in self._thumbnails:
+            self._thumbnails.move_to_end(key)
             return self._thumbnails[key]
         try:
             if song.cover_path:
@@ -438,6 +441,8 @@ class BrowserUIMixin:
                 img = img.resize(THUMBNAIL_SIZE, Image.LANCZOS)
                 photo = ImageTk.PhotoImage(img)
                 self._thumbnails[key] = photo
+                if len(self._thumbnails) > THUMBNAIL_CACHE_LIMIT:
+                    self._thumbnails.popitem(last=False)
                 return photo
         except Exception:
             pass
