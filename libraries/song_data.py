@@ -49,7 +49,7 @@ class SongInfo:
         "cinema_video_id", "cinema_video_file", "search_blob",
     )
 
-    def __init__(self, folder: Path):
+    def __init__(self, folder: Path, info_path: Path | None = None):
         self.folder = folder
         self.song_id = ""
         self.display_name = folder.name
@@ -85,21 +85,17 @@ class SongInfo:
             self.created_at: float = getattr(stat, "st_birthtime", stat.st_ctime)
         except OSError:
             self.created_at = 0.0
-        self._parse()
+        self._parse(info_path)
 
-    def _parse(self):
+    def _parse(self, info_path: Path | None = None):
         # Detect community format: "abcd1 (Song Name - Mapper)"
         m = re.match(r'^([A-Za-z0-9]+)\s+\((.+)\)$', self.folder.name)
         if m:
             self.song_id = m.group(1)
 
-        # Read Info.dat (case-insensitive search)
-        info_file = None
-        for name in ("Info.dat", "info.dat", "INFO.DAT"):
-            candidate = self.folder / name
-            if candidate.exists():
-                info_file = candidate
-                break
+        # Read Info.dat (case-insensitive search unless the caller already
+        # resolved the path, e.g. load_songs() via _find_info_dat).
+        info_file = info_path if info_path is not None else _find_info_dat(self.folder)
 
         if info_file:
             try:
@@ -428,10 +424,21 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
     new_cache: dict[str, dict] = {}
     dirty = False
 
-    # Fallback: compute hashes for folders SongCore didn't list.
+    # Fallback: compute hashes for folders SongCore didn't list, and force a
+    # recompute for any folder mid-edit (an Info.dat.bak means the in-game
+    # editor may have rewritten Info.dat since SongCore last hashed it).
     try:
         for entry in custom_levels.iterdir():
             if not entry.is_dir():
+                continue
+            has_edit_bak = any(
+                (entry / bak_name).exists()
+                for bak_name in ("Info.dat.bak", "info.dat.bak", "INFO.DAT.bak")
+            )
+            if has_edit_bak:
+                recomputed = compute_song_hash(entry)
+                if recomputed:
+                    result[entry.name] = recomputed
                 continue
             if entry.name in result:
                 continue
@@ -454,22 +461,6 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
     except Exception:
         pass
 
-    try:
-        for entry in custom_levels.iterdir():
-            if not entry.is_dir():
-                continue
-            has_edit_bak = any(
-                (entry / bak_name).exists()
-                for bak_name in ("Info.dat.bak", "info.dat.bak", "INFO.DAT.bak")
-            )
-            if not has_edit_bak:
-                continue
-            recomputed = compute_song_hash(entry)
-            if recomputed:
-                result[entry.name] = recomputed
-    except Exception:
-        pass
-
     # Drop stale entries (folder gone) and persist if we touched anything.
     if dirty or len(new_cache) != len(cache):
         try:
@@ -483,19 +474,23 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
     return result
 
 
-def _has_info_dat(folder: Path) -> bool:
-    """True if the folder contains an Info.dat (case-insensitive)."""
-    return any(
-        (folder / name).exists()
-        for name in ("Info.dat", "info.dat", "INFO.DAT")
-    )
+def _find_info_dat(folder: Path) -> Path | None:
+    """Return the folder's Info.dat path (case-insensitive), or None."""
+    for name in ("Info.dat", "info.dat", "INFO.DAT"):
+        candidate = folder / name
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def load_songs(custom_levels: Path) -> list[SongInfo]:
     songs = []
     for entry in custom_levels.iterdir():
-        if entry.is_dir() and _has_info_dat(entry):
-            songs.append(SongInfo(entry))
+        if not entry.is_dir():
+            continue
+        info_path = _find_info_dat(entry)
+        if info_path is not None:
+            songs.append(SongInfo(entry, info_path))
     # Newest folder first
     songs.sort(key=lambda s: s.created_at, reverse=True)
     return songs
