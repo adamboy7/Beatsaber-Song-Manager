@@ -90,6 +90,7 @@ class MediaPlayer:
         self.song_duration: float | None = None
         self._volume: int = 75
         self._volume_changed_while_paused: bool = False
+        self.session_id: int = 0
 
     def start_media_keys(self, after_fn, on_stop=None, on_next=None, on_prev=None) -> None:
         try:
@@ -287,6 +288,7 @@ class MediaPlayer:
         self._stopped = False
         if self._launch_ffplay(song):
             self.song_duration = get_audio_duration(song.audio_path)
+            self.session_id += 1
         else:
             ext = song.audio_path.suffix.lower()
             if ext == ".ogg":

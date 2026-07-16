@@ -77,11 +77,14 @@ def _assign_to_visualizer_job(pid: int) -> None:
     assign_process_to_job(_visualizer_job, pid)
 
 
-def _find_hwnd_for_pid(pid: int, timeout: float = 3.0) -> int | None:
-    """Find the top-level, visible window owned by ``pid`` (ffplay's SDL window).
+def _find_hwnd_for_pid_once(pid: int) -> int | None:
+    """Single-pass search for the top-level, visible window owned by ``pid``
+    (ffplay's SDL window).
 
-    ffplay has no ``-wid`` option, so we launch it, wait for it to create its
-    window, and locate that window by process id before reparenting it.
+    ffplay has no ``-wid`` option, so we launch it and locate its window by
+    process id before reparenting it. Callers that need to wait for the
+    window to appear should call this repeatedly via ``after()`` rather than
+    looping/sleeping here — that would block the Tk event loop.
     """
     user32 = _user32()
     EnumWindowsProc = ctypes.WINFUNCTYPE(
@@ -107,14 +110,8 @@ def _find_hwnd_for_pid(pid: int, timeout: float = 3.0) -> int | None:
     proc = EnumWindowsProc(_cb)
     user32.EnumWindows.argtypes = [EnumWindowsProc, wintypes.LPARAM]
     user32.EnumWindows.restype = wintypes.BOOL
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        found.clear()
-        user32.EnumWindows(proc, 0)
-        if found:
-            return found[0]
-        time.sleep(0.03)
-    return None
+    user32.EnumWindows(proc, 0)
+    return found[0] if found else None
 
 
 def _embed_child(child_hwnd: int, parent_hwnd: int, w: int, h: int) -> None:
@@ -248,12 +245,14 @@ class VisualizerWindow(tk.Toplevel):
         # Duplicate SongInfo references in the queue (the same song played
         # back-to-back) represent the "same playing item" identity-wise, so
         # id() alone can't detect a fresh playback of it. We additionally
-        # track MediaPlayer._play_start, which gets a new value every time
-        # play() actually (re)launches audio — including a same-song repeat —
-        # so a change in play_start while the id is unchanged still counts as
-        # a new playback session (see _tick).
+        # track MediaPlayer.session_id, which is incremented only by real
+        # play() calls — including a same-song repeat — so a change in
+        # session_id while the id is unchanged still counts as a new
+        # playback session (see _tick). Internal relaunches (volume change,
+        # unpause-after-volume-change) don't touch session_id, so they no
+        # longer trip a spurious restart here.
         self._current_song_id: int | None = None
-        self._current_play_start: float | None = None
+        self._current_session_id: int | None = None
 
         # Streaming ffmpeg subprocess + reader thread state.
         self._ffmpeg_proc: subprocess.Popen | None = None
@@ -272,6 +271,13 @@ class VisualizerWindow(tk.Toplevel):
         self._ffplay_proc: subprocess.Popen | None = None
         self._ffplay_hwnd: int | None = None
         self._use_ffplay_video: bool = False
+        # In-flight "find ffplay's window and embed it" attempt, polled via
+        # after() instead of blocking the Tk thread. _video_launch_gen is
+        # bumped on every new attempt (or on stop) so a stale poll/result
+        # from a superseded attempt is discarded instead of acted on.
+        self._video_launch_gen: int = 0
+        self._ffplay_pending_proc: subprocess.Popen | None = None
+        self._ffplay_pending_callback = None
         # Set once a video stream has hit EOF/error for the current song, so
         # we don't keep retrying to decode it for the rest of the song.
         self._video_ended: bool = False
@@ -420,15 +426,32 @@ class VisualizerWindow(tk.Toplevel):
         return "break"
 
     def _drop_frozen_video_child(self):
-        """Remove a suspended embedded-ffplay child before window transitions.
+        """Remove a suspended (or about-to-be-suspended) embedded-ffplay child
+        before window transitions.
 
         Fullscreen enter/exit makes Tk restyle, repack and resize windows, and
         some of those Win32 calls synchronously message child windows — with a
         suspended ffplay child that deadlocks the Tk thread. Kill the frozen
         child first; the debounced resize handler relaunches it frozen at the
         new size (elapsed is frozen while paused, so no sync is lost).
+
+        The freeze may still be *in flight* rather than already applied:
+        pausing a Cinema video relaunches ffplay and suspends it a fraction of
+        a second later (see _relaunch_video_frozen / _deferred_video_suspend),
+        so a fullscreen toggle right after a pause can arrive before
+        self._suspended is set. If we only checked self._suspended here, that
+        child would get frozen *inside* the just-transitioned window and
+        deadlock the next synchronous message. So tear down any active or
+        in-flight ffplay whenever playback is paused — not only once it's
+        already suspended. Stopping it also cancels the pending deferred
+        suspend (it no-ops when _ffplay_proc no longer matches).
         """
-        if self._use_ffplay_video and self._suspended:
+        try:
+            paused = bool(self._browser._media_player._audio_paused)
+        except Exception:
+            paused = False
+        freeze_in_flight = self._ffplay_pending_proc is not None
+        if (self._use_ffplay_video or freeze_in_flight) and (self._suspended or paused):
             self._stop_ffplay()
 
     def _enter_fullscreen(self):
@@ -522,34 +545,36 @@ class VisualizerWindow(tk.Toplevel):
             paused = bool(mp._audio_paused)
             stopped = bool(mp._stopped)
             song_id = id(song) if song is not None else None
-            play_start = mp._play_start if song is not None else None
+            session_id = mp.session_id if song is not None else None
 
             # A repeat of the identical SongInfo object played back-to-back
             # (e.g. the same song twice in a queue) keeps the same id(), but
-            # MediaPlayer hands it a fresh _play_start every time play()
+            # MediaPlayer bumps session_id every time play() actually
             # (re)launches audio. Treat that as a new playback session too,
             # so per-song state (Cinema video-ended tracking, cover art,
             # elapsed-based seeking) resets just like an actual song change
-            # would. Excluded when play_start is None (that's a stop, handled
-            # separately below) or when already stopped.
+            # would. Excluded when session_id is None (that's a stop, handled
+            # separately below) or when already stopped. Internal relaunches
+            # (volume change, unpause-after-volume-change) don't bump
+            # session_id, so they no longer trigger a spurious restart here.
             is_repeat_restart = (
                 song_id is not None
                 and song_id == self._current_song_id
-                and play_start is not None
-                and play_start != self._current_play_start
+                and session_id is not None
+                and session_id != self._current_session_id
                 and not stopped
             )
 
             # Song change (or a same-song restart): restart the stream.
             if song_id != self._current_song_id or is_repeat_restart:
                 self._current_song_id = song_id
-                self._current_play_start = play_start
+                self._current_session_id = session_id
                 self._current_song = song
                 self._on_song_changed(song)
                 self._was_paused = paused
                 self._was_stopped = stopped
             else:
-                self._current_play_start = play_start
+                self._current_session_id = session_id
                 # Pause / resume transitions.
                 if stopped and not self._was_stopped:
                     self._stop_stream()
@@ -645,7 +670,7 @@ class VisualizerWindow(tk.Toplevel):
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
         self._start_stream(song, elapsed)
 
-    def _restart_stream_at_elapsed(self, bias: float = 0.0):
+    def _restart_stream_at_elapsed(self, bias: float = 0.0, on_video_result=None):
         song = self._current_song
         if song is None or not song.audio_path:
             return
@@ -653,7 +678,7 @@ class VisualizerWindow(tk.Toplevel):
             return
         self._stop_stream()
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
-        self._start_stream(song, max(0.0, elapsed + bias))
+        self._start_stream(song, max(0.0, elapsed + bias), on_video_result=on_video_result)
 
     # ── Cinema video mode selection ──────────────────────────────────────────
 
@@ -681,7 +706,16 @@ class VisualizerWindow(tk.Toplevel):
 
     # ── ffmpeg streaming ─────────────────────────────────────────────────────
 
-    def _start_stream(self, song: "SongInfo", elapsed: float):
+    def _start_stream(self, song: "SongInfo", elapsed: float, on_video_result=None):
+        """Start a stream for ``song`` at ``elapsed``.
+
+        If a Cinema video is embedded, finding+reparenting ffplay's window
+        happens asynchronously (see ``_try_start_ffplay_video``); pass
+        ``on_video_result`` to be notified with True/False once that resolves.
+        If this call starts (or falls back to) the spectrum stream instead —
+        synchronously, within this call — ``on_video_result(False)`` (if given)
+        is invoked before returning.
+        """
         self._stop_stream()
         ffmpeg = find_ffmpeg()
         if ffmpeg is None:
@@ -704,12 +738,19 @@ class VisualizerWindow(tk.Toplevel):
         if mode == "video":
             # Cinema videos play via an embedded ffplay window (hardware-
             # accelerated, native framerate) reparented into the canvas.
-            if self._try_start_ffplay_video(song, elapsed, w, h):
+            # Finding+reparenting its window resolves asynchronously.
+            if self._try_start_ffplay_video(song, elapsed, w, h, on_result=on_video_result):
                 return
-            # ffplay couldn't be embedded — fall back to the frequency-bar
+            # ffplay couldn't even be launched — fall back to the frequency-bar
             # spectrum for this stream instead of the video.
             self._stream_mode = "spectrum"
 
+        self._start_spectrum_stream(ffmpeg, song, elapsed, w, h)
+        if on_video_result is not None:
+            on_video_result(False)
+
+    def _start_spectrum_stream(self, ffmpeg: str, song: "SongInfo", elapsed: float,
+                                w: int, h: int) -> None:
         cmd = self._build_spectrum_cmd(ffmpeg, song, elapsed, w, h)
 
         try:
@@ -775,13 +816,23 @@ class VisualizerWindow(tk.Toplevel):
 
     # ── Embedded ffplay video backend ────────────────────────────────────────
 
-    def _try_start_ffplay_video(self, song: "SongInfo", elapsed: float,
-                                 w: int, h: int) -> bool:
-        """Launch ffplay for the Cinema video and reparent it into the canvas.
+    _FFPLAY_HWND_TIMEOUT_S = 3.0
+    _FFPLAY_HWND_POLL_MS = 30
 
-        Returns True if ffplay was started and successfully embedded; False if
-        ffplay is unavailable or embedding failed (caller then falls back to the
-        pipe decode path).
+    def _try_start_ffplay_video(self, song: "SongInfo", elapsed: float,
+                                 w: int, h: int, on_result=None) -> bool:
+        """Launch ffplay for the Cinema video and start reparenting it into the canvas.
+
+        Finding ffplay's SDL window can take up to ~3s (it has no ``-wid``
+        option), so this only launches the process here and hands the wait
+        off to a poll driven by ``after()`` instead of blocking the Tk thread.
+
+        Returns True if ffplay was launched and a find/embed attempt is now in
+        flight (the eventual outcome is reported to ``on_result``, if given,
+        as True on success or False if embedding ultimately failed and the
+        stream fell back to spectrum). Returns False if ffplay/the video path
+        is unavailable or the process failed to launch — in that case nothing
+        was started and the caller should fall back to spectrum itself.
         """
         ffplay = find_ffplay()
         if ffplay is None:
@@ -820,13 +871,61 @@ class VisualizerWindow(tk.Toplevel):
 
         _assign_to_visualizer_job(proc.pid)
 
-        hwnd = _find_hwnd_for_pid(proc.pid, timeout=3.0)
+        self._video_launch_gen += 1
+        gen = self._video_launch_gen
+        self._ffplay_pending_proc = proc
+        self._ffplay_pending_callback = on_result
+        deadline = time.time() + self._FFPLAY_HWND_TIMEOUT_S
+        self._poll_for_ffplay_hwnd(proc, gen, w, h, deadline)
+        return True
+
+    def _poll_for_ffplay_hwnd(self, proc: subprocess.Popen, gen: int,
+                               w: int, h: int, deadline: float) -> None:
+        """Non-blocking replacement for the old sleep-loop hwnd search.
+
+        Each call does a single EnumWindows pass; if it comes up empty and
+        we're still within the timeout, the next attempt is scheduled via
+        ``after()`` instead of sleeping, so the Tk event loop keeps running.
+        """
+        if gen != self._video_launch_gen:
+            return  # superseded by a newer attempt, or the stream was stopped
+        hwnd = _find_hwnd_for_pid_once(proc.pid)
+        if hwnd is None and time.time() < deadline:
+            try:
+                self.after(
+                    self._FFPLAY_HWND_POLL_MS,
+                    lambda: self._poll_for_ffplay_hwnd(proc, gen, w, h, deadline),
+                )
+            except tk.TclError:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            return
+        self._finish_ffplay_embed(proc, gen, hwnd, w, h)
+
+    def _finish_ffplay_embed(self, proc: subprocess.Popen, gen: int,
+                              hwnd: "int | None", w: int, h: int) -> None:
+        if gen != self._video_launch_gen or self._ffplay_pending_proc is not proc:
+            # Superseded meanwhile (_stop_ffplay already owns cleanup for the
+            # current attempt) — just make sure this orphan doesn't linger.
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except Exception:
+                pass
+            return
+        self._ffplay_pending_proc = None
+        callback = self._ffplay_pending_callback
+        self._ffplay_pending_callback = None
+
         if hwnd is None:
             try:
                 proc.terminate()
             except Exception:
                 pass
-            return False
+            self._embed_failed_fallback(callback)
+            return
 
         try:
             parent = self._canvas.winfo_id()
@@ -836,7 +935,8 @@ class VisualizerWindow(tk.Toplevel):
                 proc.terminate()
             except Exception:
                 pass
-            return False
+            self._embed_failed_fallback(callback)
+            return
 
         self._ffplay_proc = proc
         self._ffplay_hwnd = hwnd
@@ -853,7 +953,22 @@ class VisualizerWindow(tk.Toplevel):
         # activation by ffplay) regardless of fullscreen state.
         self._grab_keyboard_focus()
         self.after(120, self._grab_keyboard_focus)
-        return True
+        if callback is not None:
+            callback(True)
+
+    def _embed_failed_fallback(self, callback) -> None:
+        """ffplay couldn't be embedded — fall back to the spectrum stream and
+        report failure to whoever was waiting on the video-embed outcome."""
+        self._stream_mode = "spectrum"
+        self._use_ffplay_video = False
+        song = self._current_song
+        ffmpeg = find_ffmpeg()
+        if song is not None and song.audio_path and ffmpeg is not None:
+            elapsed = self._browser._media_player.elapsed_seconds() or 0.0
+            w, h = self._canvas_size()
+            self._start_spectrum_stream(ffmpeg, song, elapsed, w, h)
+        if callback is not None:
+            callback(False)
 
     def _resize_ffplay_child(self):
         hwnd = self._ffplay_hwnd
@@ -869,6 +984,20 @@ class VisualizerWindow(tk.Toplevel):
             pass
 
     def _stop_ffplay(self):
+        # Invalidate any in-flight find-hwnd/embed attempt so its poll loop
+        # (and any late self.after callback) becomes a no-op, and clean up
+        # the process it was launched for (not yet tracked as _ffplay_proc).
+        self._video_launch_gen += 1
+        pending = self._ffplay_pending_proc
+        if pending is not None:
+            try:
+                if pending.poll() is None:
+                    pending.terminate()
+            except Exception:
+                pass
+        self._ffplay_pending_proc = None
+        self._ffplay_pending_callback = None
+
         proc = self._ffplay_proc
         if proc is not None:
             # Resume first if suspended, so terminate() can actually reap it.
@@ -927,11 +1056,16 @@ class VisualizerWindow(tk.Toplevel):
         if self._use_ffplay_video:
             if self._suspended:
                 return
-            self._relaunch_video_frozen()
-            if self._use_ffplay_video:
-                return
-            # The restart fell back to the spectrum stream (e.g. the video's
-            # window just ended) — fall through and freeze that instead.
+            # Relaunch+freeze resolves asynchronously (finding ffplay's window
+            # isn't instant); _freeze_spectrum_stream runs as its fallback if
+            # the relaunch can't be embedded (e.g. the video's window just
+            # ended) — same "freeze whatever ended up playing" outcome as
+            # before, just no longer decided synchronously here.
+            self._relaunch_video_frozen(on_fallback=self._freeze_spectrum_stream)
+            return
+        self._freeze_spectrum_stream()
+
+    def _freeze_spectrum_stream(self):
         proc = self._ffmpeg_proc
         if proc is None or proc.poll() is not None or self._suspended:
             return
@@ -941,7 +1075,7 @@ class VisualizerWindow(tk.Toplevel):
             self._y_scale_target = 0.0
             self._y_scale_anim_start = time.time()
 
-    def _relaunch_video_frozen(self):
+    def _relaunch_video_frozen(self, on_fallback=None):
         """Relaunch the embedded ffplay at the frozen elapsed position, then freeze it.
 
         The suspend must NOT happen synchronously right after launch: ffplay's
@@ -950,16 +1084,27 @@ class VisualizerWindow(tk.Toplevel):
         hangs the Tk thread. Instead the video is seeked slightly *behind*
         elapsed, allowed to play for _VIDEO_FREEZE_DELAY_S, and suspended once
         settled — so the frame it freezes on still lands at ~elapsed.
+
+        Finding+embedding ffplay's window is itself asynchronous, so the
+        outcome isn't known when this call returns. On success the deferred
+        suspend is scheduled here automatically; if it instead falls back to
+        the spectrum stream, ``on_fallback`` (if given) is called so the
+        caller can freeze that instead.
         """
-        self._restart_stream_at_elapsed(bias=-self._VIDEO_FREEZE_DELAY_S)
-        if not self._use_ffplay_video:
-            return
-        proc = self._ffplay_proc
-        if proc is None:
-            return
-        self.after(
-            int(self._VIDEO_FREEZE_DELAY_S * 1000),
-            lambda p=proc: self._deferred_video_suspend(p),
+        def after_launch(success: bool):
+            if success:
+                proc = self._ffplay_proc
+                if proc is None:
+                    return
+                self.after(
+                    int(self._VIDEO_FREEZE_DELAY_S * 1000),
+                    lambda p=proc: self._deferred_video_suspend(p),
+                )
+            elif on_fallback is not None:
+                on_fallback()
+
+        self._restart_stream_at_elapsed(
+            bias=-self._VIDEO_FREEZE_DELAY_S, on_video_result=after_launch,
         )
 
     def _deferred_video_suspend(self, proc: subprocess.Popen):
@@ -1225,11 +1370,15 @@ class VisualizerWindow(tk.Toplevel):
         elapsed = mp.elapsed_seconds() or 0.0
         if self._desired_mode(self._current_song, elapsed) == "video":
             # Deferred freeze — suspending synchronously right after launch
-            # deadlocks against the pending focus grab.
-            self._relaunch_video_frozen()
-            if self._use_ffplay_video:
-                return
-            # Fell back to the spectrum stream — freeze that instead.
+            # deadlocks against the pending focus grab. Finding/embedding
+            # ffplay's window is itself async now, so the "fell back to
+            # spectrum, freeze that instead" case is handled via on_fallback
+            # rather than checking the result synchronously here.
+            self._relaunch_video_frozen(on_fallback=self._freeze_after_resize_spectrum)
+            return
+        self._freeze_after_resize_spectrum()
+
+    def _freeze_after_resize_spectrum(self):
         self._restart_stream_at_elapsed()
         proc = self._ffmpeg_proc
         if proc is not None and proc.poll() is None:
@@ -1317,7 +1466,7 @@ class VisualizerWindow(tk.Toplevel):
         song = mp.playing_song
         self._current_song = song
         self._current_song_id = id(song) if song is not None else None
-        self._current_play_start = mp._play_start if song is not None else None
+        self._current_session_id = mp.session_id if song is not None else None
         self._was_paused = bool(mp._audio_paused)
         self._was_stopped = bool(mp._stopped)
         if song is None:
