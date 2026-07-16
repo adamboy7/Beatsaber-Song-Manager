@@ -46,7 +46,7 @@ class SongInfo:
         "diff_labels", "difficulties", "song_hash", "custom_tags",
         "mod_required", "mod_suggested", "has_cinema_video",
         "cinema_video_path", "cinema_video_offset_ms", "cinema_video_duration_s",
-        "cinema_video_id", "cinema_video_file",
+        "cinema_video_id", "cinema_video_file", "search_blob",
     )
 
     def __init__(self, folder: Path):
@@ -76,6 +76,7 @@ class SongInfo:
         # (explicit videoFile, or derived from the title like Cinema does).
         self.cinema_video_id: str = ""
         self.cinema_video_file: str = ""
+        self.search_blob: str = ""
         # Use st_birthtime (Windows/macOS) with st_ctime as fallback.
         # A racy filesystem (folder deleted mid-scan, permission denied)
         # shouldn't take down the whole load_songs() call.
@@ -208,6 +209,16 @@ class SongInfo:
                 self.display_name += f" {self.sub_name}"
         else:
             self.display_name = self.folder.name
+
+        self.update_search_blob()
+
+    def update_search_blob(self) -> None:
+        """Recompute the cached lowercased search text; call after editing
+        display_name/author/mapper/song_id outside of _parse()."""
+        self.search_blob = "\n".join((
+            self.display_name.lower(), self.author.lower(),
+            self.mapper.lower(), self.song_id.lower(),
+        ))
 
     def _parse_cinema_video(self) -> None:
         """Read cinema-video.json for the video filename / offset / duration.

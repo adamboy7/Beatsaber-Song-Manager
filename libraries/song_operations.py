@@ -181,6 +181,7 @@ def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> 
             song.display_name += f" {song.sub_name}"
     else:
         song.display_name = song.folder.name
+    song.update_search_blob()
     return None
 
 

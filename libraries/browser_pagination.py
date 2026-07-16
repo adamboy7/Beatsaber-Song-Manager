@@ -171,12 +171,7 @@ def filter_songs(
     return [
         s for s in songs
         if (
-            (not plain_lower or (
-                plain_lower in s.display_name.lower()
-                or plain_lower in s.author.lower()
-                or plain_lower in s.mapper.lower()
-                or plain_lower in s.song_id.lower()
-            ))
+            (not plain_lower or plain_lower in s.search_blob)
             and (not tags or _song_matches_tags(s, tags, player_stats, favorite_ids))
         )
     ]
