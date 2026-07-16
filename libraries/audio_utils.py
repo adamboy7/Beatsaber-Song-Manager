@@ -1,3 +1,4 @@
+import functools
 import json
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ def _local_dir() -> Path:
     return Path(__file__).parent.parent
 
 
+@functools.lru_cache(maxsize=1)
 def find_ffmpeg() -> str | None:
     """Return path to ffmpeg: checks script directory first, then PATH."""
     local = _local_dir() / "ffmpeg.exe"
@@ -20,6 +22,7 @@ def find_ffmpeg() -> str | None:
     return shutil.which("ffmpeg")
 
 
+@functools.lru_cache(maxsize=1)
 def find_ffplay() -> str | None:
     """Return path to ffplay: checks script directory first, then PATH."""
     local = _local_dir() / "ffplay.exe"
@@ -28,6 +31,7 @@ def find_ffplay() -> str | None:
     return shutil.which("ffplay")
 
 
+@functools.lru_cache(maxsize=1)
 def find_ffprobe() -> str | None:
     """Return path to ffprobe: checks script directory first, then PATH."""
     local = _local_dir() / "ffprobe.exe"
