@@ -69,6 +69,7 @@ class SongBrowser(
         self._thumbnails: OrderedDict[str, ImageTk.PhotoImage] = OrderedDict()   # LRU cache, keyed by folder path; keeps refs alive
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
+        self._render_gen: int = 0   # bumped on each _render_list; guards stale async thumbnail swap-ins
         self._pending_install_id: str | None = None
         self._pending_playlist_url: str | None = None
         self._pending_playlist_temp_path: Path | None = None

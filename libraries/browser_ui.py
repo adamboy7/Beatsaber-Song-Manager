@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import threading
 import webbrowser
 import tkinter as tk
 from pathlib import Path
@@ -430,23 +431,65 @@ class BrowserUIMixin:
             self._placeholder = ImageTk.PhotoImage(img)
         return self._placeholder
 
-    def _load_thumbnail(self, song: SongInfo) -> ImageTk.PhotoImage:
+    def _cached_thumbnail(self, song: SongInfo) -> ImageTk.PhotoImage | None:
+        """Return the cached PhotoImage for song, or None on a cache miss."""
         key = str(song.folder)
         if key in self._thumbnails:
             self._thumbnails.move_to_end(key)
             return self._thumbnails[key]
-        try:
-            if song.cover_path:
+        return None
+
+    def _store_thumbnail(self, key: str, photo: ImageTk.PhotoImage):
+        self._thumbnails[key] = photo
+        if len(self._thumbnails) > THUMBNAIL_CACHE_LIMIT:
+            self._thumbnails.popitem(last=False)
+
+    def _load_thumbnail(self, song: SongInfo, thumb_lbl: tk.Label | None = None) -> ImageTk.PhotoImage:
+        """Return a thumbnail for song, decoding synchronously if no widget is
+        given to swap into later, or a placeholder plus a background decode
+        (swapped into ``thumb_lbl`` when ready) otherwise."""
+        cached = self._cached_thumbnail(song)
+        if cached is not None:
+            return cached
+        if not song.cover_path:
+            return self._make_placeholder()
+        if thumb_lbl is None:
+            try:
                 img = Image.open(song.cover_path).convert("RGB")
                 img = img.resize(THUMBNAIL_SIZE, Image.LANCZOS)
                 photo = ImageTk.PhotoImage(img)
-                self._thumbnails[key] = photo
-                if len(self._thumbnails) > THUMBNAIL_CACHE_LIMIT:
-                    self._thumbnails.popitem(last=False)
+                self._store_thumbnail(str(song.folder), photo)
                 return photo
-        except Exception:
-            pass
+            except Exception:
+                return self._make_placeholder()
+        self._load_thumbnail_async(song, thumb_lbl)
         return self._make_placeholder()
+
+    def _load_thumbnail_async(self, song: SongInfo, thumb_lbl: tk.Label):
+        key = str(song.folder)
+        cover_path = song.cover_path
+        gen = self._render_gen
+
+        def worker():
+            try:
+                img = Image.open(cover_path).convert("RGB")
+                img = img.resize(THUMBNAIL_SIZE, Image.LANCZOS)
+            except Exception:
+                return
+            try:
+                self.after(0, lambda: self._on_thumbnail_decoded(gen, key, img, thumb_lbl))
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_thumbnail_decoded(self, gen: int, key: str, img: Image.Image, thumb_lbl: tk.Label):
+        if gen != self._render_gen or not thumb_lbl.winfo_exists():
+            return  # page/list re-rendered since this decode started; drop it
+        photo = ImageTk.PhotoImage(img)
+        self._store_thumbnail(key, photo)
+        thumb_lbl.configure(image=photo)
+        thumb_lbl.image = photo   # keep ref
 
     def _render_list(self):
         # Re-apply the canvas window width in case it hasn't been set yet or
@@ -459,6 +502,7 @@ class BrowserUIMixin:
         if cw > 1:
             self.canvas.itemconfig(self.canvas_window, width=cw)
 
+        self._render_gen += 1
         self._hide_mod_tooltip()
         for w in self.list_frame.winfo_children():
             w.destroy()
@@ -525,9 +569,11 @@ class BrowserUIMixin:
         row.pack(fill="x", pady=1)
         self._row_frames.append(row)
 
-        # Thumbnail (loaded lazily)
-        thumb_img = self._load_thumbnail(song)
-        thumb_lbl = tk.Label(row, image=thumb_img, bg=ITEM_BG, cursor="hand2")
+        # Thumbnail: cache hit shows immediately; a miss shows the placeholder
+        # and decodes off-thread, swapping the real image in when ready.
+        thumb_lbl = tk.Label(row, bg=ITEM_BG, cursor="hand2")
+        thumb_img = self._load_thumbnail(song, thumb_lbl)
+        thumb_lbl.configure(image=thumb_img)
         thumb_lbl.image = thumb_img   # keep ref
         thumb_lbl.pack(side="left", padx=8, pady=6)
 
