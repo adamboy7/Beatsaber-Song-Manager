@@ -50,7 +50,7 @@ The Shift modifier explicitly signals elevated intent, which is why the edit men
 | High consequence, recoverable | Backup created automatically; no friction added to the action itself |
 | Lower consequence | No friction |
 
-The SHA1 warning on song info editing is the one case where the app actively tells you *why* something is risky, not just that it is. The mechanism matters: editing breaks BeatSaver lookup, Mod Assistant install links, and playlist hash matching. Personal edits are fine; distribution breaks.
+The SHA1 warning on song info editing is the one case where the app actively tells you *why* something is risky, not just that it is. The mechanism matters: editing breaks BeatSaver lookup and playlist hash matching. Personal edits are fine; distribution breaks.
 
 ---
 
@@ -99,11 +99,7 @@ Cut state is communicated with a dark-red tint on affected rows, consistent with
 
 ## Progressive Enhancement
 
-The app is functional without Mod Assistant — browsing, playback, asset editing, and playlist management all work independently. Mod Assistant adds one-click install from BeatSaver. The app detects whether the protocol is registered and surfaces the install button only when available. Folder shortcuts also appear once Mod Assistant is configured.
-
-Users see capability grow as they set things up rather than encountering broken features.
-
-Similarly, the app works without Beat Saber installed at all. If the Steam path isn't found and there's no score file, it will ask for a CustomLevels folder path directly. Even a folder of Beat Saber maps with no game present is enough to use it as a music player and playlist builder.
+The app works without Beat Saber installed at all. If the Steam path isn't found and there's no score file, it will ask for a CustomLevels folder path directly. Even a folder of Beat Saber maps with no game present is enough to use it as a music player, playlist builder, and to install songs — maps download straight from BeatSaver into whatever CustomLevels folder the app is pointed at.
 
 ---
 
@@ -113,7 +109,6 @@ The app consistently guides users toward external tools rather than trying to re
 
 - "Open in file explorer" shortcuts for direct file system access
 - ctrl+click a song title or art to view the song on BeatSaver
-- Mod Assistant handles installs; the app surfaces the interface to it rather than reimplementing the install flow
 - Command line features expose the playlist manipulation logic for users who want scripted or automated workflows
 
 This keeps scope tight and lets the app focus on what it does well — browsing, playback, and playlist management — while making it easy to reach the right tool for everything else.

@@ -438,7 +438,7 @@ class BrowserPaginationMixin:
                 self.filtered = []
                 self._pending_install_id = song_id
                 self.status_bar.config(
-                    text=f"Song {song_id} not installed — press Enter or click to install via Mod Assistant."
+                    text=f"Song {song_id} not installed — press Enter or click to install from BeatSaver."
                 )
             self.selected_indices = {
                 i for i, s in enumerate(self.filtered)
@@ -460,7 +460,7 @@ class BrowserPaginationMixin:
             self.page = 0
             self._render_list()
             self.status_bar.config(
-                text="Playlist URL detected — press Enter or click to install via Mod Assistant."
+                text="Playlist URL detected — press Enter or click to install from BeatSaver."
             )
             self._update_search_icon_color()
             return
@@ -573,7 +573,7 @@ class BrowserPaginationMixin:
 
         sub_lbl = tk.Label(
             text_frame,
-            text="Opens one-click install via Mod Assistant  •  or press Enter",
+            text="Downloads the song from BeatSaver  •  or press Enter",
             font=("Segoe UI", 9),
             bg=HOVER_BG, fg=SUBTEXT_COLOR,
             anchor="w",

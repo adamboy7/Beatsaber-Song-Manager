@@ -6,7 +6,7 @@ Includes:
   • View-filter toggles and the favorites predicate.
   • Saving the current selection as a .bplist ("share playlist").
   • Drag-and-drop / File→Open handling for .bplist files,
-    including auto-installing missing songs via Mod Assistant.
+    including auto-installing missing songs directly from BeatSaver.
   • Opening and refreshing the QueueWindow / PlaylistArtWindow
     sub-windows.
 """
@@ -447,7 +447,7 @@ class BrowserPlaylistsMixin:
         if uninstallable_count:
             msg += f"({uninstallable_count} cannot be auto-installed — no BeatSaver key.)\n\n"
         msg += (
-            f"Install {len(installable)} song(s) via Mod Assistant and queue all "
+            f"Download {len(installable)} song(s) from BeatSaver and queue all "
             f"songs when done?\n\nSelecting 'No' will queue only the "
             f"{len(found)} already-installed song(s)."
         )
@@ -459,18 +459,16 @@ class BrowserPlaylistsMixin:
 
         self._pending_playlist_entries = list(entries)
 
-        # Preferred path: hand the whole playlist to Mod Assistant in one
-        # shot via bsplaylist://. Mod Assistant downloads every missing
-        # song in a single window. Falls back to the per-song beatsaver://
-        # loop if the protocol isn't registered.
-        if PlaylistInstaller.has_handler():
-            expected_keys = [
-                (e.get("key") or e.get("id") or "") for e in installable
-            ]
-            launched = self._playlist_installer.install(Path(path), expected_keys)
-            if launched:
-                self._pending_playlist_queue = []
-                return
+        # Hand the whole playlist to the installer, which downloads every
+        # missing song directly from BeatSaver. Falls back to the per-song
+        # loop only if the installer declines to launch.
+        expected_keys = [
+            (e.get("key") or e.get("id") or "") for e in installable
+        ]
+        launched = self._playlist_installer.install(Path(path), expected_keys)
+        if launched:
+            self._pending_playlist_queue = []
+            return
 
         self._pending_playlist_queue = installable[:]
         self._install_next_playlist_song()
@@ -539,7 +537,7 @@ class BrowserPlaylistsMixin:
                 return
 
     def _install_playlist_from_url(self, url: str) -> None:
-        """Download a remote .bplist and install via Mod Assistant."""
+        """Download a remote .bplist and install its songs from BeatSaver."""
         # If a previous URL install is still in flight, clean up its temp file
         # before we overwrite the slot — otherwise the prior path gets orphaned
         # and is never unlinked.
@@ -579,7 +577,7 @@ class BrowserPlaylistsMixin:
         threading.Thread(target=_download, daemon=True).start()
 
     def _on_playlist_url_downloaded(self, tmp_path: Path) -> None:
-        """Parse the downloaded .bplist and hand it to Mod Assistant."""
+        """Parse the downloaded .bplist and download its songs from BeatSaver."""
         try:
             with open(tmp_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -602,22 +600,14 @@ class BrowserPlaylistsMixin:
                 pass
         self._pending_playlist_temp_path = tmp_path
 
-        if not PlaylistInstaller.has_handler():
-            self.status_bar.config(
-                text="bsplaylist:// handler not found — install Mod Assistant."
-            )
-            tmp_path.unlink(missing_ok=True)
-            self._pending_playlist_temp_path = None
-            return
-
         launched = self._playlist_installer.install(tmp_path, expected_keys)
         if not launched:
             tmp_path.unlink(missing_ok=True)
             self._pending_playlist_temp_path = None
 
     def _on_playlist_install_complete(self, success: bool) -> None:
-        """Called by PlaylistInstaller once Mod Assistant has finished
-        (or timed out / been cancelled). Reload songs and queue everything
+        """Called by PlaylistInstaller once the BeatSaver downloads have
+        finished (or been cancelled). Reload songs and queue everything
         the playlist references."""
         if not success:
             self.status_bar.config(
@@ -637,17 +627,18 @@ class BrowserPlaylistsMixin:
         self._on_install_complete_reload()
 
     def _check_pending_playlist(self) -> None:
-        # bsplaylist vs. per-song fallback contract:
-        #   * bsplaylist path: `_load_playlist_from_path` initializes
-        #     `_pending_playlist_queue = []` *after* launching Mod Assistant.
-        #     The empty queue is load-bearing — it makes us fall through to the
-        #     "everything is installed, queue the songs" branch below.
+        # Whole-playlist vs. per-song fallback contract:
+        #   * whole-playlist path: `_load_playlist_from_path` initializes
+        #     `_pending_playlist_queue = []` *after* launching the batch
+        #     installer. The empty queue is load-bearing — it makes us fall
+        #     through to the "everything is installed, queue the songs" branch
+        #     below.
         #   * per-song fallback: `_pending_playlist_queue` is populated with
         #     `installable[:]` and drained one entry at a time by
         #     `_install_next_playlist_song()`.
         # If a future change forgets to reset `_pending_playlist_queue` between
         # playlists, the next install would resume from a stale list — keep the
-        # reset at the bsplaylist branch.
+        # reset at the whole-playlist branch.
         if self._pending_playlist_entries is None:
             return
         hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}

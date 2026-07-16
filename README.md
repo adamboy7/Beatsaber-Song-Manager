@@ -21,9 +21,9 @@ On launch, the app locates your library automatically:
 
 The app works even without Beat Saber installed. Point it at any folder of Beat Saber maps and it functions as a standalone music player and playlist manager.
 
-### Mod Assistant (Optional)
+### Installing Songs
 
-Mod Assistant is the backbone for one-click song installation from BeatSaver. If you don't have it, the app can help you download and configure it. Once set up, the install button changes to quick navigation. Everything else works without it.
+Songs and playlists download directly from BeatSaver — no additional tools or setup required. As long as the app can find (or you point it at) a `CustomLevels` folder, you can install and curate maps even without Beat Saber installed.
 
 ---
 
@@ -113,7 +113,7 @@ Shift+right-click unlocks asset editing. All operations that modify a file creat
 
 - **Replace Art** — file picker for common image formats. Resized to match original dimensions. Reflects immediately in the UI.
 - **Replace Audio** — file picker for common audio formats including Beat Saber's native `.ogg`/`.egg`. Non-OGG files are converted automatically.
-- **Edit Info** — shown in red with a warning. Editing metadata changes the song's SHA1 hash, which breaks its identity on BeatSaver and in Mod Assistant (install links, playlist matching). Fine for personal use; avoid if you plan to share the map.
+- **Edit Info** — shown in red with a warning. Editing metadata changes the song's SHA1 hash, which breaks its identity on BeatSaver (install links, playlist matching). Fine for personal use; avoid if you plan to share the map.
 - **Custom Tags…** — add or remove personal tags on a song (or a multi-selection). Tags are searchable via `{custom}:tagname`.
 - **Clear Score** — removes score data for this song only. All other high scores are preserved.
 - **Restore from Backup** — reverts to the backup created at first edit.
@@ -180,16 +180,14 @@ The search bar doubles as an install target. Paste any of the following and an i
 - A BeatSaver map URL — `https://beatsaver.com/maps/ID`
 - A one-click link — `beatsaver://ID`
 
-The song is handed to Mod Assistant, and the library reloads automatically when the download finishes.
+The song downloads directly from BeatSaver, and the library reloads automatically when it finishes.
 
 **Playlists**
 
 - A direct `.bplist` URL — `https://example.com/playlist.bplist`
 - A one-click playlist link — `bsplaylist://playlist/https://…`
 
-The file is downloaded, then handed to Mod Assistant in a single pass. Mod Assistant downloads every missing song at once. The library reloads when it's done.
-
-If Mod Assistant isn't configured, the app will offer to help you set it up.
+The playlist file is downloaded, then every missing song is fetched from BeatSaver one after another, with live progress. The library reloads when it's done.
 
 ### Keyboard Shortcuts — Main Window
 
@@ -252,7 +250,7 @@ If the currently playing song is marked for cut and you paste, playback stops an
 
 Saved playlists are useful in three ways:
 - Reimport them into the app as a saved session
-- Open with Mod Assistant to install any songs that aren't downloaded yet
+- Reopen in the app to install any songs that aren't downloaded yet
 - Drop into Beat Saber's playlist folder to use in-game
 
 ### Drag and Drop
@@ -336,7 +334,7 @@ python Browser.py [playlist] [--install] [--shuffle] [--randomAdd N [filter...]]
 | Argument | Description |
 |---|---|
 | `playlist` | Path to a `.bplist` or `.json` playlist file. May not exist yet when combined with `--randomAdd` (the file is created). |
-| `--install` | **Headless.** Hand the playlist to Mod Assistant via `bsplaylist://`, wait for all missing songs to download, then exit. Requires an existing `playlist` file and the `bsplaylist://` protocol handler (Mod Assistant with playlist one-click installs enabled). Takes precedence over `--shuffle` and `--randomAdd`, both of which are ignored. Exit code 0 on success, 1 on failure. |
+| `--install` | **Headless.** Download every missing song in the playlist directly from BeatSaver, then exit. Requires an existing `playlist` file and a resolvable `CustomLevels` folder. Takes precedence over `--shuffle` and `--randomAdd`, both of which are ignored. Exit code 0 on success, 1 on failure. |
 | `--shuffle` | Shuffle song order. **Headless** when combined with a `playlist` arg: shuffles the playlist's songs (after any `--randomAdd` picks are appended) and writes the playlist back to disk. **GUI** when used with `--randomAdd` alone (no `playlist` arg): shuffles the startup queue. Requires either a `playlist` file or `--randomAdd`. |
 | `--randomAdd N [filter...]` | Add N random songs from your library, optionally narrowed by search tags. **Headless** when combined with a `playlist` arg: appends picks to an existing playlist or writes a new playlist, then exits. **GUI** without a `playlist` arg: the picks become the startup queue (nothing is written to disk). Can be used multiple times to build composite picks. |
 
@@ -362,7 +360,7 @@ Each `--randomAdd` group fills its slots in order — no repeats until a pool is
 ```
 python Browser.py playlist.bplist --install
 ```
-Install every missing song in `playlist.bplist` via Mod Assistant and exit.
+Download every missing song in `playlist.bplist` directly from BeatSaver and exit.
 
 ```
 python Browser.py --randomAdd 10 "{mapper}:Fefy"

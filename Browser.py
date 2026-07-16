@@ -207,9 +207,9 @@ def main():
             "\n"
             "Headless examples (exit without launching the GUI):\n"
             "  Browser.py playlist.bplist --install\n"
-            "      Install every missing song in playlist.bplist via Mod Assistant\n"
-            "      and exit.  Requires Mod Assistant with playlist one-click installs\n"
-            "      enabled (bsplaylist:// protocol handler).\n"
+            "      Download every missing song in playlist.bplist directly from\n"
+            "      BeatSaver and exit.  Requires only a resolvable CustomLevels\n"
+            "      folder.\n"
             "\n"
             "  Browser.py playlist.bplist --shuffle\n"
             "      Shuffle the playlist in-place and exit.\n"
@@ -236,11 +236,10 @@ def main():
         "--install",
         action="store_true",
         help=(
-            "Headless: hand PLAYLIST to Mod Assistant via bsplaylist://, wait for "
-            "all missing songs to download, then exit.  Takes precedence over "
-            "--shuffle and --randomAdd (both are ignored when --install is set). "
-            "Exit code 0 on success, 1 on failure or if the bsplaylist:// handler "
-            "is not registered."
+            "Headless: download every missing song in PLAYLIST directly from "
+            "BeatSaver, then exit.  Takes precedence over --shuffle and "
+            "--randomAdd (both are ignored when --install is set). "
+            "Exit code 0 on success, 1 on failure."
         ),
     )
     parser.add_argument(
@@ -321,12 +320,6 @@ def main():
     if args.install:
         if playlist_path is None:
             print("--install requires a valid .bplist or .json playlist file.")
-            sys.exit(1)
-        if not PlaylistInstaller.has_handler():
-            print(
-                "bsplaylist:// handler not found — install Mod Assistant and "
-                "enable playlist one-click installs, then retry."
-            )
             sys.exit(1)
         custom_levels = find_beatsaber_custom_levels()
         if custom_levels is None:

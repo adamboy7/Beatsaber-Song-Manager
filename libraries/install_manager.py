@@ -1,8 +1,15 @@
-import json
-import time
+"""Install a single Beat Saber map by downloading it directly from BeatSaver.
+
+The download runs in a background thread and extracts into ``CustomLevels``,
+so completion is known exactly.
+"""
+
+from __future__ import annotations
+
 import threading
-import webbrowser
 from pathlib import Path
+
+from libraries import beatsaver_api as bs
 
 
 class InstallManager:
@@ -16,6 +23,11 @@ class InstallManager:
     def cancel(self) -> None:
         self._gen += 1
 
+    @staticmethod
+    def has_handler() -> bool:
+        """Installs are always available (no external prerequisites)."""
+        return True
+
     def _dispatch(self, callback) -> None:
         """Schedule callback on the host's event loop, swallowing errors from a
         torn-down UI (e.g. tk.TclError after the window closed mid-install)."""
@@ -25,116 +37,34 @@ class InstallManager:
             pass
 
     def trigger(self, song_id: str) -> None:
-        if not self.has_handler():
-            self._status_cb(
-                "No handler for beatsaver:// — install Mod Assistant and enable one-click installs."
-            )
+        song_id = (song_id or "").strip().lower()
+        if not song_id:
             return
-        webbrowser.open(f"beatsaver://{song_id}")
-        self._watch(song_id)
-
-    @staticmethod
-    def has_handler() -> bool:
-        try:
-            import winreg
-            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "beatsaver")
-            winreg.CloseKey(key)
-            return True
-        except (FileNotFoundError, OSError):
-            return False
-
-    def _watch(self, song_id: str) -> None:
-        # Lowercase once at the top — BeatSaver keys round-trip as lowercase hex
-        # in folder names. The folder-name comparison below was already
-        # lowercased, but song_id was not, so an uppercase caller would miss.
-        song_id = song_id.lower()
         self._gen += 1
         gen = self._gen
-        self._pulse(song_id, gen, 0)
+        self._status_cb(f"Downloading {song_id}…")
+        threading.Thread(
+            target=self._worker, args=(song_id, gen), daemon=True
+        ).start()
 
-        def worker():
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
-                if gen != self._gen:
-                    return
-                try:
-                    for entry in self.custom_levels.iterdir():
-                        if not entry.is_dir():
-                            continue
-                        name = entry.name.lower()
-                        if name.startswith(song_id + " ") or name == song_id:
-                            if self._is_complete(entry):
-                                if gen == self._gen:
-                                    self._dispatch(lambda: self._on_complete(gen))
-                                return
-                except Exception:
-                    pass
-                time.sleep(1)
-            if gen == self._gen:
-                self._dispatch(lambda: self._on_timeout(song_id, gen))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _pulse(self, song_id: str, gen: int, elapsed: int) -> None:
-        if gen != self._gen:
-            return
-        dots = "." * (elapsed % 4)
-        self._status_cb(f"Waiting for {song_id} to install{dots}  ({elapsed}s)")
-        if elapsed < 30:
-            self._after(1000, lambda: self._pulse(song_id, gen, elapsed + 1))
-
-    @staticmethod
-    def _is_complete(folder: Path) -> bool:
-        info_file = None
-        for name in ("Info.dat", "info.dat"):
-            candidate = folder / name
-            if candidate.exists():
-                info_file = candidate
-                break
-        if not info_file:
-            return False
+    def _worker(self, song_id: str, gen: int) -> None:
         try:
-            data = json.loads(info_file.read_text(encoding="utf-8", errors="replace"))
-            is_v4 = data.get("version", "").startswith("4")
-            if is_v4:
-                audio_obj = data.get("audio", {})
-                audio = audio_obj.get("songFilename", "")
-                cover = data.get("coverImageFilename", "")
-                if audio and not (folder / audio).exists():
-                    return False
-                if cover and not (folder / cover).exists():
-                    return False
-                for bm in data.get("difficultyBeatmaps", []):
-                    diff_file = bm.get("beatmapDataFilename", "")
-                    if diff_file and not (folder / diff_file).exists():
-                        return False
-            else:
-                audio = data.get("_songFilename", "")
-                cover = data.get("_coverImageFilename", "")
-                if audio and not (folder / audio).exists():
-                    return False
-                if cover and not (folder / cover).exists():
-                    return False
-                for bms in data.get("_difficultyBeatmapSets", []):
-                    for bm in bms.get("_difficultyBeatmaps", []):
-                        diff_file = bm.get("_beatmapFilename", "")
-                        if diff_file and not (folder / diff_file).exists():
-                            return False
-            return True
-        except Exception:
-            return False
+            bs.install_song(song_id, self.custom_levels)
+        except Exception as e:  # noqa: BLE001 - report any failure to the UI
+            if gen == self._gen:
+                self._dispatch(lambda: self._on_error(song_id, e))
+            return
+        if gen == self._gen:
+            self._dispatch(lambda: self._on_complete(song_id, gen))
 
-    def _on_complete(self, gen: int) -> None:
+    def _on_complete(self, song_id: str, gen: int) -> None:
         if gen != self._gen:
             return
         self._gen += 1
+        self._status_cb(f"Installed {song_id}.")
         self._reload_cb()
 
-    def _on_timeout(self, song_id: str, gen: int) -> None:
-        if gen != self._gen:
-            return
+    def _on_error(self, song_id: str, err: Exception) -> None:
         self._gen += 1
-        self._status_cb(
-            f"No install detected for {song_id} — check that Mod Assistant is running and one-click installs are enabled."
-        )
+        self._status_cb(f"Could not install {song_id}: {err}")
         self._reload_cb()
