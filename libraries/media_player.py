@@ -56,6 +56,24 @@ def _create_kill_on_close_job():
         return None
 
 
+def assign_process_to_job(job, pid: int) -> None:
+    """Assign ``pid`` to a kill-on-close Job so it dies with this process.
+
+    Best-effort: silently a no-op if ``job`` is None or assignment fails.
+    """
+    if not job:
+        return
+    try:
+        kernel32 = ctypes.WinDLL("kernel32")
+        # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+        h = kernel32.OpenProcess(0x0101, False, pid)
+        if h:
+            kernel32.AssignProcessToJobObject(job, h)
+            kernel32.CloseHandle(h)
+    except Exception:
+        pass
+
+
 class MediaPlayer:
     def __init__(self):
         self._audio_proc: subprocess.Popen | None = None
@@ -220,15 +238,7 @@ class MediaPlayer:
                 stderr=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            if self._job:
-                try:
-                    kernel32 = ctypes.WinDLL("kernel32")
-                    h = kernel32.OpenProcess(0x0101, False, self._audio_proc.pid)
-                    if h:
-                        kernel32.AssignProcessToJobObject(self._job, h)
-                        kernel32.CloseHandle(h)
-                except Exception:
-                    pass
+            assign_process_to_job(self._job, self._audio_proc.pid)
             self.playing_song = song
             self._play_start = time.time() - seek
             self._pause_start = None

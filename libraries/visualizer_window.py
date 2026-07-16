@@ -30,6 +30,7 @@ from PIL import Image, ImageEnhance, ImageTk
 
 from libraries.audio_utils import find_ffmpeg, find_ffplay
 from libraries.constants import ACCENT_COLOR, SUBTEXT_COLOR
+from libraries.media_player import _create_kill_on_close_job, assign_process_to_job
 
 if TYPE_CHECKING:
     from Browser import SongBrowser
@@ -62,6 +63,18 @@ _LONG_PTR = ctypes.c_ssize_t
 
 def _user32():
     return ctypes.WinDLL("user32", use_last_error=True)
+
+
+_visualizer_job = None
+_visualizer_job_tried = False
+
+
+def _assign_to_visualizer_job(pid: int) -> None:
+    global _visualizer_job, _visualizer_job_tried
+    if not _visualizer_job_tried:
+        _visualizer_job_tried = True
+        _visualizer_job = _create_kill_on_close_job()
+    assign_process_to_job(_visualizer_job, pid)
 
 
 def _find_hwnd_for_pid(pid: int, timeout: float = 3.0) -> int | None:
@@ -246,7 +259,8 @@ class VisualizerWindow(tk.Toplevel):
         self._ffmpeg_proc: subprocess.Popen | None = None
         self._reader_stop = threading.Event()
         self._frame_lock = threading.Lock()
-        self._latest_frame: bytes | None = None
+        self._stream_gen: int = 0
+        self._latest_frame: tuple[int, bytes] | None = None
         self._stream_w = 0
         self._stream_h = 0
         # "spectrum" (default showfreqs bars) or "video" (Cinema mod video).
@@ -711,12 +725,16 @@ class VisualizerWindow(tk.Toplevel):
             self._set_status(f"ffmpeg failed to start: {exc}")
             return
 
+        _assign_to_visualizer_job(self._ffmpeg_proc.pid)
+
         self._set_status("")
         self._suspended = False
-        self._reader_stop.clear()
+        self._stream_gen += 1
+        stop_event = threading.Event()  # fresh per stream — see __init__ note
+        self._reader_stop = stop_event
         thread = threading.Thread(
             target=self._reader_loop,
-            args=(self._ffmpeg_proc, w, h, self._reader_stop),
+            args=(self._ffmpeg_proc, w, h, stop_event, self._stream_gen),
             daemon=True,
         )
         thread.start()
@@ -800,6 +818,8 @@ class VisualizerWindow(tk.Toplevel):
         except Exception:
             return False
 
+        _assign_to_visualizer_job(proc.pid)
+
         hwnd = _find_hwnd_for_pid(proc.pid, timeout=3.0)
         if hwnd is None:
             try:
@@ -873,7 +893,7 @@ class VisualizerWindow(tk.Toplevel):
         self._use_ffplay_video = False
 
     def _reader_loop(self, proc: subprocess.Popen, w: int, h: int,
-                     stop_event: threading.Event):
+                     stop_event: threading.Event, gen: int):
         """Read complete RGB frames from ffmpeg's stdout into the latest-frame slot."""
         frame_size = w * h * _FRAME_BYTES_PER_PX
         buf = bytearray()
@@ -898,7 +918,8 @@ class VisualizerWindow(tk.Toplevel):
                 # Discard everything up through the consumed frames.
                 del buf[:whole]
                 with self._frame_lock:
-                    self._latest_frame = frame
+                    if not stop_event.is_set():
+                        self._latest_frame = (gen, frame)
 
     _VIDEO_FREEZE_DELAY_S = 0.35
 
@@ -1020,8 +1041,14 @@ class VisualizerWindow(tk.Toplevel):
             # paint on the Tk canvas.
             return
         with self._frame_lock:
-            data = self._latest_frame
+            entry = self._latest_frame
             self._latest_frame = None
+
+        data: bytes | None = None
+        if entry is not None:
+            gen, frame_bytes = entry
+            if gen == self._stream_gen:
+                data = frame_bytes
 
         animating = self._y_scale_anim_start is not None
 
@@ -1290,6 +1317,9 @@ class VisualizerWindow(tk.Toplevel):
         song = mp.playing_song
         self._current_song = song
         self._current_song_id = id(song) if song is not None else None
+        self._current_play_start = mp._play_start if song is not None else None
+        self._was_paused = bool(mp._audio_paused)
+        self._was_stopped = bool(mp._stopped)
         if song is None:
             self._name_label.config(text="")
             self._set_status("No song playing.")
