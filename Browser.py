@@ -146,7 +146,7 @@ class SongBrowser(
     def _on_close(self):
         self._hide_mod_tooltip()
         self._stop_idle_animation()
-        for _attr in ("_player_tick_id", "_idle_anim_id", "_volume_apply_id"):
+        for _attr in ("_player_tick_id", "_idle_anim_id", "_volume_apply_id", "_search_after_id"):
             _handle = getattr(self, _attr, None)
             if _handle is not None:
                 try:

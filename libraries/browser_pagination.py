@@ -420,6 +420,12 @@ class BrowserPaginationMixin:
         return m.group(1) if m else None
 
     def _on_search(self, *_):
+        pending = getattr(self, "_search_after_id", None)
+        if pending:
+            self.after_cancel(pending)
+        self._search_after_id = self.after(350, self._do_search)
+
+    def _do_search(self, *_):
         query = self.search_var.get().strip()
 
         song_id = self._extract_song_id(query)
@@ -543,7 +549,7 @@ class BrowserPaginationMixin:
             self._notify_queue_library_reloaded()
         except AttributeError:
             pass
-        self._on_search()  # re-applies search bar content; shows installed song and clears pending_install_id
+        self._do_search()  # re-applies search bar content; shows installed song and clears pending_install_id
         self._check_pending_playlist()
 
     def _build_install_row(self, song_id: str):

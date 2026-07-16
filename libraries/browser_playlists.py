@@ -148,7 +148,7 @@ class BrowserPlaylistsMixin:
         self.selected_indices.clear()
         self.selected_index = None
         self.count_label.config(text=f"({len(songs)} songs)")
-        self._on_search()  # re-applies search bar contents; resolves _pending_install_id
+        self._do_search()  # re-applies search bar contents; resolves _pending_install_id
 
         # Startup hooks fire once on initial load.  The CLI contract makes
         # `playlist + --randomAdd` headless, so in practice only one of these
@@ -214,14 +214,14 @@ class BrowserPlaylistsMixin:
 
     def _toggle_favorites_only(self):
         self._favorites_only = self._favorites_only_var.get()
-        self._on_search()
+        self._do_search()
 
     def _toggle_hide_favorites(self):
         if self._favorites_only and self._hide_favorites_var.get():
             self._favorites_only = False
             self._favorites_only_var.set(False)
         self._hide_favorites = self._hide_favorites_var.get()
-        self._on_search()
+        self._do_search()
 
     # ── Playlist export ───────────────────────────────────────────────────────
 
