@@ -43,7 +43,6 @@ _MIN_W, _MIN_H = 240, 80
 _DEFAULT_W = 480
 _FPS = 30
 _FRAME_BYTES_PER_PX = 3  # rgb24
-_PIPE_READ_CHUNK = 65536
 _ANIM_DURATION = 0.25  # seconds for pause/resume y-scale animation
 _FFPLAY_TITLE = "BSM_Cinema_Video"  # window title used to spot the ffplay window
 
@@ -1025,30 +1024,26 @@ class VisualizerWindow(tk.Toplevel):
                      stop_event: threading.Event, gen: int):
         """Read complete RGB frames from ffmpeg's stdout into the latest-frame slot."""
         frame_size = w * h * _FRAME_BYTES_PER_PX
-        buf = bytearray()
         stdout = proc.stdout
         if stdout is None:
             return
+        frame_buf = bytearray(frame_size)
+        view = memoryview(frame_buf)
+        filled = 0
         while not stop_event.is_set():
             try:
-                chunk = stdout.read(_PIPE_READ_CHUNK)
+                n = stdout.readinto(view[filled:])
             except Exception:
                 break
-            if not chunk:
+            if not n:
                 break  # ffmpeg closed the pipe — end of song or error.
-            buf.extend(chunk)
-            # Drain whole frames; if we accumulated more than one frame's worth
-            # (e.g. coming out of a suspend), keep only the most recent.
-            if len(buf) >= frame_size:
-                # Index of the most-recent complete frame's start in buf.
-                whole = (len(buf) // frame_size) * frame_size
-                last_frame_start = whole - frame_size
-                frame = bytes(buf[last_frame_start:whole])
-                # Discard everything up through the consumed frames.
-                del buf[:whole]
-                with self._frame_lock:
-                    if not stop_event.is_set():
-                        self._latest_frame = (gen, frame)
+            filled += n
+            if filled < frame_size:
+                continue
+            with self._frame_lock:
+                if not stop_event.is_set():
+                    self._latest_frame = (gen, bytes(frame_buf))
+            filled = 0
 
     _VIDEO_FREEZE_DELAY_S = 0.35
 
