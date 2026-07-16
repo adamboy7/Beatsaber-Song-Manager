@@ -46,18 +46,11 @@ class PlaylistInstaller:
         except Exception:
             pass
 
-    def install(
-        self,
-        playlist_path: Path,
-        expected_keys: list[str] | None = None,
-        timeout: int | None = None,
-    ) -> bool:
+    def install(self, playlist_path: Path) -> bool:
         """Download every song referenced by ``playlist_path``.
 
-        ``expected_keys`` and ``timeout`` are accepted for backwards
-        compatibility and are no longer used. Returns ``True`` once the
-        background download has been launched; completion is reported through
-        ``complete_cb``.
+        Returns ``True`` once the background download has been launched;
+        completion is reported through ``complete_cb``.
         """
         self.cancel()
 

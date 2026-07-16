@@ -325,12 +325,6 @@ def main():
         if custom_levels is None:
             print("Beat Saber not found automatically; cannot determine CustomLevels path.")
             sys.exit(1)
-        with open(playlist_path, "r", encoding="utf-8") as f:
-            _pl_data = json.load(f)
-        expected_keys = [
-            (e.get("key") or e.get("id") or "")
-            for e in _pl_data.get("songs", [])
-        ]
 
         _done = threading.Event()
         _success: list[bool] = [False]
@@ -348,10 +342,10 @@ def main():
             print,
             _on_complete,
         )
-        if not installer.install(playlist_path, expected_keys):
+        if not installer.install(playlist_path):
             # install() returned False without scheduling _complete_cb
-            # (e.g. handler missing, playlist vanished, or server start
-            # failed). Don't block on _done forever.
+            # (e.g. playlist vanished or was unreadable). Don't block on
+            # _done forever.
             sys.exit(1)
         _done.wait()
         sys.exit(0 if _success[0] else 1)

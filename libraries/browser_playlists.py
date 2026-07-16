@@ -33,6 +33,9 @@ from libraries.player_data import (
     song_level_ids, load_favorites, load_player_stats,
 )
 from libraries.playlist_installer import PlaylistInstaller
+from libraries.playlist_model import (
+    read_playlist, entry_key, installable_entries, match_library,
+)
 from libraries.queue_window import QueueWindow
 from libraries.playlist_art_window import PlaylistArtWindow
 from libraries.visualizer_window import VisualizerWindow
@@ -376,8 +379,7 @@ class BrowserPlaylistsMixin:
 
     def _load_playlist_from_path(self, path: str) -> None:
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            data = read_playlist(path)
         except Exception as e:
             messagebox.showerror("Error", f"Could not read playlist:\n{e}")
             return
@@ -404,16 +406,7 @@ class BrowserPlaylistsMixin:
             self._playlist_art_b64 = None
             self._playlist_art_first_song_key = None
 
-        hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}
-
-        found: list[SongInfo] = []
-        missing: list[dict] = []
-        for entry in entries:
-            h = (entry.get("hash") or "").upper()
-            if h in hash_to_song:
-                found.append(hash_to_song[h])
-            else:
-                missing.append(entry)
+        found, missing = match_library(entries, self.songs)
 
         if not missing:
             self._pending_playlist_entries = None
@@ -423,7 +416,7 @@ class BrowserPlaylistsMixin:
             self.status_bar.config(text=f"Playlist '{title}': {len(found)} songs queued")
             return
 
-        installable = [e for e in missing if e.get("key") or e.get("id")]
+        installable = installable_entries(missing)
         uninstallable_count = len(missing) - len(installable)
 
         names = "\n".join(f"  • {e.get('songName', 'Unknown')}" for e in missing[:10])
@@ -462,10 +455,7 @@ class BrowserPlaylistsMixin:
         # Hand the whole playlist to the installer, which downloads every
         # missing song directly from BeatSaver. Falls back to the per-song
         # loop only if the installer declines to launch.
-        expected_keys = [
-            (e.get("key") or e.get("id") or "") for e in installable
-        ]
-        launched = self._playlist_installer.install(Path(path), expected_keys)
+        launched = self._playlist_installer.install(Path(path))
         if launched:
             self._pending_playlist_queue = []
             return
@@ -487,8 +477,7 @@ class BrowserPlaylistsMixin:
     def _append_playlist_from_path(self, path: str) -> None:
         """Append matched songs to the existing queue without changing playlist art."""
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            data = read_playlist(path)
         except Exception as e:
             messagebox.showerror("Error", f"Could not read playlist:\n{e}")
             return
@@ -498,20 +487,10 @@ class BrowserPlaylistsMixin:
             messagebox.showinfo("Empty Playlist", "The playlist contains no songs.")
             return
 
-        hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}
-        found: list[SongInfo] = []
-        missing_count = 0
-        broken_count = 0
-        for entry in entries:
-            h = (entry.get("hash") or "").upper()
-            if h in hash_to_song:
-                song = hash_to_song[h]
-                if song.audio_path:
-                    found.append(song)
-                else:
-                    broken_count += 1
-            else:
-                missing_count += 1
+        matched, missing = match_library(entries, self.songs)
+        found = [s for s in matched if s.audio_path]
+        broken_count = len(matched) - len(found)
+        missing_count = len(missing)
 
         if not found:
             messagebox.showinfo("No Songs Available",
@@ -531,7 +510,7 @@ class BrowserPlaylistsMixin:
     def _install_next_playlist_song(self) -> None:
         while self._pending_playlist_queue:
             entry = self._pending_playlist_queue.pop(0)
-            song_id = entry.get("key") or entry.get("id")
+            song_id = entry_key(entry)
             if song_id:
                 self._install_manager.trigger(song_id)
                 return
@@ -577,18 +556,13 @@ class BrowserPlaylistsMixin:
         threading.Thread(target=_download, daemon=True).start()
 
     def _on_playlist_url_downloaded(self, tmp_path: Path) -> None:
-        """Parse the downloaded .bplist and download its songs from BeatSaver."""
+        """Validate the downloaded .bplist and download its songs from BeatSaver."""
         try:
-            with open(tmp_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            read_playlist(tmp_path)
         except Exception as e:
             self.status_bar.config(text=f"Could not parse playlist: {e}")
             tmp_path.unlink(missing_ok=True)
             return
-
-        entries = data.get("songs", [])
-        installable = [e for e in entries if e.get("key") or e.get("id")]
-        expected_keys = [(e.get("key") or e.get("id") or "") for e in installable]
 
         # Belt-and-suspenders: drop any previous pending temp path so we don't
         # leak it if a rapid re-trigger raced through _install_playlist_from_url.
@@ -600,7 +574,7 @@ class BrowserPlaylistsMixin:
                 pass
         self._pending_playlist_temp_path = tmp_path
 
-        launched = self._playlist_installer.install(tmp_path, expected_keys)
+        launched = self._playlist_installer.install(tmp_path)
         if not launched:
             tmp_path.unlink(missing_ok=True)
             self._pending_playlist_temp_path = None
@@ -641,15 +615,10 @@ class BrowserPlaylistsMixin:
         # reset at the whole-playlist branch.
         if self._pending_playlist_entries is None:
             return
-        hash_to_song = {s.song_hash.upper(): s for s in self.songs if s.song_hash}
         if self._pending_playlist_queue:
             self._install_next_playlist_song()
             return
-        queue = []
-        for entry in self._pending_playlist_entries:
-            h = (entry.get("hash") or "").upper()
-            if h in hash_to_song:
-                queue.append(hash_to_song[h])
+        queue, _ = match_library(self._pending_playlist_entries, self.songs)
         self._pending_playlist_entries = None
         if queue:
             self._play_queue(queue)
