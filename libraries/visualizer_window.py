@@ -45,6 +45,7 @@ _FPS = 30
 _FRAME_BYTES_PER_PX = 3  # rgb24
 _ANIM_DURATION = 0.25  # seconds for pause/resume y-scale animation
 _FFPLAY_TITLE = "BSM_Cinema_Video"  # window title used to spot the ffplay window
+_MASK_THRESHOLD_LUT = [255 if _p > 10 else 0 for _p in range(256)]
 
 # ── Win32 constants for embedding ffplay's SDL window into the Tk canvas ──────
 _GWL_STYLE = -16
@@ -296,6 +297,7 @@ class VisualizerWindow(tk.Toplevel):
 
         # Tk-side state.
         self._photo: ImageTk.PhotoImage | None = None
+        self._photo_size: tuple[int, int] | None = None
         self._image_id: int | None = None
         self._resize_after_id: str | None = None
         self._tick_id: str | None = None
@@ -1227,7 +1229,7 @@ class VisualizerWindow(tk.Toplevel):
         scale = self._y_scale
         if abs(scale - 1.0) > 0.001:
             scaled_h = max(1, int(h * scale))
-            scaled_bars = freq_img.resize((w, scaled_h), Image.LANCZOS)
+            scaled_bars = freq_img.resize((w, scaled_h), Image.BILINEAR)
             freq_overlay = Image.new("RGB", (w, h), (0, 0, 0))
             freq_overlay.paste(scaled_bars, (0, h - scaled_h))
         else:
@@ -1235,12 +1237,15 @@ class VisualizerWindow(tk.Toplevel):
 
         # Composite bars over background.
         if bg is not None:
-            mask = freq_overlay.convert("L").point(lambda p: 255 if p > 10 else 0)
+            mask = freq_overlay.convert("L").point(_MASK_THRESHOLD_LUT)
             img = Image.composite(freq_overlay, bg, mask)
         else:
             img = freq_overlay
 
         try:
+            if self._photo is not None and self._photo_size == img.size:
+                self._photo.paste(img)
+                return
             photo = ImageTk.PhotoImage(img)
         except Exception:
             return
@@ -1254,6 +1259,7 @@ class VisualizerWindow(tk.Toplevel):
             # Keep a reference so Python doesn't GC the PhotoImage while Tk
             # still has the handle.
             self._photo = photo
+            self._photo_size = img.size
         except tk.TclError:
             pass
 
@@ -1262,17 +1268,22 @@ class VisualizerWindow(tk.Toplevel):
         if bg is None:
             return
         try:
+            if self._photo is not None and self._photo_size == bg.size:
+                self._photo.paste(bg)
+                return
             photo = ImageTk.PhotoImage(bg)
             if self._image_id is None:
                 self._image_id = self._canvas.create_image(0, 0, image=photo, anchor="nw")
             else:
                 self._canvas.itemconfig(self._image_id, image=photo)
             self._photo = photo
+            self._photo_size = bg.size
         except tk.TclError:
             pass
 
     def _clear_canvas(self):
         self._photo = None
+        self._photo_size = None
         try:
             self._canvas.delete("all")
         except tk.TclError:
