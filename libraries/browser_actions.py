@@ -20,6 +20,7 @@ from pathlib import Path
 from tkinter import messagebox
 
 from libraries.audio_utils import _local_dir
+from libraries.beatsaver_api import USER_AGENT
 from libraries.constants import ACCENT_COLOR, BG_COLOR, TEXT_COLOR, SUBTEXT_COLOR
 from libraries.song_data import SongInfo, save_custom_tags
 from libraries.asset_editor import bak_files
@@ -364,14 +365,22 @@ class BrowserActionsMixin:
             try:
                 self.after(0, lambda: self.status_bar.config(text="Downloading yt-dlp…"))
 
-                def report(block_num, block_size, total_size):
-                    if total_size > 0:
-                        pct = min(100, int(block_num * block_size * 100 / total_size))
-                        self.after(0, lambda p=pct: self.status_bar.config(
-                            text=f"Downloading yt-dlp… {p}%"
-                        ))
-
-                urllib.request.urlretrieve(url, dest, reporthook=report)
+                req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    total = int(resp.headers.get("Content-Length", 0))
+                    got = 0
+                    with open(dest, "wb") as f:
+                        while True:
+                            chunk = resp.read(1 << 16)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            got += len(chunk)
+                            if total > 0:
+                                pct = min(100, int(got * 100 / total))
+                                self.after(0, lambda p=pct: self.status_bar.config(
+                                    text=f"Downloading yt-dlp… {p}%"
+                                ))
                 self.after(0, lambda: self._run_yt_dlp(dest, song))
             except Exception as exc:
                 self.after(0, lambda e=exc: self.status_bar.config(

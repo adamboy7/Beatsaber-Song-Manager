@@ -18,6 +18,7 @@ import json
 import base64
 import os
 import re
+import shutil
 import tempfile
 import threading
 import urllib.request
@@ -27,6 +28,7 @@ from tkinterdnd2 import DND_FILES
 from pathlib import Path
 from PIL import Image
 
+from libraries.beatsaver_api import USER_AGENT
 from libraries.constants import ACCENT_COLOR, TEXT_COLOR
 from libraries.song_data import SongInfo, load_songs, load_song_hashes, compute_song_hash
 from libraries.player_data import (
@@ -546,7 +548,9 @@ class BrowserPlaylistsMixin:
                 fd, tmp_str = tempfile.mkstemp(suffix="_" + filename)
                 os.close(fd)
                 tmp_path = Path(tmp_str)
-                urllib.request.urlretrieve(url, tmp_path)
+                req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+                with urllib.request.urlopen(req, timeout=30) as resp, open(tmp_path, "wb") as f:
+                    shutil.copyfileobj(resp, f)
                 try:
                     self.after(0, lambda: self._on_playlist_url_downloaded(tmp_path))
                 except tk.TclError:
