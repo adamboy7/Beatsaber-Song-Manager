@@ -52,6 +52,20 @@ def find_libmpv() -> str | None:
     return None
 
 
+def dll_present() -> bool:
+    """Whether a local libmpv DLL exists at all (regardless of whether it
+    actually loads). False here — as opposed to a DLL that's present but
+    broken — is the specific case the download offer in mpv_installer.py
+    responds to."""
+    return find_libmpv() is not None
+
+
+def install_dir() -> Path:
+    """Directory a manually-placed or downloaded libmpv DLL belongs in — the
+    same folder as ffmpeg.exe / the app's other side-by-side binaries."""
+    return _local_dir()
+
+
 @functools.lru_cache(maxsize=1)
 def load_mpv():
     """Import and return the python-mpv module, or None if unavailable.

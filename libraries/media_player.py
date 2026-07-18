@@ -5,7 +5,8 @@ import ctypes.wintypes
 from tkinter import messagebox
 
 from libraries.audio_utils import get_audio_duration
-from libraries.mpv_backend import LIBMPV_HINT, load_error, load_mpv
+from libraries import mpv_installer
+from libraries.mpv_backend import LIBMPV_HINT, dll_present, install_dir, load_error, load_mpv
 
 
 def _mpv_unavailable_message() -> str:
@@ -345,24 +346,41 @@ class MediaPlayer:
     def _play_without_mpv(self, song: SongInfo) -> None:
         """libmpv is unavailable — degrade the same way the ffplay-missing
         path used to: hand .ogg files to the OS default player (no in-app
-        controls), otherwise explain what's missing and skip."""
+        controls), otherwise explain what's missing and skip.
+
+        If the DLL is simply absent (as opposed to present-but-broken or
+        python-mpv not being installed), offer to download it first — once
+        per run. The degrade-and-explain fallback below only actually runs if
+        that offer is declined (now or already, earlier this run), the
+        download/extraction fails, or the user declines the post-install
+        restart; accepting the restart re-execs the process, so this song's
+        playback attempt never gets a fallback at all."""
         ext = song.audio_path.suffix.lower()
-        if ext == ".ogg":
-            try:
-                os.startfile(song.audio_path)
-                self._stopped = True
-                self.playing_song = None
-                self.song_duration = None
-                messagebox.showinfo(
-                    "Play Audio",
-                    f"{_mpv_unavailable_message()}\n\nHanded the file to your "
-                    "system's default player instead. The in-app controls "
-                    "(volume, pause, queue) won't apply to that playback.",
-                )
-            except Exception as exc:
-                messagebox.showerror("Play Audio Failed", str(exc))
+
+        def _show_unavailable() -> None:
+            if ext == ".ogg":
+                try:
+                    os.startfile(song.audio_path)
+                    self._stopped = True
+                    self.playing_song = None
+                    self.song_duration = None
+                    messagebox.showinfo(
+                        "Play Audio",
+                        f"{_mpv_unavailable_message()}\n\nHanded the file to your "
+                        "system's default player instead. The in-app controls "
+                        "(volume, pause, queue) won't apply to that playback.",
+                    )
+                except Exception as exc:
+                    messagebox.showerror("Play Audio Failed", str(exc))
+            else:
+                messagebox.showwarning("Play Audio", _mpv_unavailable_message())
+                # Mark finished so an active queue skips to the next song,
+                # matching the old behavior when ffplay was missing.
+                self._finished = True
+
+        if dll_present():
+            # DLL exists but is broken some other way (bad arch, python-mpv
+            # not installed, etc.) — downloading a fresh copy wouldn't help.
+            _show_unavailable()
         else:
-            messagebox.showwarning("Play Audio", _mpv_unavailable_message())
-            # Mark finished so an active queue skips to the next song, matching
-            # the old behavior when ffplay was missing.
-            self._finished = True
+            mpv_installer.offer_download_once(install_dir(), on_unavailable=_show_unavailable)
