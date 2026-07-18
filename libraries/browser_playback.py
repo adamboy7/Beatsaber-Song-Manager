@@ -31,7 +31,7 @@ class BrowserPlaybackMixin:
     def _toggle_keep_player_visible(self):
         self._keep_player_visible = self._keep_player_visible_var.get()
         if self._keep_player_visible and not self._player_bar_visible:
-            if self._media_player._audio_proc is not None:
+            if self._media_player.is_active:
                 self._show_player_bar(self._media_player.playing_song)
             else:
                 self._show_player_bar_idle(None, None)
@@ -426,8 +426,7 @@ class BrowserPlaybackMixin:
         if mp._stopped:
             self._player_tick_id = None
             return
-        proc = mp._audio_proc
-        if proc is None or proc.poll() is not None:
+        if mp.is_finished:
             if mp._looping and mp.playing_song:
                 self._play_audio(mp.playing_song)
                 return

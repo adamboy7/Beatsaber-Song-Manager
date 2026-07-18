@@ -23,15 +23,6 @@ def find_ffmpeg() -> str | None:
 
 
 @functools.lru_cache(maxsize=1)
-def find_ffplay() -> str | None:
-    """Return path to ffplay: checks script directory first, then PATH."""
-    local = _local_dir() / "ffplay.exe"
-    if local.exists():
-        return str(local)
-    return shutil.which("ffplay")
-
-
-@functools.lru_cache(maxsize=1)
 def find_ffprobe() -> str | None:
     """Return path to ffprobe: checks script directory first, then PATH."""
     local = _local_dir() / "ffprobe.exe"

@@ -8,7 +8,8 @@ A music browser, media player, playlist builder, and asset editor for Beat Saber
 
 ### Requirements
 
-- **ffmpeg** — place `ffmpeg.exe`, `ffplay.exe`, and `ffprobe.exe` next to the application, or add them to your system PATH. [Download ffmpeg](https://ffmpeg.org/download.html)
+- **ffmpeg** — place `ffmpeg.exe` and `ffprobe.exe` next to the application, or add them to your system PATH. [Download ffmpeg](https://ffmpeg.org/download.html)
+- **libmpv** — place `libmpv-2.dll` next to the application, or add it to your system PATH. Powers all audio and Cinema video playback. [Download libmpv](https://mpv.io/installation/) (from the "libmpv" dev builds)
 - Beat Saber installed via Steam (recommended, but not required — see below)
 
 ### How the App Finds Your Files
@@ -300,7 +301,7 @@ Access via **View → Visualizer**. Shows a real-time frequency-bar spectrum syn
 
 Many maps ship a `cinema-video.json` for the [Cinema mod](https://github.com/Kevga/BeatSaberCinema), which plays a YouTube video behind the map in-game. The app supports these videos outside the game:
 
-**Playback** — if the referenced video file is present in the song folder, the Visualizer plays it instead of the spectrum, seeked to stay in sync with the song's audio and honoring Cinema's configured offset and duration. Outside the video's window (before the offset, or after it ends), the spectrum shows instead. Playback uses an embedded hardware-accelerated ffplay window, falling back to software decoding if embedding fails.
+**Playback** — if the referenced video file is present in the song folder, the Visualizer plays it instead of the spectrum, seeked to stay in sync with the song's audio and honoring Cinema's configured offset and duration. Outside the video's window (before the offset, or after it ends), the spectrum shows instead. Playback uses libmpv embedded directly into the Visualizer window — hardware-accelerated, with pause/resume tracked frame-accurately against the audio — falling back to the spectrum if libmpv or the video is unavailable.
 
 **Download** — the manifest often references a video you haven't downloaded in-game yet. Right-click the song → **Download Video** fetches it with yt-dlp using the same format and filename Cinema would (720p MP4, saved into the song folder), with download progress in the status bar. Failed downloads retry once automatically. Once finished, the video is immediately available in-game and in the Visualizer.
 

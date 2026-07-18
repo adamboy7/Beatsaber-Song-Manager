@@ -3,3 +3,4 @@ pydub
 audioop-lts
 pynput
 tkinterdnd2
+python-mpv

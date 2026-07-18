@@ -2,15 +2,26 @@ import os
 import time
 import ctypes
 import ctypes.wintypes
-import subprocess
 from tkinter import messagebox
 
-from libraries.audio_utils import find_ffplay, get_audio_duration
+from libraries.audio_utils import get_audio_duration
+from libraries.mpv_backend import LIBMPV_HINT, load_error, load_mpv
+
+
+def _mpv_unavailable_message() -> str:
+    """Specific failure reason from the loader when known, generic hint otherwise."""
+    reason = load_error()
+    return f"{reason}" if reason else LIBMPV_HINT
 from libraries.song_data import SongInfo
 
 
 def _create_kill_on_close_job():
-    """Create a Windows Job Object that kills all assigned processes when the handle closes."""
+    """Create a Windows Job Object that kills all assigned processes when the handle closes.
+
+    Audio playback is in-process (libmpv) and doesn't need this, but the
+    visualizer still uses it to tie its ffmpeg spectrum subprocess to the app's
+    lifetime.
+    """
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         job = kernel32.CreateJobObjectW(None, None)
@@ -75,22 +86,101 @@ def assign_process_to_job(job, pid: int) -> None:
 
 
 class MediaPlayer:
+    """Audio playback via an in-process libmpv instance.
+
+    One persistent mpv player is created lazily on first play and reused for
+    every song. Pause, volume and position are live properties — no process
+    suspension, no relaunch-and-reseek on volume change.
+
+    A wall-clock elapsed estimate (_play_start / _paused_total) is kept as a
+    fallback for the brief moments mpv's time-pos is unavailable (file still
+    loading), so elapsed_seconds() never goes backwards on callers.
+    """
+
     def __init__(self):
-        self._audio_proc: subprocess.Popen | None = None
-        self._job = _create_kill_on_close_job()
+        self._player = None  # lazily-created mpv.MPV | None
         self._audio_paused: bool = False
         self._stopped: bool = False
         self._looping: bool = False
         self.playing_song: SongInfo | None = None
         self._kb_listener = None
 
+        # True once the current file reached end-of-file (mpv keep-open pauses
+        # on the last sample instead of going idle, and flips eof-reached).
+        # Set from mpv's event thread; plain bool store is atomic under the GIL.
+        self._finished: bool = False
+
         self._play_start: float | None = None
         self._pause_start: float | None = None
         self._paused_total: float = 0.0
         self.song_duration: float | None = None
         self._volume: int = 75
-        self._volume_changed_while_paused: bool = False
         self.session_id: int = 0
+
+    # ── Public state helpers ─────────────────────────────────────────────────
+
+    @property
+    def is_active(self) -> bool:
+        """A song is loaded (playing or paused) and not explicitly stopped."""
+        return self.playing_song is not None and not self._stopped
+
+    @property
+    def is_finished(self) -> bool:
+        """The current song's playback ended (EOF or unplayable file)."""
+        if self._finished:
+            return True
+        # Decode failures may end the file without eof-reached ever flipping
+        # (mpv drops to idle instead). Give loadfile a 2s grace period, then
+        # treat an idle core during nominal playback as finished so the queue
+        # can move on — mirrors the old "ffplay process died" detection.
+        if (
+            self._player is not None
+            and self.is_active
+            and self._play_start is not None
+            and time.time() - self._play_start > 2.0
+        ):
+            try:
+                return bool(self._player.idle_active)
+            except Exception:
+                return False
+        return False
+
+    # ── mpv lifecycle ────────────────────────────────────────────────────────
+
+    def _ensure_player(self):
+        """Create the persistent mpv instance on first use. Returns it or None."""
+        if self._player is not None:
+            return self._player
+        mpv_mod = load_mpv()
+        if mpv_mod is None:
+            return None
+        try:
+            player = mpv_mod.MPV(
+                vid="no",          # audio only
+                idle="yes",        # survive stop/EOF; instance is reused
+                keep_open="yes",   # hold at EOF so eof-reached fires reliably
+            )
+        except Exception:
+            return None
+        try:
+            player.observe_property("eof-reached", self._on_eof_reached)
+        except Exception:
+            pass
+        try:
+            player.volume = self._volume
+        except Exception:
+            pass
+        self._player = player
+        return player
+
+    def _on_eof_reached(self, _name, value) -> None:
+        # Runs on mpv's event thread. eof-reached goes True at natural end of
+        # file and back to False/None on the next loadfile/stop, so only a
+        # truthy value marks the finish.
+        if value:
+            self._finished = True
+
+    # ── Media keys ───────────────────────────────────────────────────────────
 
     def start_media_keys(self, after_fn, on_stop=None, on_next=None, on_prev=None) -> None:
         try:
@@ -122,163 +212,108 @@ class MediaPlayer:
         if self._kb_listener:
             self._kb_listener.stop()
 
+    # ── Transport ────────────────────────────────────────────────────────────
+
     def toggle_loop(self) -> None:
         self._looping = not self._looping
 
     def toggle_pause(self) -> None:
         if self._stopped:
             return
-        if not self._audio_proc or self._audio_proc.poll() is not None:
+        player = self._player
+        if player is None or self.playing_song is None or self._finished:
             self._audio_paused = False
             return
         try:
-            import ctypes
-            ntdll = ctypes.WinDLL("ntdll")
-            kernel32 = ctypes.WinDLL("kernel32")
-            handle = kernel32.OpenProcess(0x0800, False, self._audio_proc.pid)
-            if not handle:
-                # OpenProcess returned NULL (process exited between poll() and OpenProcess,
-                # AV blocked the handle, insufficient privileges, etc.). Don't flip the
-                # pause flag — the kernel will reject Nt(Suspend|Resume)Process(0) and we'd
-                # end up out of sync with reality.
-                messagebox.showerror(
-                    "Pause Failed",
-                    "Could not get a handle to the audio process. Try again.",
-                )
-                return
-            try:
-                if self._audio_paused:
-                    status = ntdll.NtResumeProcess(handle)
-                    if status == 0:  # STATUS_SUCCESS
-                        self._audio_paused = False
-                        if self._pause_start is not None:
-                            self._paused_total += time.time() - self._pause_start
-                            self._pause_start = None
-                        if self._volume_changed_while_paused:
-                            self._volume_changed_while_paused = False
-                            elapsed = self.elapsed_seconds() or 0.0
-                            if not (self.song_duration and elapsed > self.song_duration - 0.5):
-                                song = self.playing_song
-                                duration = self.song_duration
-                                self._audio_proc.terminate()
-                                self._audio_proc = None
-                                if self._launch_ffplay(song, elapsed):
-                                    self.song_duration = duration if duration is not None else get_audio_duration(song.audio_path)
-                                else:
-                                    self.playing_song = None
-                                    self._play_start = None
-                                    self._pause_start = None
-                                    self._paused_total = 0.0
-                                    self.song_duration = None
-                else:
-                    status = ntdll.NtSuspendProcess(handle)
-                    if status == 0:
-                        self._audio_paused = True
-                        self._pause_start = time.time()
-            finally:
-                kernel32.CloseHandle(handle)
+            if self._audio_paused:
+                player.pause = False
+                self._audio_paused = False
+                if self._pause_start is not None:
+                    self._paused_total += time.time() - self._pause_start
+                    self._pause_start = None
+            else:
+                player.pause = True
+                self._audio_paused = True
+                self._pause_start = time.time()
         except Exception as exc:
             messagebox.showerror("Pause Failed", str(exc))
 
     def elapsed_seconds(self) -> float | None:
         if self._play_start is None:
             return None
+        # Prefer mpv's real playback position; fall back to the wall-clock
+        # estimate while the file is still loading (time-pos is None then).
+        player = self._player
+        if player is not None:
+            try:
+                pos = player.time_pos
+            except Exception:
+                pos = None
+            if pos is not None:
+                return max(0.0, float(pos))
         elapsed = time.time() - self._play_start - self._paused_total
         if self._pause_start is not None:
             elapsed -= time.time() - self._pause_start
         return max(0.0, elapsed)
 
+    def _stop_mpv(self) -> None:
+        player = self._player
+        if player is not None:
+            try:
+                player.command("stop")
+            except Exception:
+                pass
+
     def stop_keep_song(self) -> None:
         """Stop audio but remember the current song and queue position."""
-        if self._audio_proc and self._audio_proc.poll() is None:
-            self._audio_proc.terminate()
-        self._audio_proc = None
         self._audio_paused = False
         self._stopped = True
+        self._finished = False
         self._play_start = None
         self._pause_start = None
         self._paused_total = 0.0
+        self._stop_mpv()
 
     def stop(self) -> None:
-        if self._audio_proc and self._audio_proc.poll() is None:
-            self._audio_proc.terminate()
-        self._audio_proc = None
         self._audio_paused = False
         self._stopped = True
+        self._finished = False
         self.playing_song = None
         self._play_start = None
         self._pause_start = None
         self._paused_total = 0.0
         self.song_duration = None
+        self._stop_mpv()
 
     def stop_and_wait(self, timeout: float = 2.0) -> None:
-        if self._audio_proc and self._audio_proc.poll() is None:
-            proc = self._audio_proc
-            self.stop()
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-        else:
-            self.stop()
+        """Stop and wait until mpv has actually released the audio file.
 
-    def _launch_ffplay(self, song: SongInfo, seek: float = 0.0) -> bool:
-        """Launch ffplay for song, optionally seeking. Returns True on success."""
-        ffplay = find_ffplay()
-        if not ffplay:
-            return False
-        cmd = [ffplay, "-nodisp", "-autoexit", "-volume", str(self._volume)]
-        if seek > 0.5:
-            cmd += ["-ss", f"{seek:.2f}"]
-        cmd.append(str(song.audio_path))
-        try:
-            self._audio_proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            assign_process_to_job(self._job, self._audio_proc.pid)
-            self.playing_song = song
-            self._play_start = time.time() - seek
-            self._pause_start = None
-            self._paused_total = 0.0
-            return True
-        except Exception as exc:
-            messagebox.showerror("Play Audio Failed", str(exc))
-            return False
+        Used before deleting a song's folder — the demuxer's open handle
+        would otherwise make the delete fail on Windows.
+        """
+        self.stop()
+        player = self._player
+        if player is None:
+            return
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                if player.idle_active:
+                    return
+            except Exception:
+                return
+            time.sleep(0.02)
 
     def set_volume(self, level: int) -> None:
-        """Set volume 0-100. Restarts current song at its current position if actively playing."""
+        """Set volume 0-100. Applies live — no relaunch, works while paused."""
         level = max(0, min(100, level))
         self._volume = level
-        if self._audio_paused and self.playing_song:
-            self._volume_changed_while_paused = True
-            return
-        if (not self._audio_paused and not self._stopped
-                and self._audio_proc and self._audio_proc.poll() is None
-                and self.playing_song):
-            elapsed = self.elapsed_seconds() or 0.0
-            # Don't restart if very near the end
-            if self.song_duration and elapsed > self.song_duration - 0.5:
-                return
-            song = self.playing_song
-            duration = self.song_duration
-            self._audio_proc.terminate()
-            self._audio_proc = None
-            self._audio_paused = False
-            if self._launch_ffplay(song, elapsed):
-                # Preserve previously known duration; re-probe if missing.
-                self.song_duration = duration if duration is not None else get_audio_duration(song.audio_path)
-            else:
-                # Launch failed: leave player in a coherent "stopped" state instead of
-                # claiming we still have a song playing with a stale duration.
-                self.playing_song = None
-                self._play_start = None
-                self._pause_start = None
-                self._paused_total = 0.0
-                self.song_duration = None
+        player = self._player
+        if player is not None:
+            try:
+                player.volume = level
+            except Exception:
+                pass
 
     def play(self, song: SongInfo) -> None:
         if not song.audio_path:
@@ -286,32 +321,48 @@ class MediaPlayer:
             return
         self.stop()
         self._stopped = False
-        if self._launch_ffplay(song):
-            self.song_duration = get_audio_duration(song.audio_path)
-            self.session_id += 1
-        else:
-            ext = song.audio_path.suffix.lower()
-            if ext == ".ogg":
-                # Degraded fallback: ffplay is unavailable, so hand the file
-                # off to the OS default player. That player honors none of our
-                # volume / pause / stop / queue controls and we have no
-                # `_audio_proc` to poll, so keep the in-app state as "stopped"
-                # to avoid a misleading player bar.
-                try:
-                    os.startfile(song.audio_path)
-                    self._stopped = True
-                    self.playing_song = None
-                    self.song_duration = None
-                    messagebox.showinfo(
-                        "Play Audio",
-                        "ffplay not found — handed the file to your system's default "
-                        "player. The in-app controls (volume, pause, queue) won't apply "
-                        "to that playback.",
-                    )
-                except Exception as exc:
-                    messagebox.showerror("Play Audio Failed", str(exc))
-            else:
-                messagebox.showwarning(
+        player = self._ensure_player()
+        if player is None:
+            self._play_without_mpv(song)
+            return
+        try:
+            self._finished = False
+            player.volume = self._volume
+            player.pause = False  # keep-open leaves the player paused at EOF
+            player.loadfile(str(song.audio_path))
+        except Exception as exc:
+            messagebox.showerror("Play Audio Failed", str(exc))
+            # Let the queue tick treat this like a dead player and move on.
+            self._finished = True
+            return
+        self.playing_song = song
+        self._play_start = time.time()
+        self._pause_start = None
+        self._paused_total = 0.0
+        self.song_duration = get_audio_duration(song.audio_path)
+        self.session_id += 1
+
+    def _play_without_mpv(self, song: SongInfo) -> None:
+        """libmpv is unavailable — degrade the same way the ffplay-missing
+        path used to: hand .ogg files to the OS default player (no in-app
+        controls), otherwise explain what's missing and skip."""
+        ext = song.audio_path.suffix.lower()
+        if ext == ".ogg":
+            try:
+                os.startfile(song.audio_path)
+                self._stopped = True
+                self.playing_song = None
+                self.song_duration = None
+                messagebox.showinfo(
                     "Play Audio",
-                    "ffplay not found. Place ffplay.exe next to this script or add it to your PATH.",
+                    f"{_mpv_unavailable_message()}\n\nHanded the file to your "
+                    "system's default player instead. The in-app controls "
+                    "(volume, pause, queue) won't apply to that playback.",
                 )
+            except Exception as exc:
+                messagebox.showerror("Play Audio Failed", str(exc))
+        else:
+            messagebox.showwarning("Play Audio", _mpv_unavailable_message())
+            # Mark finished so an active queue skips to the next song, matching
+            # the old behavior when ffplay was missing.
+            self._finished = True
