@@ -8,6 +8,7 @@ from tkinter import messagebox
 
 from libraries.song_data import SongInfo
 from libraries.audio_utils import _local_dir
+from libraries.player_data import song_level_ids
 
 
 def favorite_level_id(song: SongInfo) -> str:
@@ -143,9 +144,7 @@ def remove_from_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: s
         players = data.get("localPlayers", [])
         if not players:
             return False
-        to_remove = {f"custom_level_{song.folder.name}"}
-        if song.song_hash:
-            to_remove.add(f"custom_level_{song.song_hash}")
+        to_remove = set(song_level_ids(song))
         favs: list = players[0].get("favoritesLevelIds", [])
         players[0]["favoritesLevelIds"] = [f for f in favs if f not in to_remove]
         content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
