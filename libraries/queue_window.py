@@ -9,6 +9,7 @@ to-reorder logic.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 from tkinter import messagebox
 from typing import TYPE_CHECKING
@@ -20,6 +21,7 @@ from tkinterdnd2 import DND_FILES
 from libraries.audio_utils import get_audio_duration
 from libraries.browser_pagination import filter_songs, pick_random_songs
 from libraries.browser_playback import _nav_button_states, _shuffle_permute
+from libraries.browser_ui import THUMBNAIL_CACHE_LIMIT
 from libraries.constants import (
     ACCENT_COLOR, BG_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
     SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR, SCROLLBAR_BG,
@@ -45,7 +47,7 @@ class QueueWindow(tk.Toplevel):
         self._drag_target: int | None = None
         self._dragging: bool = False
         self._drag_start_y: int = 0
-        self._thumbnails: dict[str, ImageTk.PhotoImage] = {}
+        self._thumbnails: OrderedDict[str, ImageTk.PhotoImage] = OrderedDict()
         self._durations: dict[str, float | None] = {}
         self._row_frames: list[tk.Frame] = []
         self._tick_id: str | None = None
@@ -788,6 +790,7 @@ class QueueWindow(tk.Toplevel):
     def _load_thumb(self, song: "SongInfo") -> ImageTk.PhotoImage:
         key = str(song.folder)
         if key in self._thumbnails:
+            self._thumbnails.move_to_end(key)
             return self._thumbnails[key]
         try:
             if song.cover_path:
@@ -795,6 +798,8 @@ class QueueWindow(tk.Toplevel):
                 img = img.resize(_QUEUE_THUMB, Image.LANCZOS)
                 photo = ImageTk.PhotoImage(img)
                 self._thumbnails[key] = photo
+                if len(self._thumbnails) > THUMBNAIL_CACHE_LIMIT:
+                    self._thumbnails.popitem(last=False)
                 return photo
         except Exception:
             pass
