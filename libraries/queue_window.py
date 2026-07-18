@@ -9,7 +9,6 @@ to-reorder logic.
 
 from __future__ import annotations
 
-import random
 from pathlib import Path
 from tkinter import messagebox
 from typing import TYPE_CHECKING
@@ -20,49 +19,16 @@ from tkinterdnd2 import DND_FILES
 
 from libraries.audio_utils import get_audio_duration
 from libraries.browser_pagination import filter_songs, pick_random_songs
+from libraries.browser_playback import _nav_button_states, _shuffle_permute
 from libraries.constants import (
     ACCENT_COLOR, BG_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
     SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR, SCROLLBAR_BG,
 )
 from libraries.song_data import SongInfo
+from libraries.window_helpers import show_queue_empty_warning, view_song
 
 if TYPE_CHECKING:
     from Browser import SongBrowser
-
-
-def _show_queue_empty_warning(parent: tk.Misc) -> None:
-    dlg = tk.Toplevel(parent)
-    dlg.title("Queue Empty")
-    dlg.configure(bg="#0d0d1a")
-    dlg.resizable(False, False)
-    dlg.transient(parent)
-    dlg.grab_set()
-    try:
-        _ico = tk.PhotoImage(file=Path(__file__).parent.parent / "Warning.png")
-        dlg.iconphoto(False, _ico)
-        dlg._ico = _ico
-    except Exception:
-        pass
-    tk.Label(
-        dlg,
-        text="Add at least one song to the queue first.",
-        font=("Segoe UI", 10),
-        bg="#0d0d1a", fg=TEXT_COLOR,
-        padx=20, pady=16,
-    ).pack()
-    tk.Button(
-        dlg, text="OK",
-        font=("Segoe UI", 9),
-        bg=ACCENT_COLOR, fg=TEXT_COLOR,
-        activebackground="#7a44c0", activeforeground=TEXT_COLOR,
-        bd=0, padx=14, pady=6,
-        command=dlg.destroy,
-    ).pack(pady=(0, 16))
-    dlg.update_idletasks()
-    x = parent.winfo_rootx() + (parent.winfo_width() - dlg.winfo_width()) // 2
-    y = parent.winfo_rooty() + (parent.winfo_height() - dlg.winfo_height()) // 2
-    dlg.geometry(f"+{x}+{y}")
-    dlg.wait_window()
 
 
 _QUEUE_THUMB = (48, 48)
@@ -236,7 +202,7 @@ class QueueWindow(tk.Toplevel):
             art = b._playlist_art_b64 if b._playlist_art_locked else None
             b._share_playlist(list(b._queue), parent=self, art_b64=art)
         else:
-            _show_queue_empty_warning(self)
+            show_queue_empty_warning(self)
 
     def _open_playlist(self, _event=None):
         import tkinter.filedialog as fd
@@ -277,15 +243,9 @@ class QueueWindow(tk.Toplevel):
     def _refresh_nav_btns(self):
         b = self._browser
         mp = b._media_player
-        if mp._looping or not b._queue:
-            can_next = can_prev = False
-        else:
-            can_next = (
-                b._queue_index + 1 < len(b._queue)
-                or (b._shuffle_queue and len(b._queue) >= 2)
-                or b._loop_queue
-            )
-            can_prev = b._queue_index > 0 or b._loop_queue
+        can_next, can_prev = _nav_button_states(
+            len(b._queue), b._queue_index, b._shuffle_queue, b._loop_queue, mp._looping,
+        )
         self._next_btn.config(
             state="normal" if can_next else "disabled",
             fg=TEXT_COLOR if can_next else SUBTEXT_COLOR,
@@ -521,17 +481,9 @@ class QueueWindow(tk.Toplevel):
 
     def _shuffle_queue_order(self):
         b = self._browser
-        queue = b._queue
-        if len(queue) < 2:
+        if len(b._queue) < 2:
             return
-        curr = b._queue_index
-        # Permute by indices so duplicate SongInfo references don't confuse the
-        # "where is the playing song now?" lookup.
-        perm = list(range(len(queue)))
-        random.shuffle(perm)
-        queue[:] = [queue[i] for i in perm]
-        if 0 <= curr < len(queue):
-            b._queue_index = perm.index(curr)
+        b._queue_index = _shuffle_permute(b._queue, b._queue_index)
         self.refresh()
 
     def _show_add_random_dialog(
@@ -753,32 +705,7 @@ class QueueWindow(tk.Toplevel):
         menu.tk_popup(event.x_root, event.y_root)
 
     def _view_song(self, song: "SongInfo"):
-        b = self._browser
-        folder = str(song.folder)
-
-        def _find(lst):
-            # Prefer identity match (same object), fall back to folder path for
-            # songs whose SongInfo was replaced after a library reload.
-            for i, s in enumerate(lst):
-                if s is song or str(s.folder) == folder:
-                    return i
-            return None
-
-        idx = _find(b.filtered)
-        if idx is None:
-            b.search_var.set("")
-            idx = _find(b.filtered)
-            if idx is None:
-                return
-        b.page = idx // b.page_size
-        b.selected_indices = {idx}
-        b.selected_index = idx
-        b._selected_folders = {str(song.folder)}
-        b._render_list()
-        b._scroll_to_selected()
-        b.status_bar.config(text=f"Selected: {song.display_name}")
-        b.lift()
-        b.focus_force()
+        view_song(self._browser, song)
 
     def _play_from_queue(self, idx: int, song: "SongInfo"):
         self._browser._queue_index = idx

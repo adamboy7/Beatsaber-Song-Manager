@@ -14,8 +14,9 @@ from __future__ import annotations
 import ctypes
 import functools
 import os
-import sys
 from pathlib import Path
+
+from libraries.audio_utils import _local_dir
 
 # Accepted DLL filenames, in preference order. libmpv-2.dll is what current
 # mpv releases ship; the others cover older builds and manual renames.
@@ -34,13 +35,6 @@ _load_error: str | None = None
 
 def load_error() -> str | None:
     return _load_error
-
-
-def _local_dir() -> Path:
-    # When frozen by PyInstaller, look next to the EXE, not in the temp bundle.
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).parent.parent
 
 
 def find_libmpv() -> str | None:

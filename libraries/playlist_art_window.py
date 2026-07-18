@@ -10,10 +10,7 @@ actions to override the art.
 from __future__ import annotations
 
 import io
-import json
-import os
 import base64
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,45 +20,10 @@ from tkinterdnd2 import DND_FILES
 from PIL import Image, ImageTk
 
 from libraries.constants import ACCENT_COLOR, TEXT_COLOR
-from libraries.song_data import compute_song_hash
+from libraries.window_helpers import show_queue_empty_warning
 
 if TYPE_CHECKING:
     from Browser import SongBrowser
-
-
-def _show_queue_empty_warning(parent: tk.Misc) -> None:
-    dlg = tk.Toplevel(parent)
-    dlg.title("Queue Empty")
-    dlg.configure(bg="#0d0d1a")
-    dlg.resizable(False, False)
-    dlg.transient(parent)
-    dlg.grab_set()
-    try:
-        _ico = tk.PhotoImage(file=Path(__file__).parent.parent / "Warning.png")
-        dlg.iconphoto(False, _ico)
-        dlg._ico = _ico
-    except Exception:
-        pass
-    tk.Label(
-        dlg,
-        text="Add at least one song to the queue first.",
-        font=("Segoe UI", 10),
-        bg="#0d0d1a", fg=TEXT_COLOR,
-        padx=20, pady=16,
-    ).pack()
-    tk.Button(
-        dlg, text="OK",
-        font=("Segoe UI", 9),
-        bg=ACCENT_COLOR, fg=TEXT_COLOR,
-        activebackground="#7a44c0", activeforeground=TEXT_COLOR,
-        bd=0, padx=14, pady=6,
-        command=dlg.destroy,
-    ).pack(pady=(0, 16))
-    dlg.update_idletasks()
-    x = parent.winfo_rootx() + (parent.winfo_width() - dlg.winfo_width()) // 2
-    y = parent.winfo_rooty() + (parent.winfo_height() - dlg.winfo_height()) // 2
-    dlg.geometry(f"+{x}+{y}")
-    dlg.wait_window()
 
 
 class PlaylistArtWindow(tk.Toplevel):
@@ -203,106 +165,9 @@ class PlaylistArtWindow(tk.Toplevel):
         self.refresh()
 
     def _save_queue_as_playlist(self, _event=None):
-        import tkinter.filedialog as fd
         b = self._browser
         if not b._queue:
-            _show_queue_empty_warning(self)
+            show_queue_empty_warning(self)
             return
-
-        songs = list(b._queue)
-        invalid = [s for s in songs if not s.song_hash]
-        valid = [s for s in songs if s.song_hash]
-
-        if invalid:
-            names = "\n".join(f"  • {s.display_name}" for s in invalid)
-            if not valid:
-                messagebox.showerror(
-                    "Cannot Create Playlist",
-                    "None of the queued songs have a hash — they may not have been "
-                    "loaded by Beat Saber yet.\n\n" + names,
-                    parent=self,
-                )
-                return
-            if not messagebox.askyesno(
-                "Invalid Songs",
-                f"{len(invalid)} song(s) have no hash and will be skipped:\n\n"
-                + names
-                + f"\n\nContinue with the remaining {len(valid)} song(s)?",
-                parent=self,
-            ):
-                return
-
-        # Detect songs whose Info.dat has been edited (a .bak backup exists).
-        edited_baks: dict[Path, Path] = {}
-        for s in valid:
-            for bak_name in ("Info.dat.bak", "info.dat.bak", "INFO.DAT.bak"):
-                bak = s.folder / bak_name
-                if bak.exists():
-                    edited_baks[s.folder] = bak
-                    break
-
-        if edited_baks:
-            edited_names = "\n".join(
-                f"  • {s.display_name}" for s in valid if s.folder in edited_baks
-            )
-            messagebox.showwarning(
-                "Edited Songs Detected",
-                f"{len(edited_baks)} song(s) have a modified Info.dat "
-                f"(original backed up as .bak):\n\n{edited_names}\n\n"
-                "Modifying Info.dat changes the SongCore hash used to identify and "
-                "download songs — the edited version will not be recognised by "
-                "other tools or players.\n\n"
-                "The playlist will use a best-effort hash recalculated from the "
-                "original Info.dat file.",
-                parent=self,
-            )
-
-        # Build hash overrides from .bak originals for edited songs.
-        hash_overrides: dict[Path, str] = {}
-        for folder, bak in edited_baks.items():
-            h = compute_song_hash(folder, bak)
-            if h:
-                hash_overrides[folder] = h
-
-        save_path = fd.asksaveasfilename(
-            title="Save Playlist",
-            filetypes=[("Beat Saber Playlist", "*.bplist"), ("All files", "*.*")],
-            defaultextension=".bplist",
-            parent=self,
-        )
-        if not save_path:
-            return
-
-        playlist = {
-            "playlistTitle": Path(save_path).stem,
-            "playlistAuthor": "",
-            "image": b._playlist_art_b64 or "",
-            "customData": {},
-            "songs": [
-                {
-                    "key": s.song_id,
-                    "hash": hash_overrides.get(s.folder, s.song_hash),
-                    "songName": s.display_name,
-                }
-                for s in valid
-            ],
-        }
-
-        content = json.dumps(playlist, ensure_ascii=False, indent=2)
-        target = Path(save_path)
-        # `fd` is `tkinter.filedialog` in scope — use a distinct name for the
-        # file descriptor so later edits referencing `fd.ask…()` don't break.
-        fd_int, tmp_str = tempfile.mkstemp(dir=str(target.parent), suffix=".tmp")
-        try:
-            with os.fdopen(fd_int, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_str, target)
-        except:
-            Path(tmp_str).unlink(missing_ok=True)
-            raise
-
-        messagebox.showinfo(
-            "Playlist Saved",
-            f"Saved {len(valid)} songs to {target.name}",
-            parent=self,
-        )
+        art = b._playlist_art_b64 if b._playlist_art_locked else None
+        b._share_playlist(list(b._queue), parent=self, art_b64=art)

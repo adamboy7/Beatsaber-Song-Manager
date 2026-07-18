@@ -23,6 +23,45 @@ from libraries.song_data import SongInfo
 _IDLE_BRAILLE = "⠠⠏⠇⠁⠽ ⠞⠓⠁⠞ ⠎⠕⠝⠛   "
 
 
+def _shuffle_permute(queue: list, current_index: int) -> int:
+    """Shuffle ``queue`` in place, returning the new index of the song that
+    was at ``current_index`` before the shuffle (so playback tracking survives
+    the reorder). Permutes by indices rather than values so duplicate
+    SongInfo references don't confuse the "where is it now?" lookup."""
+    perm = list(range(len(queue)))
+    random.shuffle(perm)
+    queue[:] = [queue[i] for i in perm]
+    if 0 <= current_index < len(queue):
+        return perm.index(current_index)
+    return current_index
+
+
+def _pick_shuffle_index(queue_len: int, current_index: int, last_shuffle_index: int | None) -> int:
+    """Pick a random index other than ``current_index``, avoiding an
+    immediate repeat of ``last_shuffle_index`` when another choice exists."""
+    candidates = [i for i in range(queue_len) if i != current_index]
+    idx = random.choice(candidates)
+    if idx == last_shuffle_index and len(candidates) > 1:
+        candidates.remove(idx)
+        idx = random.choice(candidates)
+    return idx
+
+
+def _nav_button_states(
+    queue_len: int, queue_index: int, shuffle_queue: bool, loop_queue: bool, looping: bool,
+) -> tuple[bool, bool]:
+    """Return (can_next, can_prev) for the player-bar / queue-window nav buttons."""
+    if looping or not queue_len:
+        return False, False
+    can_next = (
+        queue_index + 1 < queue_len
+        or (shuffle_queue and queue_len >= 2)
+        or loop_queue
+    )
+    can_prev = queue_index > 0 or loop_queue
+    return can_next, can_prev
+
+
 class BrowserPlaybackMixin:
     """Audio playback, queue management, and player-bar UI."""
 
@@ -56,17 +95,9 @@ class BrowserPlaybackMixin:
 
     def _shuffle_queue_inplace(self):
         """Shuffle the queue order, keeping the currently-playing song tracked."""
-        queue = self._queue
-        if len(queue) < 2:
+        if len(self._queue) < 2:
             return
-        curr = self._queue_index
-        # Permute by indices so duplicate SongInfo references don't confuse the
-        # "where is the playing song now?" lookup.
-        perm = list(range(len(queue)))
-        random.shuffle(perm)
-        queue[:] = [queue[i] for i in perm]
-        if 0 <= curr < len(queue):
-            self._queue_index = perm.index(curr)
+        self._queue_index = _shuffle_permute(self._queue, self._queue_index)
         self._notify_queue_window()
 
     def _update_status_icon(self):
@@ -112,15 +143,9 @@ class BrowserPlaybackMixin:
             state="normal" if has_queue else "disabled",
             cursor="hand2" if has_queue else "",
         )
-        if mp._looping or not self._queue:
-            can_next = can_prev = False
-        else:
-            can_next = (
-                self._queue_index + 1 < len(self._queue)
-                or (self._shuffle_queue and len(self._queue) >= 2)
-                or self._loop_queue
-            )
-            can_prev = self._queue_index > 0 or self._loop_queue
+        can_next, can_prev = _nav_button_states(
+            len(self._queue), self._queue_index, self._shuffle_queue, self._loop_queue, mp._looping,
+        )
         self._player_next_btn.config(
             state="normal" if can_next else "disabled",
             fg=TEXT_COLOR if can_next else "#555577",
@@ -198,11 +223,7 @@ class BrowserPlaybackMixin:
         if self._media_player._looping:
             return
         if self._shuffle_queue and len(self._queue) >= 2:
-            candidates = [i for i in range(len(self._queue)) if i != self._queue_index]
-            next_idx = random.choice(candidates)
-            if next_idx == self._last_shuffle_index and len(candidates) > 1:
-                candidates.remove(next_idx)
-                next_idx = random.choice(candidates)
+            next_idx = _pick_shuffle_index(len(self._queue), self._queue_index, self._last_shuffle_index)
             self._last_shuffle_index = next_idx
             self._queue_index = next_idx
             self._play_audio(self._queue[next_idx])
@@ -223,8 +244,7 @@ class BrowserPlaybackMixin:
             self._play_audio(self._queue[self._queue_index])
         elif self._loop_queue and self._queue:
             if self._shuffle_queue and len(self._queue) >= 2:
-                candidates = [i for i in range(len(self._queue)) if i != self._queue_index]
-                prev_idx = random.choice(candidates)
+                prev_idx = _pick_shuffle_index(len(self._queue), self._queue_index, self._last_shuffle_index)
                 self._last_shuffle_index = prev_idx
                 self._queue_index = prev_idx
                 self._play_audio(self._queue[prev_idx])
@@ -431,11 +451,7 @@ class BrowserPlaybackMixin:
                 self._play_audio(mp.playing_song)
                 return
             if self._shuffle_queue and len(self._queue) >= 2:
-                candidates = [i for i in range(len(self._queue)) if i != self._queue_index]
-                next_idx = random.choice(candidates)
-                if next_idx == self._last_shuffle_index and len(candidates) > 1:
-                    candidates.remove(next_idx)
-                    next_idx = random.choice(candidates)
+                next_idx = _pick_shuffle_index(len(self._queue), self._queue_index, self._last_shuffle_index)
                 self._last_shuffle_index = next_idx
                 self._queue_index = next_idx
                 self._play_audio(self._queue[next_idx])

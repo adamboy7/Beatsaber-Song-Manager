@@ -1,7 +1,5 @@
 import json
-import os
 import shutil
-import tempfile
 import webbrowser
 import tkinter as tk
 import tkinter.filedialog as fd
@@ -11,6 +9,7 @@ from tkinter import messagebox
 from libraries.song_data import SongInfo
 from libraries.asset_editor import bak_files, restore_files, replace_art, replace_audio
 from libraries.audio_utils import find_ffmpeg
+from libraries.fs_utils import atomic_write_text
 from libraries.player_data import song_level_ids, load_player_stats
 from libraries.favorites import backup_player_data, confirm_player_data_write, _atomic_write_player_data
 from libraries.constants import BG_COLOR, ACCENT_COLOR, TEXT_COLOR
@@ -153,16 +152,7 @@ def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> 
         if not bak.exists():
             shutil.copy2(info_file, bak)
         content = json.dumps(data, ensure_ascii=False, indent=2)
-        # `fd` is `tkinter.filedialog` at module scope — rename the descriptor
-        # so it can't clobber the module reference for later edits.
-        fd_int, tmp_str = tempfile.mkstemp(dir=str(info_file.parent), suffix=".tmp")
-        try:
-            with os.fdopen(fd_int, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_str, info_file)
-        except:
-            Path(tmp_str).unlink(missing_ok=True)
-            raise
+        atomic_write_text(info_file, content)
     except Exception as exc:
         return f"Failed to write Info.dat: {exc}"
 

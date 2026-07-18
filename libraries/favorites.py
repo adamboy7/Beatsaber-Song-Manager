@@ -1,13 +1,13 @@
 import json
 import os
 import subprocess
-import tempfile
 import datetime
 from pathlib import Path
 from tkinter import messagebox
 
 from libraries.song_data import SongInfo
 from libraries.audio_utils import _local_dir
+from libraries.fs_utils import atomic_write_text
 from libraries.player_data import song_level_ids
 
 
@@ -93,14 +93,7 @@ def _atomic_write_player_data(
     except OSError:
         # If we can't stat, fall through and attempt the write.
         pass
-    fd, tmp_str = tempfile.mkstemp(dir=str(player_dat_path.parent), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        os.replace(tmp_str, player_dat_path)
-    except Exception:
-        Path(tmp_str).unlink(missing_ok=True)
-        raise
+    atomic_write_text(player_dat_path, content)
     return True
 
 

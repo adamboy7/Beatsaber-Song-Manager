@@ -32,6 +32,7 @@ from libraries.audio_utils import find_ffmpeg
 from libraries.constants import ACCENT_COLOR, SUBTEXT_COLOR
 from libraries.media_player import _create_kill_on_close_job, assign_process_to_job
 from libraries.mpv_backend import load_mpv
+from libraries.window_helpers import view_song
 
 if TYPE_CHECKING:
     from Browser import SongBrowser
@@ -1059,30 +1060,7 @@ class VisualizerWindow(tk.Toplevel):
             messagebox.showerror("Error", f"Could not save image:\n{e}", parent=self)
 
     def _view_song(self, song: "SongInfo"):
-        b = self._browser
-        folder = str(song.folder)
-
-        def _find(lst):
-            for i, s in enumerate(lst):
-                if s is song or str(s.folder) == folder:
-                    return i
-            return None
-
-        idx = _find(b.filtered)
-        if idx is None:
-            b.search_var.set("")
-            idx = _find(b.filtered)
-            if idx is None:
-                return
-        b.page = idx // b.page_size
-        b.selected_indices = {idx}
-        b.selected_index = idx
-        b._selected_folders = {str(song.folder)}
-        b._render_list()
-        b._scroll_to_selected()
-        b.status_bar.config(text=f"Selected: {song.display_name}")
-        b.lift()
-        b.focus_force()
+        view_song(self._browser, song)
 
     # ── Refresh entry point (called from __init__ for the initial state) ──────
 

@@ -182,6 +182,94 @@ def filter_songs(
     ]
 
 
+def _prompt_int_dialog(
+    parent: tk.Misc,
+    title: str,
+    label_text: str,
+    initial: str,
+    parse,
+    flash_invalid: bool = False,
+) -> int | None:
+    """Modal number-entry dialog shared by the page-size and jump-to-page
+    prompts. ``parse(text) -> int | None`` decides validity; on ``None``
+    the dialog either flashes red and re-prompts (``flash_invalid``) or
+    simply closes with no result (matching each caller's prior behavior)."""
+    dlg = tk.Toplevel(parent, bg=BG_COLOR)
+    dlg.title(title)
+    dlg.resizable(False, False)
+    dlg.transient(parent)
+    dlg.grab_set()
+
+    tk.Label(
+        dlg, text=label_text,
+        bg=BG_COLOR, fg=TEXT_COLOR, font=("Segoe UI", 10),
+    ).pack(padx=20, pady=(16, 6))
+
+    entry = tk.Entry(
+        dlg, font=("Segoe UI", 10), width=10,
+        bg="#1e1e1e", fg=TEXT_COLOR, insertbackground=TEXT_COLOR,
+        relief="flat", bd=4, justify="center",
+    )
+    entry.insert(0, initial)
+    entry.select_range(0, "end")
+    entry.pack(padx=20, pady=(0, 12))
+    entry.focus_set()
+
+    btn_frame = tk.Frame(dlg, bg=BG_COLOR)
+    btn_frame.pack(padx=20, pady=(0, 16))
+
+    result: list[int | None] = [None]
+
+    def _flash_invalid():
+        # Brief red-tint to tell the user the entry wasn't a positive integer.
+        try:
+            entry.config(bg="#5a1f1f")
+            entry.after(600, lambda: entry.config(bg="#1e1e1e"))
+        except tk.TclError:
+            pass
+
+    def _confirm():
+        val = parse(entry.get().strip())
+        if val is None:
+            if flash_invalid:
+                _flash_invalid()
+                entry.focus_set()
+                entry.select_range(0, "end")
+                return
+            dlg.destroy()
+            return
+        result[0] = val
+        dlg.destroy()
+
+    def _cancel():
+        dlg.destroy()
+
+    tk.Button(
+        btn_frame, text="OK", width=8,
+        bg="#1e1e1e", fg=TEXT_COLOR,
+        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+        relief="flat", bd=4, command=_confirm,
+    ).pack(side="left", padx=(0, 8))
+
+    tk.Button(
+        btn_frame, text="Cancel", width=8,
+        bg="#1e1e1e", fg=TEXT_COLOR,
+        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+        relief="flat", bd=4, command=_cancel,
+    ).pack(side="left")
+
+    entry.bind("<Return>", lambda _: _confirm())
+    entry.bind("<Escape>", lambda _: _cancel())
+
+    dlg.update_idletasks()
+    x = parent.winfo_rootx() + (parent.winfo_width() - dlg.winfo_width()) // 2
+    y = parent.winfo_rooty() + (parent.winfo_height() - dlg.winfo_height()) // 2
+    dlg.geometry(f"+{x}+{y}")
+
+    parent.wait_window(dlg)
+    return result[0]
+
+
 def pick_random_songs(filtered: list | None, unfiltered: list, n: int) -> list:
     """Pick n songs prioritising filtered results, then supplementing from unfiltered.
 
@@ -219,82 +307,19 @@ class BrowserPaginationMixin:
     # ── Pagination ────────────────────────────────────────────────────────────
 
     def _change_page_size(self):
-        dlg = tk.Toplevel(self, bg=BG_COLOR)
-        dlg.title("Results per page")
-        dlg.resizable(False, False)
-        dlg.transient(self)
-        dlg.grab_set()
-
-        tk.Label(
-            dlg, text="Results per page:",
-            bg=BG_COLOR, fg=TEXT_COLOR, font=("Segoe UI", 10),
-        ).pack(padx=20, pady=(16, 6))
-
-        entry = tk.Entry(
-            dlg, font=("Segoe UI", 10), width=10,
-            bg="#1e1e1e", fg=TEXT_COLOR, insertbackground=TEXT_COLOR,
-            relief="flat", bd=4, justify="center",
-        )
-        entry.insert(0, str(self.page_size))
-        entry.select_range(0, "end")
-        entry.pack(padx=20, pady=(0, 12))
-        entry.focus_set()
-
-        btn_frame = tk.Frame(dlg, bg=BG_COLOR)
-        btn_frame.pack(padx=20, pady=(0, 16))
-
-        result: list[int | None] = [None]
-
-        def _flash_invalid():
-            # Brief red-tint to tell the user the entry wasn't a positive integer.
-            try:
-                entry.config(bg="#5a1f1f")
-                entry.after(600, lambda: entry.config(bg="#1e1e1e"))
-            except tk.TclError:
-                pass
-
-        def _confirm():
-            text = entry.get().strip()
+        def _parse(text: str) -> int | None:
             try:
                 val = int(text)
-                if val < 1:
-                    raise ValueError
-                result[0] = val
-                dlg.destroy()
             except ValueError:
-                _flash_invalid()
-                entry.focus_set()
-                entry.select_range(0, "end")
+                return None
+            return val if val >= 1 else None
 
-        def _cancel():
-            dlg.destroy()
-
-        tk.Button(
-            btn_frame, text="OK", width=8,
-            bg="#1e1e1e", fg=TEXT_COLOR,
-            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-            relief="flat", bd=4, command=_confirm,
-        ).pack(side="left", padx=(0, 8))
-
-        tk.Button(
-            btn_frame, text="Cancel", width=8,
-            bg="#1e1e1e", fg=TEXT_COLOR,
-            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-            relief="flat", bd=4, command=_cancel,
-        ).pack(side="left")
-
-        entry.bind("<Return>", lambda _: _confirm())
-        entry.bind("<Escape>", lambda _: _cancel())
-
-        dlg.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
-        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"+{x}+{y}")
-
-        self.wait_window(dlg)
-
-        if result[0] is not None and result[0] != self.page_size:
-            self.page_size = result[0]
+        result = _prompt_int_dialog(
+            self, "Results per page", "Results per page:",
+            str(self.page_size), _parse, flash_invalid=True,
+        )
+        if result is not None and result != self.page_size:
+            self.page_size = result
             self.page = 0
             self._render_list()
 
@@ -314,69 +339,18 @@ class BrowserPaginationMixin:
         if total_pages <= 1:
             return
 
-        dlg = tk.Toplevel(self, bg=BG_COLOR)
-        dlg.title("Go to page")
-        dlg.resizable(False, False)
-        dlg.transient(self)
-        dlg.grab_set()
-
-        tk.Label(
-            dlg, text=f"Enter page number (1–{total_pages}):",
-            bg=BG_COLOR, fg=TEXT_COLOR, font=("Segoe UI", 10),
-        ).pack(padx=20, pady=(16, 6))
-
-        entry = tk.Entry(
-            dlg, font=("Segoe UI", 10), width=10,
-            bg="#1e1e1e", fg=TEXT_COLOR, insertbackground=TEXT_COLOR,
-            relief="flat", bd=4, justify="center",
-        )
-        entry.insert(0, str(self.page + 1))
-        entry.select_range(0, "end")
-        entry.pack(padx=20, pady=(0, 12))
-        entry.focus_set()
-
-        btn_frame = tk.Frame(dlg, bg=BG_COLOR)
-        btn_frame.pack(padx=20, pady=(0, 16))
-
-        result: list[int | None] = [None]
-
-        def _confirm():
+        def _parse(text: str) -> int | None:
             try:
-                result[0] = int(entry.get())
+                return int(text)
             except ValueError:
-                pass
-            dlg.destroy()
+                return None
 
-        def _cancel():
-            dlg.destroy()
-
-        ok_btn = tk.Button(
-            btn_frame, text="OK", width=8,
-            bg="#1e1e1e", fg=TEXT_COLOR,
-            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-            relief="flat", bd=4, command=_confirm,
+        result = _prompt_int_dialog(
+            self, "Go to page", f"Enter page number (1–{total_pages}):",
+            str(self.page + 1), _parse,
         )
-        ok_btn.pack(side="left", padx=(0, 8))
-
-        tk.Button(
-            btn_frame, text="Cancel", width=8,
-            bg="#1e1e1e", fg=TEXT_COLOR,
-            activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-            relief="flat", bd=4, command=_cancel,
-        ).pack(side="left")
-
-        entry.bind("<Return>", lambda _: _confirm())
-        entry.bind("<Escape>", lambda _: _cancel())
-
-        dlg.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
-        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"+{x}+{y}")
-
-        self.wait_window(dlg)
-
-        if result[0] is not None:
-            self.page = max(0, min(result[0] - 1, total_pages - 1))
+        if result is not None:
+            self.page = max(0, min(result - 1, total_pages - 1))
             self._render_list()
 
     def _update_pagination_controls(self):

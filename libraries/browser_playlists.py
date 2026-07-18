@@ -30,6 +30,7 @@ from PIL import Image
 
 from libraries.beatsaver_api import USER_AGENT
 from libraries.constants import ACCENT_COLOR, TEXT_COLOR
+from libraries.fs_utils import atomic_write_text
 from libraries.song_data import SongInfo, load_songs, load_song_hashes, compute_song_hash
 from libraries.player_data import (
     song_level_ids, load_favorites, load_player_stats,
@@ -241,6 +242,7 @@ class BrowserPlaylistsMixin:
                     "Cannot Create Playlist",
                     "None of the selected songs have a hash — they may not have been "
                     "loaded by Beat Saber yet.\n\n" + names,
+                    parent=parent or self,
                 )
                 return
             proceed = messagebox.askyesno(
@@ -250,6 +252,7 @@ class BrowserPlaylistsMixin:
                 + "\n\nContinue with the remaining "
                 + str(len(valid))
                 + " song(s)?",
+                parent=parent or self,
             )
             if not proceed:
                 return
@@ -327,21 +330,12 @@ class BrowserPlaylistsMixin:
 
         content = json.dumps(playlist, ensure_ascii=False, indent=2)
         target = Path(save_path)
-        # `fd` is `tkinter.filedialog` in scope — use a distinct name for the
-        # file descriptor so a future edit that references `fd.ask…()` below
-        # this line doesn't hit AttributeError on an int.
-        fd_int, tmp_str = tempfile.mkstemp(dir=str(target.parent), suffix=".tmp")
-        try:
-            with os.fdopen(fd_int, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_str, target)
-        except:
-            Path(tmp_str).unlink(missing_ok=True)
-            raise
+        atomic_write_text(target, content)
 
         messagebox.showinfo(
             "Playlist Saved",
             f"Saved {len(valid)} songs to {target.name}",
+            parent=parent or self,
         )
 
     # ── Playlist import (drag-and-drop + File menu) ───────────────────────────
