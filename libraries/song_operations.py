@@ -141,16 +141,10 @@ def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> 
                 data["song"] = {}
             data["song"]["title"] = song_name
             data["song"]["author"] = author
-            new_mappers = [mapper] if mapper else []
+            new_mappers = [m.strip() for m in mapper.split(",") if m.strip()] if mapper else []
             for bm in data.get("difficultyBeatmaps", []):
                 authors = bm.setdefault("beatmapAuthors", {})
-                existing = authors.get("mappers", [])
-                if existing:
-                    existing[0] = mapper if mapper else ""
-                    if not mapper:
-                        existing.clear()
-                else:
-                    authors["mappers"] = new_mappers[:]
+                authors["mappers"] = new_mappers[:]
         else:
             data["_songName"] = song_name
             data["_songAuthorName"] = author
