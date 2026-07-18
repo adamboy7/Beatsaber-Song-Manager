@@ -163,10 +163,15 @@ def _song_matches_tags(
 
 
 def filter_songs(
-    songs: list, query: str, player_stats: dict, favorite_ids: set
+    songs: list, query: str, player_stats: dict, favorite_ids: set,
+    parsed: tuple[list[tuple[str, str]], str] | None = None,
 ) -> list:
-    """Filter songs using the same search/tag logic as the GUI search box."""
-    tags, plain = _parse_tags(query)
+    """Filter songs using the same search/tag logic as the GUI search box.
+
+    `parsed` lets callers that already ran `_parse_tags(query)` pass the
+    result through instead of having it recomputed here.
+    """
+    tags, plain = parsed if parsed is not None else _parse_tags(query)
     plain_lower = plain.lower()
     return [
         s for s in songs
@@ -470,12 +475,15 @@ class BrowserPaginationMixin:
         self._pending_install_id = None
         self._install_manager.cancel()
         raw_query = self.search_var.get().strip()
-        tags, _ = _parse_tags(raw_query)
+        parsed = _parse_tags(raw_query)
+        tags, _ = parsed
 
         if not raw_query:
             self.filtered = self.songs[:]
         else:
-            self.filtered = filter_songs(self.songs, raw_query, self.player_stats, self.favorite_ids)
+            self.filtered = filter_songs(
+                self.songs, raw_query, self.player_stats, self.favorite_ids, parsed=parsed
+            )
         self.filtered = self._apply_view_filters(self.filtered)
         self.selected_indices = {
             i for i, s in enumerate(self.filtered)
