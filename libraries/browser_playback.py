@@ -178,7 +178,7 @@ class BrowserPlaybackMixin:
         if not playable:
             return
         self._queue.extend(playable)
-        if self._media_player.playing_song is None and self._player_bar_visible:
+        if self._media_player.playing_song is None:
             self._queue_index = len(self._queue) - len(playable)
             self._play_audio(self._queue[self._queue_index])
         self._notify_queue_window()

@@ -476,23 +476,18 @@ class BrowserActionsMixin:
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
-        if self._player_bar_visible:
-            queue_empty = not self._queue
-            if queue_empty:
-                menu.add_command(label="Play",
-                                 command=lambda: self._add_to_queue([song]),
-                                 state="normal" if song.audio_path else "disabled")
-            elif shift_held:
-                menu.add_command(label="Play",
-                                 command=lambda: self._add_to_queue_and_jump([song]),
-                                 state="normal" if song.audio_path else "disabled")
-            else:
-                menu.add_command(label="Add to Queue",
-                                 command=lambda: self._add_to_queue([song]),
-                                 state="normal" if song.audio_path else "disabled")
+        queue_empty = not self._queue
+        if queue_empty:
+            menu.add_command(label="Play",
+                             command=lambda: self._add_to_queue([song]),
+                             state="normal" if song.audio_path else "disabled")
+        elif shift_held:
+            menu.add_command(label="Play",
+                             command=lambda: self._add_to_queue_and_jump([song]),
+                             state="normal" if song.audio_path else "disabled")
         else:
-            menu.add_command(label="Play Audio",
-                             command=lambda: self._play_queue([song]),
+            menu.add_command(label="Add to Queue",
+                             command=lambda: self._add_to_queue([song]),
                              state="normal" if song.audio_path else "disabled")
         if is_fav:
             menu.add_command(label="Remove from Favorites",
@@ -568,14 +563,10 @@ class BrowserActionsMixin:
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
                        bd=0)
-        if self._player_bar_visible:
-            menu.add_command(label="Add to Queue",
-                             command=lambda: self._add_to_queue(songs))
-        else:
-            has_audio = any(s.audio_path for s in songs)
-            menu.add_command(label="Play",
-                             state="normal" if has_audio else "disabled",
-                             command=lambda: self._play_queue(songs))
+        has_audio = any(s.audio_path for s in songs)
+        menu.add_command(label="Add to Queue",
+                         state="normal" if has_audio else "disabled",
+                         command=lambda: self._add_to_queue(songs))
         menu.add_separator()
         menu.add_command(label="Add to Favorites",
                          command=lambda: self._add_to_favorites_multi(songs),
