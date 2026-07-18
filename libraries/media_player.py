@@ -98,13 +98,16 @@ class MediaPlayer:
     loading), so elapsed_seconds() never goes backwards on callers.
     """
 
-    def __init__(self):
+    def __init__(self, after_fn=None, status_cb=None):
         self._player = None  # lazily-created mpv.MPV | None
         self._audio_paused: bool = False
         self._stopped: bool = False
         self._looping: bool = False
         self.playing_song: SongInfo | None = None
         self._kb_listener = None
+
+        self._after_fn = after_fn
+        self._status_cb = status_cb
 
         # True once the current file reached end-of-file (mpv keep-open pauses
         # on the last sample instead of going idle, and flips eof-reached).
@@ -383,4 +386,9 @@ class MediaPlayer:
             # not installed, etc.) — downloading a fresh copy wouldn't help.
             _show_unavailable()
         else:
-            mpv_installer.offer_download_once(install_dir(), on_unavailable=_show_unavailable)
+            mpv_installer.offer_download_once(
+                install_dir(),
+                self._after_fn or (lambda _ms, fn: fn()),
+                status_cb=self._status_cb,
+                on_unavailable=_show_unavailable,
+            )

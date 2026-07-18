@@ -13,8 +13,11 @@ the usual place. 7-Zip is common enough among Beat Saber modders that this
 covers most cases; if none is found, the archive is still downloaded and the
 user is told how to finish the extraction by hand.
 
-Only the standard library is used for networking (``urllib``), matching
-beatsaver_api.py.
+Progress is reported the same way every other background download in this
+app reports it (yt-dlp's own download, then Cinema video downloads in
+browser_actions.py): plain status-bar text via a caller-supplied ``status_cb``,
+no separate progress window. Only the standard library is used for
+networking (``urllib``), matching beatsaver_api.py.
 """
 
 from __future__ import annotations
@@ -27,11 +30,10 @@ import subprocess
 import sys
 import threading
 import time
-import tkinter as tk
 import urllib.error
 import urllib.request
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 
 RELEASES_API = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
 USER_AGENT = "BeatSaberSongManager/1.0 (github.com/adamboy8888/Beatsaber-Song-Manager)"
@@ -155,12 +157,17 @@ def _restart_app() -> None:
     os.execv(exe, args)
 
 
-def offer_download_once(dest_dir: Path, parent: tk.Misc | None = None, on_unavailable=None) -> None:
+def offer_download_once(dest_dir: Path, after_fn, status_cb=None, on_unavailable=None) -> None:
     """Ask the user, at most once per run, whether to fetch libmpv now.
 
     Downloads the matching-architecture mpv-dev archive into ``dest_dir`` and
-    tries to extract libmpv-2.dll from it in the background, reporting the
-    outcome via message boxes.
+    tries to extract libmpv-2.dll from it in a background thread, reporting
+    progress through ``status_cb`` (a plain ``str -> None`` callable, e.g.
+    ``lambda text: status_bar.config(text=text)``) — the same status-bar
+    convention yt-dlp's own download and Cinema video downloads use, rather
+    than a separate progress window. ``after_fn`` (typically the app's
+    ``Tk.after``) marshals status/completion callbacks from the worker
+    thread back onto the main thread.
 
     ``on_unavailable`` is the caller's fallback for "mpv still isn't usable
     this session" — e.g. showing its own "Play Audio" warning. It fires
@@ -177,6 +184,14 @@ def offer_download_once(dest_dir: Path, parent: tk.Misc | None = None, on_unavai
         if on_unavailable is not None:
             on_unavailable()
 
+    def report(text: str) -> None:
+        if status_cb is None:
+            return
+        try:
+            after_fn(0, lambda: status_cb(text))
+        except Exception:
+            pass  # UI already torn down (e.g. app closing)
+
     if _offered:
         unavailable()
         return
@@ -189,86 +204,64 @@ def offer_download_once(dest_dir: Path, parent: tk.Misc | None = None, on_unavai
         "playback is unavailable.\n\n"
         f"Download the latest mpv-dev ({arch}) build from "
         "github.com/shinchiro/mpv-winbuild-cmake and install libmpv-2.dll now?",
-        parent=parent,
     ):
         unavailable()
         return
-
-    progress = tk.Toplevel(parent)
-    progress.title("Downloading libmpv…")
-    progress.resizable(False, False)
-    if parent is not None:
-        progress.transient(parent)
-    label = tk.Label(progress, text="Contacting GitHub…")
-    label.pack(padx=16, pady=(16, 8))
-    bar = ttk.Progressbar(progress, length=320, mode="indeterminate")
-    bar.pack(padx=16, pady=(0, 16))
-    bar.start(12)
-    progress.protocol("WM_DELETE_WINDOW", lambda: None)  # no cancel mid-download
-    try:
-        progress.grab_set()
-    except tk.TclError:
-        pass
 
     result: dict = {}
 
     def on_progress(got: int, total: int) -> None:
         if total:
             pct = int(got * 100 / total)
-            text = f"Downloading… {pct}%"
+            report(f"Downloading libmpv… {pct}%")
         else:
-            text = f"Downloading… {got // (1 << 20)} MB"
-        try:
-            label.after(0, lambda: label.config(text=text))
-        except tk.TclError:
-            pass  # window already torn down
+            report(f"Downloading libmpv… {got // (1 << 20)} MB")
 
     def worker() -> None:
         try:
+            report("Locating latest mpv-dev build…")
             url, name = find_asset(arch)
             archive_path = dest_dir / name
-            label.after(0, lambda: label.config(text=f"Downloading {name}…"))
+            report(f"Downloading {name}…")
             _download(url, archive_path, on_progress)
+
+            report(f"Extracting {name}…")
+            seven_zip = find_7z_exe()
+            extracted = bool(seven_zip) and _extract_dll(seven_zip, archive_path, dest_dir)
+            if extracted:
+                try:
+                    archive_path.unlink()
+                except OSError:
+                    pass
             result["archive_path"] = archive_path
+            result["extracted"] = extracted
         except MpvInstallError as e:
             result["error"] = str(e)
         try:
-            progress.after(0, _finish)
-        except tk.TclError:
-            pass  # window already torn down (e.g. app closing)
+            after_fn(0, _finish)
+        except Exception:
+            pass  # UI already torn down (e.g. app closing)
 
     def _finish() -> None:
-        bar.stop()
-        try:
-            progress.grab_release()
-        except tk.TclError:
-            pass
-        progress.destroy()
-
         if "error" in result:
-            messagebox.showerror(
-                "Download Failed", f"Couldn't download libmpv:\n{result['error']}", parent=parent
-            )
+            report(f"libmpv download failed: {result['error']}")
+            messagebox.showerror("Download Failed", f"Couldn't download libmpv:\n{result['error']}")
             unavailable()
             return
 
         archive_path: Path = result["archive_path"]
-        seven_zip = find_7z_exe()
-        if seven_zip and _extract_dll(seven_zip, archive_path, dest_dir):
-            try:
-                archive_path.unlink()
-            except OSError:
-                pass
+        if result["extracted"]:
+            report("libmpv installed.")
             if messagebox.askyesno(
                 "libmpv Installed",
                 "libmpv-2.dll was installed. It won't take effect until the "
                 "app restarts — restart now?",
-                parent=parent,
             ):
                 _restart_app()
                 return  # unreachable once the process re-execs
             unavailable()
         else:
+            report(f"Saved {archive_path.name} — extract it manually to finish.")
             messagebox.showinfo(
                 "Archive Downloaded",
                 f"Saved {archive_path.name} next to the app, but no 7-Zip install "
@@ -276,7 +269,6 @@ def offer_download_once(dest_dir: Path, parent: tk.Misc | None = None, on_unavai
                 "filter only 7-Zip supports).\n\n"
                 "Open it with 7-Zip, extract libmpv-2.dll into this same folder, "
                 "then restart the app.",
-                parent=parent,
             )
             unavailable()
 
