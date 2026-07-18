@@ -225,7 +225,10 @@ class BrowserPlaylistsMixin:
 
     # ── Playlist export ───────────────────────────────────────────────────────
 
-    def _share_playlist(self, songs: list[SongInfo], parent: tk.Misc | None = None) -> None:
+    def _share_playlist(
+        self, songs: list[SongInfo], parent: tk.Misc | None = None,
+        art_b64: str | None = None,
+    ) -> None:
         invalid = [s for s in songs if not s.song_hash]
         valid = [s for s in songs if s.song_hash]
 
@@ -293,16 +296,17 @@ class BrowserPlaylistsMixin:
 
         title = Path(save_path).stem
 
-        image_data = ""
-        for song in valid:
-            if song.cover_path and song.cover_path.exists():
-                try:
-                    buf = io.BytesIO()
-                    Image.open(song.cover_path).convert("RGB").save(buf, format="JPEG")
-                    image_data = base64.b64encode(buf.getvalue()).decode("ascii")
-                except Exception:
-                    continue
-                break
+        image_data = art_b64 or ""
+        if not image_data:
+            for song in valid:
+                if song.cover_path and song.cover_path.exists():
+                    try:
+                        buf = io.BytesIO()
+                        Image.open(song.cover_path).convert("RGB").save(buf, format="JPEG")
+                        image_data = base64.b64encode(buf.getvalue()).decode("ascii")
+                    except Exception:
+                        continue
+                    break
 
         playlist = {
             "playlistTitle": title,

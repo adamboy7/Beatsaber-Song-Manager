@@ -231,8 +231,10 @@ class QueueWindow(tk.Toplevel):
         self._browser._load_playlist_to_queue(path, anchor=self)
 
     def _on_save_shortcut(self, _event=None):
-        if self._browser._queue:
-            self._browser._share_playlist(list(self._browser._queue), parent=self)
+        b = self._browser
+        if b._queue:
+            art = b._playlist_art_b64 if b._playlist_art_locked else None
+            b._share_playlist(list(b._queue), parent=self, art_b64=art)
         else:
             _show_queue_empty_warning(self)
 
@@ -482,10 +484,11 @@ class QueueWindow(tk.Toplevel):
             bg="#1e1e1e", fg=TEXT_COLOR,
             activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0,
         )
+        art = self._browser._playlist_art_b64 if self._browser._playlist_art_locked else None
         menu.add_command(
             label="Save Queue",
             state="normal" if queue else "disabled",
-            command=lambda: self._browser._share_playlist(list(queue), parent=self),
+            command=lambda: self._browser._share_playlist(list(queue), parent=self, art_b64=art),
         )
         menu.add_separator()
         menu.add_command(
