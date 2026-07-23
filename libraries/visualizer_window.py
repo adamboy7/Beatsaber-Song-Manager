@@ -555,7 +555,7 @@ class VisualizerWindow(tk.Toplevel):
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 bufsize=0,
             )
         except Exception as exc:

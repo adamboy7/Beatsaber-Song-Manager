@@ -469,6 +469,11 @@ class BrowserActionsMixin:
 
     # ── Context menus ─────────────────────────────────────────────────────────
 
+    def _open_folder(self, path: Path) -> None:
+        if os.name != "nt":
+            return
+        os.startfile(path)
+
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
         is_fav = self._is_favorite(song)
         shift_held = bool(event.state & 0x1)
@@ -536,7 +541,7 @@ class BrowserActionsMixin:
                              state="disabled" if downloading else "normal")
         menu.add_separator()
         menu.add_command(label="Open Folder…",
-                         command=lambda: os.startfile(song.folder))
+                         command=lambda: self._open_folder(song.folder))
         menu.add_separator()
         if shift_held:
             menu.add_command(label="Clear Score",

@@ -40,7 +40,7 @@ def get_audio_duration(path: Path) -> float | None:
         result = subprocess.run(
             [ffprobe, "-v", "quiet", "-print_format", "json", "-show_streams", str(path)],
             capture_output=True, timeout=5,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         data = json.loads(result.stdout.decode("utf-8", errors="replace"))
         for stream in data.get("streams", []):

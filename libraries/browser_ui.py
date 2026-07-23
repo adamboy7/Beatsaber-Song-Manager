@@ -42,6 +42,8 @@ class BrowserUIMixin:
         appdata = Path.home() / "AppData" / "LocalLow" / "Hyperbolic Magnetism" / "Beat Saber"
 
         def _open(p: Path):
+            if os.name != "nt":
+                return
             os.startfile(p)
 
         for label, path in (
