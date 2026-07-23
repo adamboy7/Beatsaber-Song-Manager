@@ -141,6 +141,7 @@ def _download_bytes(url: str) -> bytes:
                 return resp.read()
         except urllib.error.HTTPError as e:
             if e.code == 429:
+                last_err = BeatSaverError("rate limited: gave up on download")
                 _ratelimit_wait(e.headers)
                 continue
             last_err = e
