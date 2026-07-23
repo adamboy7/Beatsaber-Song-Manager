@@ -66,6 +66,11 @@ def view_song(browser: "SongBrowser", song: "SongInfo") -> None:
     idx = _find(b.filtered)
     if idx is None:
         b.search_var.set("")
+        pending = getattr(b, "_search_after_id", None)
+        if pending:
+            b.after_cancel(pending)
+            b._search_after_id = None
+        b._do_search()
         idx = _find(b.filtered)
         if idx is None:
             return
