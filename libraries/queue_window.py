@@ -227,8 +227,8 @@ class QueueWindow(tk.Toplevel):
     def _tick(self):
         new_len = len(self._browser._queue)
         new_idx = self._browser._queue_index
-        new_stopped = self._browser._media_player._stopped
-        new_paused = self._browser._media_player._audio_paused
+        new_stopped = self._browser._media_player.is_stopped
+        new_paused = self._browser._media_player.is_paused
         if new_len != self._last_queue_len:
             self.refresh()
         elif new_idx != self._last_queue_index or new_stopped != self._last_stopped or new_paused != self._last_paused:
@@ -246,7 +246,7 @@ class QueueWindow(tk.Toplevel):
         b = self._browser
         mp = b._media_player
         can_next, can_prev = _nav_button_states(
-            len(b._queue), b._queue_index, b._shuffle_queue, b._loop_queue, mp._looping,
+            len(b._queue), b._queue_index, b._shuffle_queue, b._loop_queue, mp.is_looping,
         )
         self._next_btn.config(
             state="normal" if can_next else "disabled",
@@ -262,7 +262,7 @@ class QueueWindow(tk.Toplevel):
         mp = b._media_player
         if not b._queue:
             return
-        if mp._stopped:
+        if mp.is_stopped:
             if not (0 <= b._queue_index < len(b._queue)):
                 b._queue_index = 0
             b._play_audio(b._queue[b._queue_index])
@@ -273,7 +273,7 @@ class QueueWindow(tk.Toplevel):
         b = self._browser
         mp = b._media_player
         has_queue = bool(b._queue)
-        is_playing = has_queue and not mp._stopped and not mp._audio_paused
+        is_playing = has_queue and not mp.is_stopped and not mp.is_paused
         self._play_btn.config(
             text="⏸" if is_playing else "▶",
             fg=TEXT_COLOR if has_queue else SUBTEXT_COLOR,
@@ -304,7 +304,7 @@ class QueueWindow(tk.Toplevel):
     def _refresh_repeat_btn(self):
         b = self._browser
         has_queue = bool(b._queue)
-        active = b._media_player._looping
+        active = b._media_player.is_looping
         self._repeat_btn.config(
             fg=ACCENT_COLOR if active else (TEXT_COLOR if has_queue else SUBTEXT_COLOR),
             state="normal" if has_queue else "disabled",
@@ -322,8 +322,8 @@ class QueueWindow(tk.Toplevel):
         queue = self._browser._queue
         self._last_queue_len = len(queue)
         self._last_queue_index = self._browser._queue_index
-        self._last_stopped = self._browser._media_player._stopped
-        self._last_paused = self._browser._media_player._audio_paused
+        self._last_stopped = self._browser._media_player.is_stopped
+        self._last_paused = self._browser._media_player.is_paused
 
         if not queue:
             tk.Label(
@@ -375,8 +375,8 @@ class QueueWindow(tk.Toplevel):
         row.pack(fill="x")
         self._row_frames.append(row)
 
-        stopped = self._browser._media_player._stopped
-        paused = self._browser._media_player._audio_paused
+        stopped = self._browser._media_player.is_stopped
+        paused = self._browser._media_player.is_paused
         if is_playing and stopped:
             row_icon, row_fg = "■", SUBTEXT_COLOR
         elif is_playing and paused:
@@ -465,7 +465,7 @@ class QueueWindow(tk.Toplevel):
         menu.add_command(label="Add Random Song…", command=_open_add_random)
         b = self._browser
         mp = b._media_player
-        is_playing = queue and not mp._stopped
+        is_playing = queue and not mp.is_stopped
         menu.add_command(
             label="Stop",
             state="normal" if is_playing else "disabled",
@@ -668,7 +668,7 @@ class QueueWindow(tk.Toplevel):
         queue = self._browser._queue
         b = self._browser
         mp = b._media_player
-        is_active = (idx == b._queue_index and not mp._stopped)
+        is_active = (idx == b._queue_index and not mp.is_stopped)
         menu = tk.Menu(
             self, tearoff=0,
             bg="#1e1e1e", fg=TEXT_COLOR,
@@ -700,7 +700,7 @@ class QueueWindow(tk.Toplevel):
             selectcolor=ACCENT_COLOR,
             state="normal" if can_shuffle else "disabled",
         )
-        loop_var = tk.BooleanVar(value=mp._looping)
+        loop_var = tk.BooleanVar(value=mp.is_looping)
         menu.add_checkbutton(
             label="Loop", variable=loop_var,
             command=lambda: self._loop_song(idx, song),
@@ -1095,8 +1095,8 @@ class QueueWindow(tk.Toplevel):
         if children:
             try:
                 is_playing = (idx == self._browser._queue_index)
-                stopped = self._browser._media_player._stopped
-                paused = self._browser._media_player._audio_paused
+                stopped = self._browser._media_player.is_stopped
+                paused = self._browser._media_player.is_paused
                 if is_playing and stopped:
                     icon, fg = "■", SUBTEXT_COLOR
                 elif is_playing and paused:

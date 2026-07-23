@@ -129,6 +129,25 @@ class MediaPlayer:
         return self.playing_song is not None and not self._stopped
 
     @property
+    def is_paused(self) -> bool:
+        """Playback is explicitly paused (not stopped, not playing)."""
+        return self._audio_paused
+
+    @property
+    def is_stopped(self) -> bool:
+        """Playback has been explicitly stopped (no active session)."""
+        return self._stopped
+
+    @property
+    def is_looping(self) -> bool:
+        """The current song is set to repeat instead of advancing the queue."""
+        return self._looping
+
+    @is_looping.setter
+    def is_looping(self, value: bool) -> None:
+        self._looping = bool(value)
+
+    @property
     def is_finished(self) -> bool:
         """The current song's playback ended (EOF or unplayable file)."""
         if self._finished:

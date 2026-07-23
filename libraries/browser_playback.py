@@ -84,7 +84,7 @@ class BrowserPlaybackMixin:
 
     def _toggle_loop(self):
         self._media_player.toggle_loop()
-        self._loop_var.set(self._media_player._looping)
+        self._loop_var.set(self._media_player.is_looping)
         self._update_status_icon()
 
     def _toggle_shuffle_queue(self):
@@ -102,7 +102,7 @@ class BrowserPlaybackMixin:
 
     def _update_status_icon(self):
         mp = self._media_player
-        looping = mp._looping
+        looping = mp.is_looping
         shuffling = self._shuffle_queue
         self._loop_var.set(looping)
         if looping and shuffling:
@@ -127,7 +127,7 @@ class BrowserPlaybackMixin:
         mp = self._media_player
         if not self._queue:
             return
-        if mp._stopped:
+        if mp.is_stopped:
             if not (0 <= self._queue_index < len(self._queue)):
                 self._queue_index = 0
             self._play_audio(self._queue[self._queue_index])
@@ -137,14 +137,14 @@ class BrowserPlaybackMixin:
     def _refresh_player_play_btn(self):
         mp = self._media_player
         has_queue = bool(self._queue)
-        is_playing = has_queue and not mp._stopped and not mp._audio_paused
+        is_playing = has_queue and not mp.is_stopped and not mp.is_paused
         self._player_play_btn.config(
             text="⏸" if is_playing else "▶",
             state="normal" if has_queue else "disabled",
             cursor="hand2" if has_queue else "",
         )
         can_next, can_prev = _nav_button_states(
-            len(self._queue), self._queue_index, self._shuffle_queue, self._loop_queue, mp._looping,
+            len(self._queue), self._queue_index, self._shuffle_queue, self._loop_queue, mp.is_looping,
         )
         self._player_next_btn.config(
             state="normal" if can_next else "disabled",
@@ -184,7 +184,7 @@ class BrowserPlaybackMixin:
 
     def _play_audio(self, song: SongInfo):
         if song is not self._media_player.playing_song:
-            self._media_player._looping = False
+            self._media_player.is_looping = False
         self._media_player.play(song)
         self._show_player_bar(song)
         self._start_player_tick()
@@ -220,7 +220,7 @@ class BrowserPlaybackMixin:
         self._notify_queue_window()
 
     def _queue_next(self) -> None:
-        if self._media_player._looping:
+        if self._media_player.is_looping:
             return
         if self._shuffle_queue and len(self._queue) >= 2:
             next_idx = _pick_shuffle_index(len(self._queue), self._queue_index, self._last_shuffle_index)
@@ -237,7 +237,7 @@ class BrowserPlaybackMixin:
             self._play_audio(self._queue[0])
 
     def _queue_prev(self) -> None:
-        if self._media_player._looping:
+        if self._media_player.is_looping:
             return
         if self._queue_index > 0:
             self._queue_index -= 1
@@ -363,8 +363,8 @@ class BrowserPlaybackMixin:
 
     def _show_player_context_menu(self, event: tk.Event):
         mp = self._media_player
-        stopped = mp._stopped
-        paused = mp._audio_paused
+        stopped = mp.is_stopped
+        paused = mp.is_paused
         queue_empty = not self._queue
 
         if stopped and 0 <= self._queue_index < len(self._queue):
@@ -384,7 +384,7 @@ class BrowserPlaybackMixin:
             play_cmd = mp.toggle_pause
             play_state = "normal"
 
-        loop_var = tk.BooleanVar(value=mp._looping)
+        loop_var = tk.BooleanVar(value=mp.is_looping)
 
         menu = tk.Menu(self, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0)
@@ -406,12 +406,12 @@ class BrowserPlaybackMixin:
             label="Loop", variable=loop_var, command=self._toggle_loop,
             selectcolor=ACCENT_COLOR,
         )
-        can_next = not mp._looping and (
+        can_next = not mp.is_looping and (
             self._queue_index + 1 < len(self._queue)
             or (self._shuffle_queue and len(self._queue) >= 2)
             or (self._loop_queue and bool(self._queue))
         )
-        can_prev = not mp._looping and (
+        can_prev = not mp.is_looping and (
             self._queue_index > 0
             or (self._loop_queue and bool(self._queue))
         )
@@ -443,11 +443,11 @@ class BrowserPlaybackMixin:
 
     def _tick_player(self):
         mp = self._media_player
-        if mp._stopped:
+        if mp.is_stopped:
             self._player_tick_id = None
             return
         if mp.is_finished:
-            if mp._looping and mp.playing_song:
+            if mp.is_looping and mp.playing_song:
                 self._play_audio(mp.playing_song)
                 return
             if self._shuffle_queue and len(self._queue) >= 2:
@@ -475,7 +475,7 @@ class BrowserPlaybackMixin:
 
         elapsed = mp.elapsed_seconds() or 0.0
         duration = mp.song_duration
-        paused = mp._audio_paused
+        paused = mp.is_paused
 
         icon = "▌▌" if paused else "▶"
         song = mp.playing_song

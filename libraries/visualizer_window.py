@@ -349,8 +349,8 @@ class VisualizerWindow(tk.Toplevel):
         try:
             mp = self._browser._media_player
             song = mp.playing_song
-            paused = bool(mp._audio_paused)
-            stopped = bool(mp._stopped)
+            paused = mp.is_paused
+            stopped = mp.is_stopped
             song_id = id(song) if song is not None else None
             session_id = mp.session_id if song is not None else None
 
@@ -671,7 +671,7 @@ class VisualizerWindow(tk.Toplevel):
             # If playback is currently paused (stream launched while paused,
             # e.g. window opened or resized mid-pause), freeze immediately —
             # mpv still decodes and shows the seeked frame while paused.
-            if self._browser._media_player._audio_paused:
+            if self._browser._media_player.is_paused:
                 player.pause = True
         except Exception:
             try:
@@ -989,7 +989,7 @@ class VisualizerWindow(tk.Toplevel):
         if self._current_song is None:
             return
         mp = self._browser._media_player
-        if mp.playing_song is None or mp._stopped:
+        if mp.playing_song is None or mp.is_stopped:
             return
         if self._video_active:
             # mpv rescales its output to the resized parent window on its own —
@@ -999,7 +999,7 @@ class VisualizerWindow(tk.Toplevel):
         # The ffmpeg spectrum stream renders at a fixed size — relaunch it at
         # the new canvas size, seeked to the current position. Debounced, so
         # this fires once after the drag settles.
-        if not mp._audio_paused:
+        if not mp.is_paused:
             self._restart_stream_at_elapsed()
             return
         self._freeze_after_resize_spectrum()
@@ -1070,8 +1070,8 @@ class VisualizerWindow(tk.Toplevel):
         self._current_song = song
         self._current_song_id = id(song) if song is not None else None
         self._current_session_id = mp.session_id if song is not None else None
-        self._was_paused = bool(mp._audio_paused)
-        self._was_stopped = bool(mp._stopped)
+        self._was_paused = mp.is_paused
+        self._was_stopped = mp.is_stopped
         if song is None:
             self._name_label.config(text="")
             self._set_status("No song playing.")
@@ -1085,6 +1085,6 @@ class VisualizerWindow(tk.Toplevel):
         if find_ffmpeg() is None:
             self._set_status("ffmpeg not found — place ffmpeg.exe next to Browser.py.")
             return
-        if initial and not mp._stopped:
+        if initial and not mp.is_stopped:
             elapsed = mp.elapsed_seconds() or 0.0
             self._start_stream(song, elapsed)
