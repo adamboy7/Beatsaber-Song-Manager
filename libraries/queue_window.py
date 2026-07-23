@@ -487,6 +487,7 @@ class QueueWindow(tk.Toplevel):
             return
         b._queue_index = _shuffle_permute(b._queue, b._queue_index)
         self.refresh()
+        b._update_playlist_art_auto()
 
     def _show_add_random_dialog(
         self, locked_count: int | None = None
@@ -650,6 +651,7 @@ class QueueWindow(tk.Toplevel):
 
         self._selected.clear()
         self.refresh()
+        b._update_playlist_art_auto()
 
     def _confirm_clear_queue(self):
         if not messagebox.askyesno(
@@ -895,6 +897,7 @@ class QueueWindow(tk.Toplevel):
                 mid = curr - 1 if curr > src else curr
                 self._browser._queue_index = mid + 1 if mid >= dst else mid
         self.refresh()
+        self._browser._update_playlist_art_auto()
 
     # ── Selection & Delete ───────────────────────────────────────────────────
 
@@ -944,6 +947,7 @@ class QueueWindow(tk.Toplevel):
         else:
             self._browser._queue_index = curr
         self.refresh()
+        self._browser._update_playlist_art_auto()
 
     # ── Clipboard Operations ──────────────────────────────────────────────────
 
@@ -1050,6 +1054,7 @@ class QueueWindow(tk.Toplevel):
 
         self._selected.clear()
         self.refresh()
+        self._browser._update_playlist_art_auto()
 
     # ── Row Coloring ─────────────────────────────────────────────────────────
 
