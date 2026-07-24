@@ -688,7 +688,7 @@ class BrowserUIMixin:
             w.bind("<Button-3>",        lambda e, i=idx, s=song: self._on_right_click(e, i, s))
             w.bind("<Enter>",           lambda e, r=row, s=sep: self._hover(r, s, True))
             w.bind("<Leave>",           lambda e, r=row, s=sep: self._hover(r, s, False))
-            w.bind("<MouseWheel>",      lambda e: (self._hide_mod_tooltip(), self._on_mousewheel(e)))
+            w.bind("<MouseWheel>",      self._on_mousewheel)
             if w in browser_targets:
                 w.bind("<Control-Button-1>",
                        lambda _, s=song: webbrowser.open(f"https://beatsaver.com/maps/{s.song_id}") if s.song_id else None)
