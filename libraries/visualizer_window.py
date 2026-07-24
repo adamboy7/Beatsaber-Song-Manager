@@ -19,6 +19,7 @@ back to the frequency-bar spectrum for the remainder of the song.
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes
 import subprocess
 import threading
 import time
@@ -60,10 +61,24 @@ def _assign_to_visualizer_job(pid: int) -> None:
     assign_process_to_job(_visualizer_job, pid)
 
 
+def _configure_suspend_resume_dll_types(kernel32, ntdll) -> None:
+    kernel32.OpenProcess.restype = ctypes.wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (
+        ctypes.wintypes.DWORD, ctypes.wintypes.BOOL, ctypes.wintypes.DWORD,
+    )
+    kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (ctypes.wintypes.HANDLE,)
+    ntdll.NtSuspendProcess.restype = ctypes.c_long
+    ntdll.NtSuspendProcess.argtypes = (ctypes.wintypes.HANDLE,)
+    ntdll.NtResumeProcess.restype = ctypes.c_long
+    ntdll.NtResumeProcess.argtypes = (ctypes.wintypes.HANDLE,)
+
+
 def _suspend_pid(pid: int) -> bool:
     try:
         kernel32 = ctypes.WinDLL("kernel32")
         ntdll = ctypes.WinDLL("ntdll")
+        _configure_suspend_resume_dll_types(kernel32, ntdll)
         handle = kernel32.OpenProcess(0x0800, False, pid)
         if not handle:
             return False
@@ -79,6 +94,7 @@ def _resume_pid(pid: int) -> bool:
     try:
         kernel32 = ctypes.WinDLL("kernel32")
         ntdll = ctypes.WinDLL("ntdll")
+        _configure_suspend_resume_dll_types(kernel32, ntdll)
         handle = kernel32.OpenProcess(0x0800, False, pid)
         if not handle:
             return False

@@ -25,6 +25,15 @@ def _create_kill_on_close_job():
     """
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = ctypes.wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = (ctypes.wintypes.LPVOID, ctypes.wintypes.LPCWSTR)
+        kernel32.SetInformationJobObject.restype = ctypes.wintypes.BOOL
+        kernel32.SetInformationJobObject.argtypes = (
+            ctypes.wintypes.HANDLE, ctypes.c_int, ctypes.wintypes.LPVOID, ctypes.wintypes.DWORD,
+        )
+        kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (ctypes.wintypes.HANDLE,)
+
         job = kernel32.CreateJobObjectW(None, None)
         if not job:
             return None
@@ -77,6 +86,15 @@ def assign_process_to_job(job, pid: int) -> None:
         return
     try:
         kernel32 = ctypes.WinDLL("kernel32")
+        kernel32.OpenProcess.restype = ctypes.wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (
+            ctypes.wintypes.DWORD, ctypes.wintypes.BOOL, ctypes.wintypes.DWORD,
+        )
+        kernel32.AssignProcessToJobObject.restype = ctypes.wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = (ctypes.wintypes.HANDLE, ctypes.wintypes.HANDLE)
+        kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (ctypes.wintypes.HANDLE,)
+
         # PROCESS_SET_QUOTA | PROCESS_TERMINATE
         h = kernel32.OpenProcess(0x0101, False, pid)
         if h:
