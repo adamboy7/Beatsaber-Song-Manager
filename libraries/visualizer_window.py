@@ -214,6 +214,12 @@ class VisualizerWindow(tk.Toplevel):
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
+    def close(self):
+        """Public entry point for other objects (e.g. the main Browser) to
+        tear down this window, without reaching into the private
+        WM_DELETE_WINDOW handler."""
+        self._on_close()
+
     def _on_close(self):
         if self._tick_id:
             try:

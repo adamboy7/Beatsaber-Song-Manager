@@ -159,7 +159,7 @@ class SongBrowser(
         if self._visualizer_window is not None:
             try:
                 if self._visualizer_window.winfo_exists():
-                    self._visualizer_window._on_close()
+                    self._visualizer_window.close()
             except Exception:
                 pass
             self._visualizer_window = None
