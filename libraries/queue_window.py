@@ -193,7 +193,10 @@ class QueueWindow(tk.Toplevel):
     def _on_dnd_drop(self, event):
         self._canvas.configure(bg="#0d0d1a")
         self._list_frame.configure(bg="#0d0d1a")
-        path = self.tk.splitlist(event.data)[0]
+        paths = self.tk.splitlist(event.data)
+        if not paths:
+            return
+        path = paths[0]
         if Path(path).suffix.lower() not in {".bplist", ".json"}:
             return
         self._browser._load_playlist_to_queue(path, anchor=self)

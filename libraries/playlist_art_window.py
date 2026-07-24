@@ -106,7 +106,10 @@ class PlaylistArtWindow(tk.Toplevel):
     def _on_drop(self, event):
         self.configure(bg="#0d0d1a")
         self._lbl.config(bg="#0d0d1a")
-        path = self.tk.splitlist(event.data)[0]
+        paths = self.tk.splitlist(event.data)
+        if not paths:
+            return
+        path = paths[0]
         try:
             buf = io.BytesIO()
             Image.open(path).convert("RGB").save(buf, format="JPEG")

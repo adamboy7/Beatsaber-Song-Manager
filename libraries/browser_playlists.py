@@ -357,6 +357,8 @@ class BrowserPlaylistsMixin:
     def _on_playlist_drop(self, event) -> None:
         self.status_bar.config(text=getattr(self, "_drag_prev_status", ""))
         paths = self.tk.splitlist(event.data)
+        if not paths:
+            return
         path = paths[0]
         if Path(path).suffix.lower() not in {".bplist", ".json"}:
             return
