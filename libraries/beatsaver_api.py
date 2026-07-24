@@ -121,6 +121,9 @@ def _pick_version(map_json: dict, want_hash: str | None = None) -> dict:
     return max(versions, key=lambda v: v.get("createdAt", ""))
 
 
+_MAX_NAME_LEN = 120
+
+
 def folder_name(map_json: dict) -> str:
     """``<key> (<songName> - <levelAuthorName>)`` with illegal chars stripped."""
     md = map_json.get("metadata", {}) or {}
@@ -128,7 +131,9 @@ def folder_name(map_json: dict) -> str:
         f"{map_json.get('id', '')} "
         f"({md.get('songName', '')} - {md.get('levelAuthorName', '')})"
     )
-    return _ILLEGAL.sub("", raw).strip() or (map_json.get("id") or "song")
+    name = _ILLEGAL.sub("", raw).strip().rstrip(". ")
+    name = name[:_MAX_NAME_LEN].rstrip(". ")
+    return name or (map_json.get("id") or "song")
 
 
 # ── Download + extract ──────────────────────────────────────────────────────
