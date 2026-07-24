@@ -110,7 +110,9 @@ def _ask_overwrite_or_append(parent: tk.Misc, anchor: tk.Misc | None = None) -> 
 
 class BrowserPlaylistsMixin:
     """Song loading, view filters, .bplist I/O, and sub-window
-    orchestration."""
+    orchestration. Reads/writes the standard SongBrowser attributes
+    (``self.songs``, ``self._load_gen``, ``self._pending_playlist_*``,
+    ``self._drag_prev_status``, etc.)."""
 
     # ── Song loading ──────────────────────────────────────────────────────────
 
@@ -125,7 +127,7 @@ class BrowserPlaylistsMixin:
         # Tag each background load with a generation counter so that if the user
         # hammers F5 (or an install completes mid-reload) we can ignore stale
         # results that would otherwise wipe out the newer load's state.
-        self._load_gen = getattr(self, "_load_gen", 0) + 1
+        self._load_gen += 1
         gen = self._load_gen
 
         def worker():
@@ -138,7 +140,7 @@ class BrowserPlaylistsMixin:
         threading.Thread(target=worker, daemon=True).start()
 
     def _maybe_apply_loaded(self, gen: int, songs: list[SongInfo]):
-        if gen != getattr(self, "_load_gen", 0):
+        if gen != self._load_gen:
             return  # superseded by a newer load; drop the stale result
         self._on_loaded(songs)
 
@@ -349,10 +351,10 @@ class BrowserPlaylistsMixin:
         self.status_bar.config(text="Drop .bplist file to open playlist…")
 
     def _on_playlist_drop_leave(self, _event) -> None:
-        self.status_bar.config(text=getattr(self, "_drag_prev_status", ""))
+        self.status_bar.config(text=self._drag_prev_status)
 
     def _on_playlist_drop(self, event) -> None:
-        self.status_bar.config(text=getattr(self, "_drag_prev_status", ""))
+        self.status_bar.config(text=self._drag_prev_status)
         paths = self.tk.splitlist(event.data)
         if not paths:
             return
@@ -519,7 +521,7 @@ class BrowserPlaylistsMixin:
         # If a previous URL install is still in flight, clean up its temp file
         # before we overwrite the slot — otherwise the prior path gets orphaned
         # and is never unlinked.
-        prev_tmp = getattr(self, "_pending_playlist_temp_path", None)
+        prev_tmp = self._pending_playlist_temp_path
         if prev_tmp is not None:
             try:
                 prev_tmp.unlink(missing_ok=True)
@@ -561,7 +563,7 @@ class BrowserPlaylistsMixin:
 
         # Belt-and-suspenders: drop any previous pending temp path so we don't
         # leak it if a rapid re-trigger raced through _install_playlist_from_url.
-        prev_tmp = getattr(self, "_pending_playlist_temp_path", None)
+        prev_tmp = self._pending_playlist_temp_path
         if prev_tmp is not None and prev_tmp != tmp_path:
             try:
                 prev_tmp.unlink(missing_ok=True)

@@ -36,7 +36,7 @@ class BrowserUIMixin:
     # ── Menus / chrome ────────────────────────────────────────────────────────
 
     def _add_folder_menu_items(self):
-        custom_songs = getattr(self, "custom_levels", None)
+        custom_songs = self.custom_levels
         bs_install = custom_songs.parent.parent if custom_songs else None
         appdata = Path.home() / "AppData" / "LocalLow" / "Hyperbolic Magnetism" / "Beat Saber"
 
@@ -737,7 +737,7 @@ class BrowserUIMixin:
 
         No-ops if there's no active tooltip (song needs no mods).
         """
-        tip = getattr(self, "_mod_tooltip", None)
+        tip = self._mod_tooltip
         if tip is None:
             return
         try:
@@ -746,7 +746,7 @@ class BrowserUIMixin:
             pass
 
     def _hide_mod_tooltip(self, *_):
-        tip = getattr(self, "_mod_tooltip", None)
+        tip = self._mod_tooltip
         if tip is not None:
             try:
                 tip.destroy()

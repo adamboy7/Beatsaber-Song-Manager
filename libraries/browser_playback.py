@@ -63,7 +63,9 @@ def _nav_button_states(
 
 
 class BrowserPlaybackMixin:
-    """Audio playback, queue management, and player-bar UI."""
+    """Audio playback, queue management, and player-bar UI. Reads/writes
+    the standard SongBrowser attributes (``self._queue``, ``self._queue_index``,
+    ``self._media_player``, ``self._volume_apply_id``, etc.)."""
 
     # ── View toggles tied to playback ─────────────────────────────────────────
 
@@ -175,9 +177,8 @@ class BrowserPlaybackMixin:
 
     def _on_volume_change(self, level: int) -> None:
         self._volume_label.config(text=f"{level}%")
-        pending = getattr(self, "_volume_apply_id", None)
-        if pending:
-            self.after_cancel(pending)
+        if self._volume_apply_id:
+            self.after_cancel(self._volume_apply_id)
         self._volume_apply_id = self.after(250, lambda: self._media_player.set_volume(level))
 
     # ── Play / queue ──────────────────────────────────────────────────────────

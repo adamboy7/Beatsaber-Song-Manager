@@ -302,7 +302,9 @@ def pick_random_songs(filtered: list | None, unfiltered: list, n: int) -> list:
 
 
 class BrowserPaginationMixin:
-    """Pagination, search, install completion, and scroll helpers."""
+    """Pagination, search, install completion, and scroll helpers. Reads/writes
+    the standard SongBrowser attributes (``self.page``, ``self._search_after_id``,
+    ``self._load_gen``, ``self._pending_install_id``, etc.)."""
 
     # ── Pagination ────────────────────────────────────────────────────────────
 
@@ -399,9 +401,8 @@ class BrowserPaginationMixin:
         return m.group(1) if m else None
 
     def _on_search(self, *_):
-        pending = getattr(self, "_search_after_id", None)
-        if pending:
-            self.after_cancel(pending)
+        if self._search_after_id:
+            self.after_cancel(self._search_after_id)
         self._search_after_id = self.after(350, self._do_search)
 
     def _do_search(self, *_):
@@ -502,7 +503,7 @@ class BrowserPaginationMixin:
     def _on_install_complete_reload(self):
         # Share the same generation counter as _load_async so a racing F5 + install
         # completion can't double-fire the destructive _on_loaded path.
-        self._load_gen = getattr(self, "_load_gen", 0) + 1
+        self._load_gen += 1
         gen = self._load_gen
 
         def worker():
@@ -515,7 +516,7 @@ class BrowserPaginationMixin:
         threading.Thread(target=worker, daemon=True).start()
 
     def _maybe_after_install_load(self, gen: int, songs: list[SongInfo]):
-        if gen != getattr(self, "_load_gen", 0):
+        if gen != self._load_gen:
             return  # superseded; drop stale result
         self._after_install_load(songs)
 

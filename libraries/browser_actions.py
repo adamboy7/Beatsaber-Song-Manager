@@ -32,7 +32,9 @@ from libraries.song_operations import (
 
 
 class BrowserActionsMixin:
-    """Favorites, song-file operations, and right-click menus."""
+    """Favorites, song-file operations, and right-click menus. Reads/writes
+    the standard SongBrowser attributes (``self.favorite_ids``,
+    ``self.custom_levels``, ``self._cinema_downloads_active``, etc.)."""
 
     # ── Favorites ─────────────────────────────────────────────────────────────
 
@@ -305,7 +307,7 @@ class BrowserActionsMixin:
         …\\Beat Saber\\Beat Saber_Data\\CustomLevels layout, otherwise falls
         back to detecting the install through Steam.
         """
-        custom = getattr(self, "custom_levels", None)
+        custom = self.custom_levels
         if custom is not None:
             parts = [p.lower() for p in Path(custom).parts]
             if parts[-2:] == ["beat saber_data", "customlevels"]:
@@ -336,8 +338,7 @@ class BrowserActionsMixin:
                 "This song's cinema-video.json has no YouTube video ID.",
             )
             return
-        active = set(getattr(self, "_cinema_downloads_active", ()))
-        if str(song.folder) in active:
+        if str(song.folder) in self._cinema_downloads_active:
             return
 
         yt_dlp = self._find_yt_dlp()
@@ -396,8 +397,6 @@ class BrowserActionsMixin:
         commonly 403s the very first extraction from a fresh yt-dlp
         (stale signature negotiation) and the retry succeeds.
         """
-        if not hasattr(self, "_cinema_downloads_active"):
-            self._cinema_downloads_active: set[str] = set()
         self._cinema_downloads_active.add(str(song.folder))
 
         out_path = song.folder / song.cinema_video_file
@@ -535,7 +534,7 @@ class BrowserActionsMixin:
         if song.has_cinema_video and not song.has_playable_cinema_video \
                 and song.cinema_video_id:
             menu.add_separator()
-            downloading = str(song.folder) in getattr(self, "_cinema_downloads_active", ())
+            downloading = str(song.folder) in self._cinema_downloads_active
             menu.add_command(label="Download Video",
                              command=lambda: self._download_cinema_video(song),
                              state="disabled" if downloading else "normal")

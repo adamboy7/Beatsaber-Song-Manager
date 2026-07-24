@@ -74,10 +74,12 @@ class SongBrowser(
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
         self._render_gen: int = 0   # bumped on each _render_list; guards stale async thumbnail swap-ins
+        self._load_gen: int = 0   # bumped on reload; guards stale _load_async/_on_install_complete_reload results
         self._thumb_executor = ThreadPoolExecutor(max_workers=2)
         self._pending_install_id: str | None = None
         self._pending_playlist_url: str | None = None
         self._pending_playlist_temp_path: Path | None = None
+        self._search_after_id: str | None = None   # tk `after` handle for debounced search
         self.page: int = 0
         self.page_size: int = PAGE_SIZE
 
@@ -107,6 +109,8 @@ class SongBrowser(
         self._loop_queue: bool = False
         self._shuffle_queue: bool = False
         self._last_shuffle_index: int | None = None
+        self._cinema_downloads_active: set[str] = set()
+        self._mod_tooltip = None
 
         self._build_ui()
 
@@ -114,6 +118,13 @@ class SongBrowser(
         self._media_player.start_media_keys(self._dispatcher.dispatch, self._stop_playback, self._queue_next, self._queue_prev)
         self._queue: list[SongInfo] = []
         self._queue_index: int = -1
+        self._queue_clipboard: list = []
+        # Cut marks are stored as a list of (index, song) tuples so that cutting
+        # one occurrence of a song that appears more than once in the queue
+        # marks/removes only that specific slot, not every slot holding the
+        # same SongInfo reference.
+        self._queue_cut_marks: list | None = None
+        self._volume_apply_id: str | None = None   # tk `after` handle for debounced volume changes
         self._player_bar_visible: bool = False
         if self._keep_player_visible:
             self._show_player_bar_idle(None, None)
@@ -130,6 +141,7 @@ class SongBrowser(
         self._startup_playlist: Path | None = startup_playlist
         self._startup_random_groups: list[tuple[int, str | None]] = startup_random_groups or []
         self._startup_shuffle: bool = startup_shuffle
+        self._drag_prev_status: str = ""
 
         self._install_manager = InstallManager(
             custom_levels,

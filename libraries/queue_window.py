@@ -56,15 +56,6 @@ class QueueWindow(tk.Toplevel):
         self._last_stopped: bool = False
         self._last_paused: bool = False
 
-        if not hasattr(self._browser, '_queue_clipboard'):
-            self._browser._queue_clipboard = []
-        # Cut marks are stored as a list of (index, song) tuples so that
-        # cutting one occurrence of a song that appears more than once in
-        # the queue marks/removes only that specific slot, not every slot
-        # holding the same SongInfo reference.
-        if not hasattr(self._browser, '_queue_cut_marks'):
-            self._browser._queue_cut_marks = None
-
         self.title("Playback Queue")
         self.configure(bg="#0d0d1a")
         self.geometry("420x500")
@@ -354,7 +345,7 @@ class QueueWindow(tk.Toplevel):
         is still at its recorded index (so one cut occurrence of a duplicated
         song doesn't highlight its twin)."""
         queue = self._browser._queue
-        cut_marks = getattr(self._browser, '_queue_cut_marks', None)
+        cut_marks = self._browser._queue_cut_marks
         if not cut_marks:
             return set()
         return {i for i, s in cut_marks if 0 <= i < len(queue) and queue[i] is s}
@@ -974,11 +965,11 @@ class QueueWindow(tk.Toplevel):
         self._update_row_colors()
 
     def _paste_clipboard(self, event=None):
-        clipboard = getattr(self._browser, '_queue_clipboard', [])
+        clipboard = self._browser._queue_clipboard
         if not clipboard:
             return
         queue = self._browser._queue
-        cut_marks = getattr(self._browser, '_queue_cut_marks', None)
+        cut_marks = self._browser._queue_cut_marks
 
         # Determine insert position
         if len(self._selected) == 1:
@@ -1116,7 +1107,7 @@ class QueueWindow(tk.Toplevel):
     def _on_leave(self, row: tk.Frame, idx: int):
         if idx not in self._selected and idx != self._browser._queue_index:
             queue = self._browser._queue
-            cut_marks = getattr(self._browser, '_queue_cut_marks', None)
+            cut_marks = self._browser._queue_cut_marks
             is_cut = (
                 cut_marks is not None
                 and 0 <= idx < len(queue)
