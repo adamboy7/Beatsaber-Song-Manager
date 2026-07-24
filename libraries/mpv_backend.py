@@ -12,7 +12,6 @@ used for ffmpeg/ffprobe — before importing the binding.
 from __future__ import annotations
 
 import ctypes
-import functools
 import os
 from pathlib import Path
 
@@ -31,6 +30,8 @@ LIBMPV_HINT = (
 # dialogs — distinguishes "DLL missing" from "python-mpv not installed" from
 # "DLL present but won't load" (e.g. 32/64-bit mismatch).
 _load_error: str | None = None
+
+_mpv_module = None
 
 
 def load_error() -> str | None:
@@ -60,16 +61,21 @@ def install_dir() -> Path:
     return _local_dir()
 
 
-@functools.lru_cache(maxsize=1)
 def load_mpv():
     """Import and return the python-mpv module, or None if unavailable.
 
     Unavailable means the python-mpv package isn't installed, no libmpv DLL
     could be found (locally or on PATH), or the DLL exists but won't load.
-    ``load_error()`` reports which. The result is cached — like find_ffmpeg,
-    fixing the problem requires an app restart to be picked up.
+    ``load_error()`` reports which.
+
+    Only a successful load is cached. When it fails, every subsequent call
+    retries from scratch, so a libmpv DLL placed next to the app after launch
+    is detected and loaded on the fly — no restart required.
     """
-    global _load_error
+    global _load_error, _mpv_module
+    if _mpv_module is not None:
+        return _mpv_module
+    _load_error = None
     local = find_libmpv()
     if local:
         # python-mpv honors MPV_DLL_PATH as an explicit override; don't
@@ -81,8 +87,11 @@ def load_mpv():
         except (OSError, AttributeError):
             pass
         # Also prepend to PATH: older python-mpv versions ignore MPV_DLL_PATH
-        # and search PATH via ctypes.util.find_library instead.
-        os.environ["PATH"] = dll_dir + os.pathsep + os.environ.get("PATH", "")
+        # and search PATH via ctypes.util.find_library instead. Guard against
+        # re-adding it on retries so a repeated miss doesn't grow PATH.
+        path_entries = os.environ.get("PATH", "").split(os.pathsep)
+        if dll_dir not in path_entries:
+            os.environ["PATH"] = dll_dir + os.pathsep + os.environ.get("PATH", "")
         # Validate the DLL actually loads before python-mpv tries — this
         # surfaces the real Windows error (bad arch, corrupt download,
         # missing VC runtime) instead of a generic import failure.
@@ -93,7 +102,6 @@ def load_mpv():
             return None
     try:
         import mpv
-        return mpv
     except ModuleNotFoundError:
         _load_error = (
             "The Python package 'python-mpv' is not installed. "
@@ -103,3 +111,5 @@ def load_mpv():
     except Exception as exc:
         _load_error = f"python-mpv failed to initialize: {exc}"
         return None
+    _mpv_module = mpv
+    return mpv

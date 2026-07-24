@@ -390,11 +390,10 @@ class MediaPlayer:
 
         If the DLL is simply absent (as opposed to present-but-broken or
         python-mpv not being installed), offer to download it first — once
-        per run. The degrade-and-explain fallback below only actually runs if
-        that offer is declined (now or already, earlier this run), the
-        download/extraction fails, or the user declines the post-install
-        restart; accepting the restart re-execs the process, so this song's
-        playback attempt never gets a fallback at all."""
+        per run. On a successful install the DLL loads live (no restart), and
+        ``on_ready`` retries this song straight away. The degrade-and-explain
+        fallback below only runs if that offer is declined (now or already,
+        earlier this run) or the download/extraction fails."""
         ext = song.audio_path.suffix.lower()
 
         def _show_unavailable() -> None:
@@ -428,4 +427,5 @@ class MediaPlayer:
                 self._dispatch_fn or (lambda fn: fn()),
                 status_cb=self._status_cb,
                 on_unavailable=_show_unavailable,
+                on_ready=lambda: self.play(song),
             )

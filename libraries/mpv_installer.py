@@ -23,11 +23,9 @@ networking (``urllib``), matching beatsaver_api.py.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import struct
 import subprocess
-import sys
 import threading
 import time
 import urllib.error
@@ -140,24 +138,8 @@ def _extract_dll(seven_zip: str, archive: Path, dest_dir: Path) -> bool:
     return result.returncode == 0 and (dest_dir / "libmpv-2.dll").exists()
 
 
-def _restart_app() -> None:
-    """Re-exec the current process in place.
-
-    mpv_backend.load_mpv() caches a negative result for the process's
-    lifetime, so a freshly-installed DLL only takes effect after a real
-    restart — there's no live retry that would pick it up. os.execv replaces
-    the process image directly rather than spawning a child, so there's
-    nothing left to clean up on this side.
-    """
-    exe = sys.executable
-    if getattr(sys, "frozen", False):
-        args = [exe] + sys.argv[1:]
-    else:
-        args = [exe, sys.argv[0]] + sys.argv[1:]
-    os.execv(exe, args)
-
-
-def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None, on_unavailable=None) -> None:
+def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
+                        on_unavailable=None, on_ready=None) -> None:
     """Ask the user, at most once per run, whether to fetch libmpv now.
 
     Downloads the matching-architecture mpv-dev archive into ``dest_dir`` and
@@ -172,11 +154,13 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None, on_unavaila
     ``on_unavailable`` is the caller's fallback for "mpv still isn't usable
     this session" — e.g. showing its own "Play Audio" warning. It fires
     exactly on the paths where that's true: the offer was already made and
-    resolved earlier this run, the user declines the offer, the download or
-    extraction fails, or the user declines the post-install restart. It does
-    *not* fire when the user accepts the restart, since mpv_backend.load_mpv()
-    caches a negative result for the process's lifetime — the only way it
-    becomes usable in this run is if the process never comes back.
+    resolved earlier this run, the user declines the offer, or the download or
+    extraction fails (including a DLL that installs but still won't load).
+
+    ``on_ready`` fires when the freshly-installed libmpv loads successfully —
+    load_mpv() picks up the new DLL live, no restart needed — so the caller
+    can retry whatever playback prompted the offer. If it's omitted, a plain
+    "installed and ready" info dialog is shown instead.
     """
     global _offered
 
@@ -252,14 +236,32 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None, on_unavaila
         archive_path: Path = result["archive_path"]
         if result["extracted"]:
             report("libmpv installed.")
-            if dialogs.ask_yes_no(
-                "libmpv Installed",
-                "libmpv-2.dll was installed. It won't take effect until the "
-                "app restarts — restart now?",
-            ):
-                _restart_app()
-                return  # unreachable once the process re-execs
-            unavailable()
+            # Load the just-installed DLL live — load_mpv() only caches
+            # successes, so this newly-present binary is picked up without a
+            # restart. Import here (not at module top) to avoid a circular
+            # import: mpv_backend has no dependency on this module.
+            from libraries import mpv_backend
+            if mpv_backend.load_mpv() is not None:
+                report("libmpv installed and ready.")
+                if on_ready is not None:
+                    on_ready()
+                else:
+                    dialogs.show_info(
+                        "libmpv Installed",
+                        "libmpv-2.dll was installed and loaded — in-app "
+                        "audio/video playback is now available.",
+                    )
+            else:
+                # Present on disk but still won't load (e.g. arch mismatch or
+                # missing VC runtime). A restart wouldn't fix that, so report
+                # the real reason and fall back.
+                report("libmpv installed but could not be loaded.")
+                dialogs.show_error(
+                    "libmpv Not Loaded",
+                    mpv_backend.load_error()
+                    or "libmpv-2.dll was installed but could not be loaded.",
+                )
+                unavailable()
         else:
             report(f"Saved {archive_path.name} — extract it manually to finish.")
             dialogs.show_info(
@@ -268,7 +270,7 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None, on_unavaila
                 "was found to auto-extract it (the archive uses a compression "
                 "filter only 7-Zip supports).\n\n"
                 "Open it with 7-Zip, extract libmpv-2.dll into this same folder, "
-                "then restart the app.",
+                "then try playback again — no restart needed.",
             )
             unavailable()
 
