@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import random
 import tkinter as tk
-from tkinter import messagebox
+from libraries import dialogs
 
 from libraries.constants import ACCENT_COLOR, TEXT_COLOR
 from libraries.song_data import SongInfo
@@ -335,7 +335,7 @@ class BrowserPlaybackMixin:
         self._refresh_player_play_btn()
 
     def _confirm_clear_queue(self):
-        if not messagebox.askyesno(
+        if not dialogs.ask_yes_no(
             "Clear Queue",
             "Stop playback and clear the entire queue?",
             icon="warning",

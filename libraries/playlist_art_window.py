@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import tkinter as tk
-from tkinter import messagebox
+from libraries import dialogs
 from tkinterdnd2 import DND_FILES
 from PIL import Image, ImageTk
 
@@ -116,7 +116,7 @@ class PlaylistArtWindow(tk.Toplevel):
             self._browser._playlist_art_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
             self._browser._playlist_art_locked = True
         except Exception as e:
-            messagebox.showerror("Error", f"Could not load image:\n{e}", parent=self)
+            dialogs.show_error("Error", f"Could not load image:\n{e}", parent=self)
             return
         self.refresh()
 
@@ -124,7 +124,7 @@ class PlaylistArtWindow(tk.Toplevel):
         import tkinter.filedialog as fd
         b64 = self._browser._playlist_art_b64
         if not b64:
-            messagebox.showinfo("No image", "There is no image to save.", parent=self)
+            dialogs.show_info("No image", "There is no image to save.", parent=self)
             return
         path = fd.asksaveasfilename(
             title="Save Image As",
@@ -143,7 +143,7 @@ class PlaylistArtWindow(tk.Toplevel):
             fmt = "PNG" if Path(path).suffix.lower() == ".png" else "JPEG"
             img.save(path, format=fmt)
         except Exception as e:
-            messagebox.showerror("Error", f"Could not save image:\n{e}", parent=self)
+            dialogs.show_error("Error", f"Could not save image:\n{e}", parent=self)
 
     def _replace_art(self):
         import tkinter.filedialog as fd
@@ -163,7 +163,7 @@ class PlaylistArtWindow(tk.Toplevel):
             self._browser._playlist_art_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
             self._browser._playlist_art_locked = True
         except Exception as e:
-            messagebox.showerror("Error", f"Could not load image:\n{e}", parent=self)
+            dialogs.show_error("Error", f"Could not load image:\n{e}", parent=self)
             return
         self.refresh()
 

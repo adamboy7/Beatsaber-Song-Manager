@@ -2,7 +2,7 @@ import os
 import time
 import ctypes
 import ctypes.wintypes
-from tkinter import messagebox
+from libraries import dialogs
 
 from libraries.audio_utils import get_audio_duration
 from libraries import mpv_installer
@@ -277,7 +277,7 @@ class MediaPlayer:
                 self._audio_paused = True
                 self._pause_start = time.time()
         except Exception as exc:
-            messagebox.showerror("Pause Failed", str(exc))
+            dialogs.show_error("Pause Failed", str(exc))
 
     def elapsed_seconds(self) -> float | None:
         if self._play_start is None:
@@ -358,7 +358,7 @@ class MediaPlayer:
 
     def play(self, song: SongInfo) -> None:
         if not song.audio_path:
-            messagebox.showwarning("Play Audio", "This song has no audio file.")
+            dialogs.show_warning("Play Audio", "This song has no audio file.")
             return
         self.stop()
         self._stopped = False
@@ -372,7 +372,7 @@ class MediaPlayer:
             player.pause = False  # keep-open leaves the player paused at EOF
             player.loadfile(str(song.audio_path))
         except Exception as exc:
-            messagebox.showerror("Play Audio Failed", str(exc))
+            dialogs.show_error("Play Audio Failed", str(exc))
             # Let the queue tick treat this like a dead player and move on.
             self._finished = True
             return
@@ -404,16 +404,16 @@ class MediaPlayer:
                     self._stopped = True
                     self.playing_song = None
                     self.song_duration = None
-                    messagebox.showinfo(
+                    dialogs.show_info(
                         "Play Audio",
                         f"{_mpv_unavailable_message()}\n\nHanded the file to your "
                         "system's default player instead. The in-app controls "
                         "(volume, pause, queue) won't apply to that playback.",
                     )
                 except Exception as exc:
-                    messagebox.showerror("Play Audio Failed", str(exc))
+                    dialogs.show_error("Play Audio Failed", str(exc))
             else:
-                messagebox.showwarning("Play Audio", _mpv_unavailable_message())
+                dialogs.show_warning("Play Audio", _mpv_unavailable_message())
                 # Mark finished so an active queue skips to the next song,
                 # matching the old behavior when ffplay was missing.
                 self._finished = True

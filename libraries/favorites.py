@@ -3,7 +3,7 @@ import os
 import subprocess
 import datetime
 from pathlib import Path
-from tkinter import messagebox
+from libraries import dialogs
 
 from libraries.song_data import SongInfo
 from libraries.audio_utils import _local_dir
@@ -55,7 +55,7 @@ def confirm_player_data_write(parent=None) -> bool:
     if not beat_saber_running():
         return True
     try:
-        return bool(messagebox.askyesno(
+        return bool(dialogs.ask_yes_no(
             "Beat Saber is running",
             "Beat Saber appears to be running. Saving now risks the game overwriting "
             "your change when it exits (or vice versa).\n\n"
@@ -83,7 +83,7 @@ def _atomic_write_player_data(
     """
     try:
         if player_dat_path.stat().st_mtime_ns != mtime_before:
-            messagebox.showerror(
+            dialogs.show_error(
                 "PlayerData changed",
                 "PlayerData.dat was modified by another process while we were updating it. "
                 "Aborting to avoid overwriting changes. Please retry.",
@@ -122,7 +122,7 @@ def add_to_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: set[st
         favorite_ids.add(level_id)
         return True
     except Exception as exc:
-        messagebox.showerror("Favorites Error", str(exc))
+        dialogs.show_error("Favorites Error", str(exc))
         return False
 
 
@@ -147,5 +147,5 @@ def remove_from_favorites(player_dat_path: Path, song: SongInfo, favorite_ids: s
         favorite_ids -= to_remove
         return True
     except Exception as exc:
-        messagebox.showerror("Favorites Error", str(exc))
+        dialogs.show_error("Favorites Error", str(exc))
         return False

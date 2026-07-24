@@ -17,7 +17,7 @@ import subprocess
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox
+from libraries import dialogs
 
 from libraries.audio_utils import _local_dir
 from libraries.beatsaver_api import USER_AGENT
@@ -79,7 +79,7 @@ class BrowserActionsMixin:
         if count == 0:
             return
         if errors:
-            messagebox.showerror("Restore Failed", "\n".join(errors))
+            dialogs.show_error("Restore Failed", "\n".join(errors))
         else:
             song._parse()
             self._thumbnails.clear()
@@ -102,7 +102,7 @@ class BrowserActionsMixin:
     def _clear_score(self, song: SongInfo):
         if not self.player_dat_path:
             return
-        if not messagebox.askyesno(
+        if not dialogs.ask_yes_no(
             "Clear Score",
             f'Clear all scores for "{song.display_name}"?\n\nThis cannot be undone (a backup will be made).',
             icon="warning", default="no",
@@ -119,14 +119,14 @@ class BrowserActionsMixin:
 
     def _delete_song(self, song: SongInfo):
         msg = f'Delete "{song.display_name}"?\n\nThe folder will be removed from CustomLevels. Your scores will not be affected.'
-        if not messagebox.askyesno("Delete Song", msg, icon="warning", default="no"):
+        if not dialogs.ask_yes_no("Delete Song", msg, icon="warning", default="no"):
             return
         if song is self._media_player.playing_song:
             self._media_player.stop_and_wait()
         try:
             shutil.rmtree(song.folder)
         except Exception as exc:
-            messagebox.showerror("Delete Failed", str(exc))
+            dialogs.show_error("Delete Failed", str(exc))
             return
         self.songs    = [s for s in self.songs    if s is not song]
         self.filtered = [s for s in self.filtered if s is not song]
@@ -164,7 +164,7 @@ class BrowserActionsMixin:
         count = len(songs)
         msg = (f'Delete {count} songs?\n\n'
                f'The folders will be removed from CustomLevels. Your scores will not be affected.')
-        if not messagebox.askyesno("Delete Songs", msg, icon="warning", default="no"):
+        if not dialogs.ask_yes_no("Delete Songs", msg, icon="warning", default="no"):
             return
         failed: list[tuple[SongInfo, Exception]] = []
         for song in songs:
@@ -207,11 +207,11 @@ class BrowserActionsMixin:
         self.status_bar.config(text=f"{len(self.filtered)} songs shown")
         if failed:
             errs = "\n".join(f"{s.display_name}: {exc}" for s, exc in failed)
-            messagebox.showerror("Delete Failed", f"Failed to delete {len(failed)} song(s):\n{errs}")
+            dialogs.show_error("Delete Failed", f"Failed to delete {len(failed)} song(s):\n{errs}")
 
     def _edit_song_info(self, song: SongInfo):
         from libraries.constants import BG_COLOR
-        confirmed = messagebox.askokcancel(
+        confirmed = dialogs.ask_ok_cancel(
             "Warning — Edit Info",
             "Modifying song info changes the data used to generate a song's hash in SongCore.\n\n"
             "This may:\n"
@@ -293,7 +293,7 @@ class BrowserActionsMixin:
         song_name, author, mapper = result[0]
         err = save_song_info(song, song_name, author, mapper)
         if err:
-            messagebox.showerror("Edit Info Failed", err)
+            dialogs.show_error("Edit Info Failed", err)
             return
         self._render_list()
         self.status_bar.config(text=f"Updated info for: {song.display_name}")
@@ -333,7 +333,7 @@ class BrowserActionsMixin:
 
     def _download_cinema_video(self, song: SongInfo):
         if not song.cinema_video_id or not song.cinema_video_file:
-            messagebox.showerror(
+            dialogs.show_error(
                 "Download Video",
                 "This song's cinema-video.json has no YouTube video ID.",
             )
@@ -346,7 +346,7 @@ class BrowserActionsMixin:
             self._run_yt_dlp(yt_dlp, song)
             return
 
-        if not messagebox.askyesno(
+        if not dialogs.ask_yes_no(
             "yt-dlp Not Found",
             "yt-dlp.exe is required to download videos but wasn't found.\n\n"
             "Download it from github.com/yt-dlp/yt-dlp?",
@@ -461,7 +461,7 @@ class BrowserActionsMixin:
             self.after(1000, lambda: self._run_yt_dlp(yt_dlp, song, attempt=2))
         else:
             self.status_bar.config(text=f"Video download failed for: {song.display_name}")
-            messagebox.showerror(
+            dialogs.show_error(
                 "Download Video Failed",
                 f"yt-dlp exited with code {rc}.\n\n{output}"[:2000],
             )
@@ -682,7 +682,7 @@ class BrowserActionsMixin:
                 return
             # Reject whitespace-containing tags (can't be searched via {custom}:tag)
             if " " in raw:
-                messagebox.showwarning("Custom Tags", "Tag names cannot contain spaces.", parent=dlg)
+                dialogs.show_warning("Custom Tags", "Tag names cannot contain spaces.", parent=dlg)
                 return
             tag = raw
             if tag in tag_rows:

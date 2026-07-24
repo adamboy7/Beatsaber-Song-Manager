@@ -33,7 +33,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from tkinter import messagebox
+from libraries import dialogs
 
 RELEASES_API = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
 USER_AGENT = "BeatSaberSongManager/1.0 (github.com/adamboy8888/Beatsaber-Song-Manager)"
@@ -198,7 +198,7 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None, on_unavaila
     _offered = True
 
     arch = target_arch()
-    if not messagebox.askyesno(
+    if not dialogs.ask_yes_no(
         "libmpv Not Found",
         "libmpv-2.dll wasn't found next to the app, so in-app audio/video "
         "playback is unavailable.\n\n"
@@ -245,14 +245,14 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None, on_unavaila
     def _finish() -> None:
         if "error" in result:
             report(f"libmpv download failed: {result['error']}")
-            messagebox.showerror("Download Failed", f"Couldn't download libmpv:\n{result['error']}")
+            dialogs.show_error("Download Failed", f"Couldn't download libmpv:\n{result['error']}")
             unavailable()
             return
 
         archive_path: Path = result["archive_path"]
         if result["extracted"]:
             report("libmpv installed.")
-            if messagebox.askyesno(
+            if dialogs.ask_yes_no(
                 "libmpv Installed",
                 "libmpv-2.dll was installed. It won't take effect until the "
                 "app restarts — restart now?",
@@ -262,7 +262,7 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None, on_unavaila
             unavailable()
         else:
             report(f"Saved {archive_path.name} — extract it manually to finish.")
-            messagebox.showinfo(
+            dialogs.show_info(
                 "Archive Downloaded",
                 f"Saved {archive_path.name} next to the app, but no 7-Zip install "
                 "was found to auto-extract it (the archive uses a compression "

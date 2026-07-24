@@ -4,7 +4,7 @@ import webbrowser
 import tkinter as tk
 import tkinter.filedialog as fd
 from pathlib import Path
-from tkinter import messagebox
+from libraries import dialogs
 
 from libraries.song_data import SongInfo
 from libraries.asset_editor import bak_files, restore_files, replace_art, replace_audio
@@ -27,7 +27,7 @@ def restore_song_files(song: SongInfo) -> tuple[int, list[str]]:
 def replace_song_art(parent: tk.Misc, song: SongInfo) -> bool:
     """Open file dialog and replace cover art. Returns True if replaced."""
     if not song.cover_path:
-        messagebox.showwarning("Replace Art", "This song has no cover image to replace.")
+        dialogs.show_warning("Replace Art", "This song has no cover image to replace.")
         return False
     new_path_str = fd.askopenfilename(
         title="Select New Cover Image",
@@ -39,7 +39,7 @@ def replace_song_art(parent: tk.Misc, song: SongInfo) -> bool:
         replace_art(song.cover_path, new_path_str)
         return True
     except Exception as exc:
-        messagebox.showerror("Replace Art Failed", str(exc))
+        dialogs.show_error("Replace Art Failed", str(exc))
         return False
 
 
@@ -92,7 +92,7 @@ def prompt_ffmpeg_download(parent: tk.Misc) -> None:
 def replace_song_audio(parent: tk.Misc, song: SongInfo) -> bool:
     """Open file dialog and replace audio file. Returns True if replaced."""
     if not song.audio_path:
-        messagebox.showwarning("Replace Audio", "This song has no audio file to replace.")
+        dialogs.show_warning("Replace Audio", "This song has no audio file to replace.")
         return False
     new_path_str = fd.askopenfilename(
         title="Select New Audio File",
@@ -115,7 +115,7 @@ def replace_song_audio(parent: tk.Misc, song: SongInfo) -> bool:
         replace_audio(song.audio_path, new_path_str, ffmpeg_path or "")
         return True
     except Exception as exc:
-        messagebox.showerror("Replace Audio Failed", str(exc))
+        dialogs.show_error("Replace Audio Failed", str(exc))
         return False
 
 
@@ -195,5 +195,5 @@ def clear_song_score(player_dat_path: Path, song: SongInfo) -> tuple[int, dict] 
         backup_player_data(player_dat_path, raw)
         return removed, load_player_stats(player_dat_path)
     except Exception as exc:
-        messagebox.showerror("Clear Score Failed", str(exc))
+        dialogs.show_error("Clear Score Failed", str(exc))
         return None

@@ -23,7 +23,7 @@ import tempfile
 import threading
 import urllib.request
 import tkinter as tk
-from tkinter import messagebox
+from libraries import dialogs
 from tkinterdnd2 import DND_FILES
 from pathlib import Path
 from PIL import Image
@@ -46,66 +46,13 @@ from libraries.visualizer_window import VisualizerWindow
 
 def _ask_overwrite_or_append(parent: tk.Misc, anchor: tk.Misc | None = None) -> str:
     """3-button dialog for non-empty queue drop. Returns 'overwrite', 'append', or ''."""
-    result: dict[str, str] = {"choice": ""}
-
-    dlg = tk.Toplevel(parent)
-    dlg.title("Queue Not Empty")
-    dlg.configure(bg="#0d0d1a")
-    dlg.resizable(False, False)
-    dlg.transient(parent)
-    dlg.grab_set()
-    _icon_source = anchor or parent
-    _dlg_icon = getattr(_icon_source, '_icon', None)
-    if _dlg_icon is None:
-        try:
-            _dlg_icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Warning.png")
-        except Exception:
-            pass
-    if _dlg_icon is not None:
-        try:
-            dlg.iconphoto(False, _dlg_icon)
-            dlg._dlg_icon = _dlg_icon
-        except Exception:
-            pass
-
-    tk.Label(
-        dlg,
-        text="The queue already has songs.\nWhat would you like to do?",
-        font=("Segoe UI", 10),
-        bg="#0d0d1a", fg=TEXT_COLOR,
-        justify="center",
-        padx=20, pady=16,
-    ).pack()
-
-    btn_frame = tk.Frame(dlg, bg="#0d0d1a")
-    btn_frame.pack(pady=(0, 16), padx=20)
-
-    def choose(val: str):
-        result["choice"] = val
-        dlg.destroy()
-
-    for label, val, bg in [
-        ("Overwrite", "overwrite", ACCENT_COLOR),
-        ("Append",    "append",    "#2a2a3a"),
-        ("Cancel",    "",          "#2a2a3a"),
-    ]:
-        tk.Button(
-            btn_frame, text=label,
-            font=("Segoe UI", 9),
-            bg=bg, fg=TEXT_COLOR,
-            activebackground="#7a44c0", activeforeground=TEXT_COLOR,
-            bd=0, padx=14, pady=6,
-            command=lambda v=val: choose(v),
-        ).pack(side="left", padx=4)
-
-    dlg.update_idletasks()
-    target = anchor or parent
-    x = target.winfo_rootx() + (target.winfo_width()  - dlg.winfo_width())  // 2
-    y = target.winfo_rooty() + (target.winfo_height() - dlg.winfo_height()) // 2
-    dlg.geometry(f"+{x}+{y}")
-
-    dlg.wait_window()
-    return result["choice"]
+    return str(dialogs.ask_custom(
+        "Queue Not Empty",
+        "The queue already has songs.\nWhat would you like to do?",
+        buttons=[("Overwrite", "overwrite"), ("Append", "append"), ("Cancel", "")],
+        parent=anchor or parent,
+        default="",
+    ))
 
 
 class BrowserPlaylistsMixin:
@@ -237,14 +184,14 @@ class BrowserPlaylistsMixin:
         if invalid:
             names = "\n".join(f"  • {s.display_name}" for s in invalid)
             if not valid:
-                messagebox.showerror(
+                dialogs.show_error(
                     "Cannot Create Playlist",
                     "None of the selected songs have a hash — they may not have been "
                     "loaded by Beat Saber yet.\n\n" + names,
                     parent=parent or self,
                 )
                 return
-            proceed = messagebox.askyesno(
+            proceed = dialogs.ask_yes_no(
                 "Invalid Songs",
                 f"{len(invalid)} song(s) have no hash and will be skipped:\n\n"
                 + names
@@ -269,7 +216,7 @@ class BrowserPlaylistsMixin:
             edited_names = "\n".join(
                 f"  • {s.display_name}" for s in valid if s.folder in edited_baks
             )
-            messagebox.showwarning(
+            dialogs.show_warning(
                 "Edited Songs Detected",
                 f"{len(edited_baks)} song(s) have a modified Info.dat "
                 f"(original backed up as .bak):\n\n{edited_names}\n\n"
@@ -331,7 +278,7 @@ class BrowserPlaylistsMixin:
         target = Path(save_path)
         atomic_write_text(target, content)
 
-        messagebox.showinfo(
+        dialogs.show_info(
             "Playlist Saved",
             f"Saved {len(valid)} songs to {target.name}",
             parent=parent or self,
@@ -382,12 +329,12 @@ class BrowserPlaylistsMixin:
         try:
             data = read_playlist(path)
         except Exception as e:
-            messagebox.showerror("Error", f"Could not read playlist:\n{e}")
+            dialogs.show_error("Error", f"Could not read playlist:\n{e}")
             return
 
         entries = data.get("songs", [])
         if not entries:
-            messagebox.showinfo("Empty Playlist", "The playlist contains no songs.")
+            dialogs.show_info("Empty Playlist", "The playlist contains no songs.")
             return
 
         img_b64 = data.get("image", "") or ""
@@ -431,10 +378,10 @@ class BrowserPlaylistsMixin:
             )
             if found:
                 msg += f"\n\nQueue the {len(found)} available song(s) instead?"
-                if messagebox.askyesno("Missing Songs", msg):
+                if dialogs.ask_yes_no("Missing Songs", msg):
                     self._play_queue(found)
             else:
-                messagebox.showerror("No Songs Available", msg)
+                dialogs.show_error("No Songs Available", msg)
             return
 
         msg = f"{len(missing)} song(s) are not installed:\n\n{names}\n\n"
@@ -446,7 +393,7 @@ class BrowserPlaylistsMixin:
             f"{len(found)} already-installed song(s)."
         )
 
-        if not messagebox.askyesno("Missing Songs", msg):
+        if not dialogs.ask_yes_no("Missing Songs", msg):
             if found:
                 self._play_queue(found)
             return
@@ -480,12 +427,12 @@ class BrowserPlaylistsMixin:
         try:
             data = read_playlist(path)
         except Exception as e:
-            messagebox.showerror("Error", f"Could not read playlist:\n{e}")
+            dialogs.show_error("Error", f"Could not read playlist:\n{e}")
             return
 
         entries = data.get("songs", [])
         if not entries:
-            messagebox.showinfo("Empty Playlist", "The playlist contains no songs.")
+            dialogs.show_info("Empty Playlist", "The playlist contains no songs.")
             return
 
         matched, missing = match_library(entries, self.songs)
@@ -494,7 +441,7 @@ class BrowserPlaylistsMixin:
         missing_count = len(missing)
 
         if not found:
-            messagebox.showinfo("No Songs Available",
+            dialogs.show_info("No Songs Available",
                                 "No installed songs matched the playlist.")
             return
 

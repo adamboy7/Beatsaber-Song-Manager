@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from pathlib import Path
-from tkinter import messagebox
+from libraries import dialogs
 from typing import TYPE_CHECKING
 
 import tkinter as tk
@@ -653,7 +653,7 @@ class QueueWindow(tk.Toplevel):
         b._update_playlist_art_auto()
 
     def _confirm_clear_queue(self):
-        if not messagebox.askyesno(
+        if not dialogs.ask_yes_no(
             "Clear Queue",
             "Stop playback and clear the entire queue?",
             icon="warning",

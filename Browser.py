@@ -25,7 +25,7 @@ import threading
 import tkinter as tk
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from tkinter import messagebox
+from libraries import dialogs
 from tkinterdnd2 import TkinterDnD
 from pathlib import Path
 from PIL import ImageTk
@@ -504,7 +504,7 @@ def main():
         import tkinter.filedialog as fd
         root = tk.Tk()
         root.withdraw()
-        messagebox.showinfo(
+        dialogs.show_info(
             "Beat Saber not found",
             "Could not locate Beat Saber automatically.\n"
             "Please select your CustomLevels folder manually.",

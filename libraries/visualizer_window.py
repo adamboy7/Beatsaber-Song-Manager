@@ -1057,9 +1057,9 @@ class VisualizerWindow(tk.Toplevel):
     def _save_cover_art(self, song: "SongInfo"):
         import re
         import tkinter.filedialog as fd
-        from tkinter import messagebox
+        from libraries import dialogs
         if not song.cover_path:
-            messagebox.showinfo("No image", "This song has no cover art.", parent=self)
+            dialogs.show_info("No image", "This song has no cover art.", parent=self)
             return
         raw_name = song.display_name or song.song_name or "cover"
         safe_name = re.sub(r'[\\/:*?"<>|]', "", raw_name).strip() or "cover"
@@ -1081,7 +1081,7 @@ class VisualizerWindow(tk.Toplevel):
             fmt = "PNG" if Path(path).suffix.lower() == ".png" else "JPEG"
             img.save(path, format=fmt)
         except Exception as e:
-            messagebox.showerror("Error", f"Could not save image:\n{e}", parent=self)
+            dialogs.show_error("Error", f"Could not save image:\n{e}", parent=self)
 
     def _view_song(self, song: "SongInfo"):
         view_song(self._browser, song)
