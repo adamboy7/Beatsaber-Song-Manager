@@ -88,7 +88,9 @@ def _song_matches_tags(
             if value not in song.author.lower():
                 return False
         elif tag == "mapper":
-            if value not in song.mapper.lower():
+            song_mapper = song.mapper.lower()
+            names = [n.strip() for n in value.split(",") if n.strip()]
+            if names and not any(n in song_mapper for n in names):
                 return False
         elif tag == "title":
             if value not in song.display_name.lower():
