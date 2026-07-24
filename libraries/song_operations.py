@@ -91,18 +91,28 @@ def replace_song_audio(parent: tk.Misc, song: SongInfo, media_player=None) -> bo
     )
     if not new_path_str:
         return False
+
+    def _convert(ffmpeg_path: str | None) -> bool:
+        if media_player is not None and song is media_player.playing_song:
+            media_player.stop_and_wait()
+        try:
+            replace_audio(song.audio_path, new_path_str, ffmpeg_path or "")
+            return True
+        except Exception as exc:
+            dialogs.show_error("Replace Audio Failed", str(exc))
+            return False
+
     ffmpeg_path = find_ffmpeg()
     if not ffmpeg_path and Path(new_path_str).suffix.lower() not in (".egg", ".ogg"):
-        prompt_ffmpeg_download(parent)
+        def _on_ready() -> None:
+            if _convert(find_ffmpeg()):
+                status_bar = getattr(parent, "status_bar", None)
+                if status_bar is not None:
+                    status_bar.config(text=f"Audio replaced for: {song.display_name}")
+        prompt_ffmpeg_download(parent, on_ready=_on_ready)
         return False
-    if media_player is not None and song is media_player.playing_song:
-        media_player.stop_and_wait()
-    try:
-        replace_audio(song.audio_path, new_path_str, ffmpeg_path or "")
-        return True
-    except Exception as exc:
-        dialogs.show_error("Replace Audio Failed", str(exc))
-        return False
+
+    return _convert(ffmpeg_path)
 
 
 def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> str | None:

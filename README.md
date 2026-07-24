@@ -8,7 +8,7 @@ A music browser, media player, playlist builder, and asset editor for Beat Saber
 
 ### Requirements
 
-- **ffmpeg** — place `ffmpeg.exe` and `ffprobe.exe` next to the application, or add them to your system PATH. [Download ffmpeg](https://ffmpeg.org/download.html)
+- **ffmpeg** — place `ffmpeg.exe` and `ffprobe.exe` next to the application, or add them to your system PATH. [Download ffmpeg](https://ffmpeg.org/download.html) If it's missing when you convert audio, the app offers to download a prebuilt static build for you (from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), matching your platform), drops the binaries next to the app, and retries the conversion automatically — no manual download or PATH edit needed.
 - **libmpv** — place `libmpv-2.dll` next to the application, or add it to your system PATH. Powers all audio and Cinema video playback. [Download libmpv](https://mpv.io/installation/) (from the "libmpv" dev builds)
 - Beat Saber installed via Steam (recommended, but not required — see below)
 
@@ -387,3 +387,7 @@ Creates _objectively_ the best playlist: a queue with 5 Miku songs, 5 Teto songs
 python Browser.py --randomAdd 10 "{unplayed}:n" "{fc}:n" practice.bplist
 ```
 Create (or append to) `practice.bplist` with 10 songs you've played at least once but haven't full combo'd yet, and exit.
+
+## Licensing
+
+The optional ffmpeg auto-download pulls a **GPL** static build from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds). ffmpeg itself is downloaded and used as a standalone tool, not linked into this app, but if you redistribute a bundle that includes those binaries, the ffmpeg GPL terms apply to them. See [ffmpeg's license page](https://ffmpeg.org/legal.html) for details.
