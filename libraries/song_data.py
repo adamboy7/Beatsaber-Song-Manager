@@ -377,15 +377,26 @@ def compute_song_hash(song_folder: Path, info_file: Path | None = None) -> str:
 
 
 def _folder_mtime(folder: Path) -> float:
-    """Return the latest mtime of Info.dat (case-insensitive) or 0.0 if missing."""
-    for name in ("Info.dat", "info.dat", "INFO.DAT"):
-        candidate = folder / name
-        if candidate.exists():
+    """Return the latest mtime among files directly in the song folder.
+
+    Covers Info.dat as well as the difficulty/lightshow .dat files it
+    references, so editing a difficulty file (without touching Info.dat)
+    still invalidates the hash cache.
+    """
+    latest = 0.0
+    try:
+        for child in folder.iterdir():
+            if not child.is_file():
+                continue
             try:
-                return candidate.stat().st_mtime
+                mtime = child.stat().st_mtime
             except OSError:
-                return 0.0
-    return 0.0
+                continue
+            if mtime > latest:
+                latest = mtime
+    except OSError:
+        return 0.0
+    return latest
 
 
 def load_song_hashes(custom_levels: Path) -> dict[str, str]:
