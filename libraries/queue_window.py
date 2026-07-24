@@ -700,9 +700,10 @@ class QueueWindow(tk.Toplevel):
             state="normal" if can_shuffle else "disabled",
         )
         loop_var = tk.BooleanVar(value=mp.is_looping)
+        shift_held = bool(event.state & 0x1)
         menu.add_checkbutton(
             label="Loop", variable=loop_var,
-            command=lambda: self._loop_song(idx, song),
+            command=lambda: self._loop_song(idx, song, shift_held),
             selectcolor=ACCENT_COLOR,
         )
         menu.tk_popup(event.x_root, event.y_root)
@@ -723,14 +724,19 @@ class QueueWindow(tk.Toplevel):
         if idx < len(queue) - 1:
             self._perform_move(idx, len(queue))
 
-    def _loop_song(self, idx: int, song: "SongInfo"):
+    def _loop_song(self, idx: int, song: "SongInfo", change_song: bool = False):
         b = self._browser
         mp = b._media_player
-        if b._queue_index != idx:
+        # Only switch the active song when Shift was held during the right-click;
+        # otherwise this is a plain loop-state toggle on the current song.
+        if change_song and b._queue_index != idx:
             b._queue_index = idx
             b._play_audio(song)
-        mp.toggle_loop()
-        b._show_player_bar(song)
+            mp.toggle_loop()
+            b._show_player_bar(song)
+        else:
+            b._toggle_loop()
+        self._refresh_repeat_btn()
 
     def _subtitle(self, song: "SongInfo") -> str:
         key = str(song.folder)
