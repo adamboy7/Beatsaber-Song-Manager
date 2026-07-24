@@ -115,6 +115,7 @@ class SongBrowser(
         self._wheel_accum: float = 0.0            # fractional wheel ticks (high-res wheels/touchpads)
         self._scroll_active: bool = False         # True during a wheel-scroll burst; suppresses hover work
         self._scroll_idle_id: str | None = None   # tk `after` handle that ends the scroll burst
+        self._last_ptr_xy: tuple[int, int] | None = None  # last seen pointer pos; lets genuine mouse movement over art beat the scroll-burst suppression
 
         self._build_ui()
 

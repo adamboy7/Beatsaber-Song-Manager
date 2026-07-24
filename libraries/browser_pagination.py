@@ -590,10 +590,17 @@ class BrowserPaginationMixin:
             self._wheel_accum -= steps * 120
             self.canvas.yview_scroll(-steps, "units")
 
-        # Mark a scroll burst as active. While active, _hover and
-        # _show_mod_tooltip no-op: rows sweeping under a stationary cursor
-        # otherwise fire Enter/Leave storms whose per-widget recolors (and
-        # tooltip Toplevel churn) hitch high-speed scrolling.
+        # Record the pointer position at this wheel tick. A scroll storm is a
+        # *stationary* cursor with rows sweeping under it, so the Enter events it
+        # fires all land on this same spot; genuine "mousing over the art" moves
+        # the cursor away from it. _show_mod_tooltip uses that displacement to
+        # tell the two apart and let real hover through while a burst is active.
+        self._last_ptr_xy = (event.x_root, event.y_root)
+
+        # Mark a scroll burst as active. While active, _hover and the storm of
+        # Enter/Leave events from rows sweeping under a stationary cursor no-op:
+        # their per-widget recolors (and tooltip Toplevel churn) hitch
+        # high-speed scrolling. Genuine mouse movement is exempted (see above).
         if not self._scroll_active:
             self._scroll_active = True
             hover = self._hover_row
@@ -611,6 +618,10 @@ class BrowserPaginationMixin:
     def _on_scroll_idle(self):
         self._scroll_active = False
         self._scroll_idle_id = None
+        # If the cursor came to rest on a song's art during the burst, its Enter
+        # may have been suppressed and no further event will fire while it sits
+        # still — so surface the tooltip for whatever art is under the pointer now.
+        self._show_mod_tooltip_under_pointer()
 
     def _update_scroll(self):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))

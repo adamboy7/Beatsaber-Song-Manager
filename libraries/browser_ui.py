@@ -696,9 +696,12 @@ class BrowserUIMixin:
                 w.bind("<Control-Button-1>", lambda e, i=idx: self._select(i, ctrl_held=True))
 
         # Mod tooltip only triggers off the song art thumbnail, not the whole row,
-        # and follows the cursor while it stays over the art.
+        # and follows the cursor while it stays over the art. Stash the song on the
+        # widget so _on_scroll_idle can re-show the tip for whatever art the cursor
+        # settled on when a scroll burst suppressed its Enter.
+        thumb_lbl._mod_song = song
         thumb_lbl.bind("<Enter>", lambda e, sg=song: self._show_mod_tooltip(e, sg), add="+")
-        thumb_lbl.bind("<Motion>", self._move_mod_tooltip, add="+")
+        thumb_lbl.bind("<Motion>", lambda e, sg=song: self._on_mod_tooltip_motion(e, sg), add="+")
         thumb_lbl.bind("<Leave>", lambda e: self._hide_mod_tooltip(), add="+")
 
     # ── Hover / selection / row coloring ──────────────────────────────────────
@@ -718,9 +721,11 @@ class BrowserUIMixin:
         No-ops when the song needs no mods at all.
         """
         self._hide_mod_tooltip()
-        if self._scroll_active:
-            # Creating a Toplevel per thumbnail swept under the cursor is
-            # expensive enough to hitch high-speed scrolling; skip it.
+        if self._scroll_active and not self._pointer_moved(event):
+            # A stationary cursor with rows sweeping under it fires an Enter per
+            # thumbnail; spawning a Toplevel for each hitches high-speed scrolling,
+            # so skip those. But if the pointer actually moved, the user is
+            # genuinely mousing over the art — show the tip even mid-scroll.
             return
         if not (song.mod_required or song.mod_suggested):
             return
@@ -747,6 +752,19 @@ class BrowserUIMixin:
 
         self._mod_tooltip = tip
 
+    def _on_mod_tooltip_motion(self, event: tk.Event, song: SongInfo):
+        """Handle real pointer motion over a song's art.
+
+        Motion only fires from genuine cursor movement (rows sweeping under a
+        stationary cursor produce Enter/Leave, not Motion), so this is the
+        reliable "user is actively mousing over the art" signal. Reposition an
+        existing tip, or create one that a scroll burst suppressed at Enter time.
+        """
+        if self._mod_tooltip is not None:
+            self._move_mod_tooltip(event)
+        else:
+            self._show_mod_tooltip(event, song)
+
     def _move_mod_tooltip(self, event: tk.Event):
         """Reposition an already-shown tooltip to follow the cursor.
 
@@ -759,6 +777,41 @@ class BrowserUIMixin:
             tip.wm_geometry(f"+{event.x_root + 14}+{event.y_root + 12}")
         except tk.TclError:
             pass
+
+    def _pointer_moved(self, event: tk.Event, threshold: int = 2) -> bool:
+        """True if the pointer moved since the last event we recorded its position.
+
+        Used to tell genuine hover (cursor displaced) from the Enter/Leave storm
+        of rows scrolling under a stationary cursor (cursor fixed). Records the
+        current position as the new baseline so the next comparison is relative.
+        """
+        xy = (event.x_root, event.y_root)
+        last = self._last_ptr_xy
+        self._last_ptr_xy = xy
+        if last is None:
+            return True
+        return abs(xy[0] - last[0]) > threshold or abs(xy[1] - last[1]) > threshold
+
+    def _show_mod_tooltip_under_pointer(self):
+        """Show the mod tooltip for whatever song art the cursor is resting on.
+
+        Called when a scroll burst ends: the cursor may have come to rest on art
+        whose Enter was suppressed mid-scroll, with no further event coming while
+        it sits still, so nothing would otherwise surface the tip.
+        """
+        try:
+            x = self.winfo_pointerx()
+            y = self.winfo_pointery()
+            widget = self.winfo_containing(x, y)
+        except (tk.TclError, KeyError):
+            return
+        song = getattr(widget, "_mod_song", None)
+        if song is None:
+            return
+        event = tk.Event()
+        event.x_root = x
+        event.y_root = y
+        self._show_mod_tooltip(event, song)
 
     def _hide_mod_tooltip(self, *_):
         tip = self._mod_tooltip
