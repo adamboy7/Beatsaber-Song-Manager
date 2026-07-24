@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import datetime
 import os
-import threading
 import webbrowser
 import tkinter as tk
 from pathlib import Path
@@ -483,7 +482,7 @@ class BrowserUIMixin:
             except tk.TclError:
                 pass
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._thumb_executor.submit(worker)
 
     def _on_thumbnail_decoded(self, gen: int, key: str, img: Image.Image, thumb_lbl: tk.Label):
         if gen != self._render_gen or not thumb_lbl.winfo_exists():

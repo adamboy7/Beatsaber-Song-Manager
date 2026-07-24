@@ -24,6 +24,7 @@ import sys
 import threading
 import tkinter as tk
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from tkinter import messagebox
 from tkinterdnd2 import TkinterDnD
 from pathlib import Path
@@ -70,6 +71,7 @@ class SongBrowser(
         self._placeholder: ImageTk.PhotoImage | None = None
         self._row_frames: list[tk.Frame] = []
         self._render_gen: int = 0   # bumped on each _render_list; guards stale async thumbnail swap-ins
+        self._thumb_executor = ThreadPoolExecutor(max_workers=2)
         self._pending_install_id: str | None = None
         self._pending_playlist_url: str | None = None
         self._pending_playlist_temp_path: Path | None = None
@@ -165,6 +167,7 @@ class SongBrowser(
         self._playlist_installer.cancel()
         self._media_player.stop_listener()
         self._media_player.stop()
+        self._thumb_executor.shutdown(wait=False, cancel_futures=True)
         self.destroy()
 
 
