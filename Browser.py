@@ -373,8 +373,12 @@ def main():
     if playlist_has_valid_suffix and (args.shuffle or random_groups):
         existing_file = playlist_path is not None
         if existing_file:
-            with open(playlist_arg, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            try:
+                with open(playlist_arg, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except json.JSONDecodeError as e:
+                print(f"Playlist '{playlist_arg}' is not valid JSON: {e}")
+                sys.exit(1)
             playlist_songs = data.get("songs")
             if not isinstance(playlist_songs, list):
                 print("Playlist has no 'songs' array.")
