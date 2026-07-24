@@ -55,7 +55,7 @@ class InstallManager:
                 bs.install_song(song_id, self.custom_levels)
             except Exception as e:  # noqa: BLE001 - report any failure to the UI
                 if gen == self._gen:
-                    self._dispatch(lambda: self._on_error(song_id, e))
+                    self._dispatch(lambda: self._on_error(song_id, e, gen))
                 return
             if gen == self._gen:
                 self._dispatch(lambda: self._on_complete(song_id, gen))
@@ -69,7 +69,9 @@ class InstallManager:
         self._status_cb(f"Installed {song_id}.")
         self._reload_cb()
 
-    def _on_error(self, song_id: str, err: Exception) -> None:
+    def _on_error(self, song_id: str, err: Exception, gen: int) -> None:
+        if gen != self._gen:
+            return
         self._gen += 1
         self._status_cb(f"Could not install {song_id}: {err}")
         self._reload_cb()
