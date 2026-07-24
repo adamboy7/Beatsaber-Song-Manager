@@ -17,15 +17,16 @@ from libraries import beatsaver_api as bs
 class PlaylistInstaller:
     """One-shot playlist installer.
 
-    The host wires ``after_fn`` to ``tk.Tk.after`` so all callbacks run on the
-    UI thread. ``status_cb`` receives short progress strings, and
+    The host wires ``dispatch_fn`` to a thread-safe dispatcher (see
+    ``libraries.tk_dispatch``) so all callbacks run on the UI thread.
+    ``status_cb`` receives short progress strings, and
     ``complete_cb(success: bool)`` is invoked once when the install finishes or
     is cancelled.
     """
 
-    def __init__(self, custom_levels: Path, after_fn, status_cb, complete_cb):
+    def __init__(self, custom_levels: Path, dispatch_fn, status_cb, complete_cb):
         self.custom_levels = custom_levels
-        self._after = after_fn
+        self._dispatch = dispatch_fn
         self._status_cb = status_cb
         self._complete_cb = complete_cb
         self._gen = 0
@@ -37,14 +38,6 @@ class PlaylistInstaller:
 
     def cancel(self) -> None:
         self._gen += 1
-
-    def _dispatch(self, callback) -> None:
-        """Schedule callback on the host's event loop, swallowing errors from a
-        torn-down UI (e.g. tk.TclError after the window closed mid-install)."""
-        try:
-            self._after(0, callback)
-        except Exception:
-            pass
 
     def install(self, playlist_path: Path) -> bool:
         """Download every song referenced by ``playlist_path``.

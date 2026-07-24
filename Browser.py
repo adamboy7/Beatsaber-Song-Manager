@@ -39,6 +39,7 @@ from libraries.player_data import (
 from libraries.media_player import MediaPlayer
 from libraries.install_manager import InstallManager
 from libraries.playlist_installer import PlaylistInstaller
+from libraries.tk_dispatch import Dispatcher
 from libraries.queue_window import QueueWindow
 from libraries.playlist_art_window import PlaylistArtWindow
 from libraries.visualizer_window import VisualizerWindow
@@ -61,6 +62,8 @@ class SongBrowser(
 ):
     def __init__(self, custom_levels: Path, startup_playlist: Path | None = None, startup_random_groups: list[tuple[int, str | None]] | None = None, startup_shuffle: bool = False):
         super().__init__()
+        self._dispatcher = Dispatcher()
+        self._dispatcher.start(self)
         self.custom_levels = custom_levels
         self.songs: list[SongInfo] = []
         self.filtered: list[SongInfo] = []
@@ -107,8 +110,8 @@ class SongBrowser(
 
         self._build_ui()
 
-        self._media_player = MediaPlayer(self.after, lambda text: self.status_bar.config(text=text))
-        self._media_player.start_media_keys(self.after, self._stop_playback, self._queue_next, self._queue_prev)
+        self._media_player = MediaPlayer(self._dispatcher.dispatch, lambda text: self.status_bar.config(text=text))
+        self._media_player.start_media_keys(self._dispatcher.dispatch, self._stop_playback, self._queue_next, self._queue_prev)
         self._queue: list[SongInfo] = []
         self._queue_index: int = -1
         self._player_bar_visible: bool = False
@@ -130,13 +133,13 @@ class SongBrowser(
 
         self._install_manager = InstallManager(
             custom_levels,
-            self.after,
+            self._dispatcher.dispatch,
             lambda text: self.status_bar.config(text=text),
             self._on_install_complete_reload,
         )
         self._playlist_installer = PlaylistInstaller(
             custom_levels,
-            self.after,
+            self._dispatcher.dispatch,
             lambda text: self.status_bar.config(text=text),
             self._on_playlist_install_complete,
         )
@@ -334,8 +337,8 @@ def main():
         _done = threading.Event()
         _success: list[bool] = [False]
 
-        def _headless_after(ms, callback):
-            threading.Timer(ms / 1000, callback).start()
+        def _headless_dispatch(callback):
+            threading.Thread(target=callback, daemon=True).start()
 
         def _on_complete(success: bool):
             _success[0] = success
@@ -343,7 +346,7 @@ def main():
 
         installer = PlaylistInstaller(
             custom_levels,
-            _headless_after,
+            _headless_dispatch,
             print,
             _on_complete,
         )

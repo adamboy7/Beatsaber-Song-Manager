@@ -761,10 +761,7 @@ class QueueWindow(tk.Toplevel):
                 dur = get_audio_duration(audio_path)
             except Exception:
                 dur = None
-            try:
-                self.after(0, lambda: self._apply_duration(key, dur))
-            except tk.TclError:
-                pass  # window was destroyed
+            self._browser._dispatcher.dispatch(lambda: self._apply_duration(key, dur))
 
         threading.Thread(target=worker, daemon=True).start()
 

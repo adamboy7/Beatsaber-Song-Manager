@@ -157,7 +157,7 @@ def _restart_app() -> None:
     os.execv(exe, args)
 
 
-def offer_download_once(dest_dir: Path, after_fn, status_cb=None, on_unavailable=None) -> None:
+def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None, on_unavailable=None) -> None:
     """Ask the user, at most once per run, whether to fetch libmpv now.
 
     Downloads the matching-architecture mpv-dev archive into ``dest_dir`` and
@@ -165,9 +165,9 @@ def offer_download_once(dest_dir: Path, after_fn, status_cb=None, on_unavailable
     progress through ``status_cb`` (a plain ``str -> None`` callable, e.g.
     ``lambda text: status_bar.config(text=text)``) — the same status-bar
     convention yt-dlp's own download and Cinema video downloads use, rather
-    than a separate progress window. ``after_fn`` (typically the app's
-    ``Tk.after``) marshals status/completion callbacks from the worker
-    thread back onto the main thread.
+    than a separate progress window. ``dispatch_fn`` (a thread-safe dispatcher,
+    see ``libraries.tk_dispatch``) marshals status/completion callbacks from
+    the worker thread back onto the main thread.
 
     ``on_unavailable`` is the caller's fallback for "mpv still isn't usable
     this session" — e.g. showing its own "Play Audio" warning. It fires
@@ -188,7 +188,7 @@ def offer_download_once(dest_dir: Path, after_fn, status_cb=None, on_unavailable
         if status_cb is None:
             return
         try:
-            after_fn(0, lambda: status_cb(text))
+            dispatch_fn(lambda: status_cb(text))
         except Exception:
             pass  # UI already torn down (e.g. app closing)
 
@@ -238,7 +238,7 @@ def offer_download_once(dest_dir: Path, after_fn, status_cb=None, on_unavailable
         except MpvInstallError as e:
             result["error"] = str(e)
         try:
-            after_fn(0, _finish)
+            dispatch_fn(_finish)
         except Exception:
             pass  # UI already torn down (e.g. app closing)
 

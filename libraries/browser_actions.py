@@ -363,7 +363,7 @@ class BrowserActionsMixin:
         def do_download():
             import urllib.request
             try:
-                self.after(0, lambda: self.status_bar.config(text="Downloading yt-dlp…"))
+                self._dispatcher.dispatch(lambda: self.status_bar.config(text="Downloading yt-dlp…"))
 
                 req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
                 with urllib.request.urlopen(req, timeout=30) as resp:
@@ -378,12 +378,12 @@ class BrowserActionsMixin:
                             got += len(chunk)
                             if total > 0:
                                 pct = min(100, int(got * 100 / total))
-                                self.after(0, lambda p=pct: self.status_bar.config(
+                                self._dispatcher.dispatch(lambda p=pct: self.status_bar.config(
                                     text=f"Downloading yt-dlp… {p}%"
                                 ))
-                self.after(0, lambda: self._run_yt_dlp(dest, song))
+                self._dispatcher.dispatch(lambda: self._run_yt_dlp(dest, song))
             except Exception as exc:
-                self.after(0, lambda e=exc: self.status_bar.config(
+                self._dispatcher.dispatch(lambda e=exc: self.status_bar.config(
                     text=f"yt-dlp download failed: {e}"
                 ))
 
@@ -433,14 +433,14 @@ class BrowserActionsMixin:
                     if len(tail) > 15:
                         tail.pop(0)
                     if line.startswith("[download]") and "%" in line:
-                        self.after(0, lambda l=line: self.status_bar.config(
+                        self._dispatcher.dispatch(lambda l=line: self.status_bar.config(
                             text=f"Downloading video for {name}  •  {l.removeprefix('[download]').strip()}"
                         ))
                 rc = proc.wait()
             except Exception as exc:
                 rc = -1
                 tail.append(str(exc))
-            self.after(0, lambda: self._on_yt_dlp_done(
+            self._dispatcher.dispatch(lambda: self._on_yt_dlp_done(
                 song, rc, "\n".join(tail), yt_dlp, attempt))
 
         threading.Thread(target=worker, daemon=True).start()

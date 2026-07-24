@@ -477,10 +477,7 @@ class BrowserUIMixin:
                 img = img.resize(THUMBNAIL_SIZE, Image.LANCZOS)
             except Exception:
                 return
-            try:
-                self.after(0, lambda: self._on_thumbnail_decoded(gen, key, img, thumb_lbl))
-            except tk.TclError:
-                pass
+            self._dispatcher.dispatch(lambda: self._on_thumbnail_decoded(gen, key, img, thumb_lbl))
 
         self._thumb_executor.submit(worker)
 

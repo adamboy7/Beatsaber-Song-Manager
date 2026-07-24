@@ -13,9 +13,9 @@ from libraries import beatsaver_api as bs
 
 
 class InstallManager:
-    def __init__(self, custom_levels: Path, after_fn, status_cb, reload_cb):
+    def __init__(self, custom_levels: Path, dispatch_fn, status_cb, reload_cb):
         self.custom_levels = custom_levels
-        self._after = after_fn
+        self._dispatch = dispatch_fn
         self._status_cb = status_cb
         self._reload_cb = reload_cb
         self._gen = 0
@@ -28,14 +28,6 @@ class InstallManager:
     def has_handler() -> bool:
         """Installs are always available (no external prerequisites)."""
         return True
-
-    def _dispatch(self, callback) -> None:
-        """Schedule callback on the host's event loop, swallowing errors from a
-        torn-down UI (e.g. tk.TclError after the window closed mid-install)."""
-        try:
-            self._after(0, callback)
-        except Exception:
-            pass
 
     def trigger(self, song_id: str) -> None:
         song_id = (song_id or "").strip().lower()
@@ -51,18 +43,16 @@ class InstallManager:
 
     def _worker(self, song_id: str, gen: int) -> None:
         try:
-            try:
-                bs.install_song(song_id, self.custom_levels)
-            except Exception as e:  # noqa: BLE001 - report any failure to the UI
-                if gen == self._gen:
-                    self._dispatch(lambda: self._on_error(song_id, e, gen))
-                return
-            if gen == self._gen:
-                self._dispatch(lambda: self._on_complete(song_id, gen))
-        finally:
-            self._active_ids.discard(song_id)
+            bs.install_song(song_id, self.custom_levels)
+        except Exception as e:  # noqa: BLE001 - report any failure to the UI
+            self._dispatch(lambda: self._on_error(song_id, e, gen))
+            return
+        self._dispatch(lambda: self._on_complete(song_id, gen))
 
     def _on_complete(self, song_id: str, gen: int) -> None:
+        # Discard here (not in _worker) so the active-id set is only ever
+        # touched from the main thread, like the rest of this class's state.
+        self._active_ids.discard(song_id)
         if gen != self._gen:
             return
         self._gen += 1
@@ -70,6 +60,7 @@ class InstallManager:
         self._reload_cb()
 
     def _on_error(self, song_id: str, err: Exception, gen: int) -> None:
+        self._active_ids.discard(song_id)
         if gen != self._gen:
             return
         self._gen += 1

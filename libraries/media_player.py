@@ -116,7 +116,7 @@ class MediaPlayer:
     loading), so elapsed_seconds() never goes backwards on callers.
     """
 
-    def __init__(self, after_fn=None, status_cb=None):
+    def __init__(self, dispatch_fn=None, status_cb=None):
         self._player = None  # lazily-created mpv.MPV | None
         self._audio_paused: bool = False
         self._stopped: bool = False
@@ -124,7 +124,7 @@ class MediaPlayer:
         self.playing_song: SongInfo | None = None
         self._kb_listener = None
 
-        self._after_fn = after_fn
+        self._dispatch_fn = dispatch_fn
         self._status_cb = status_cb
 
         # True once the current file reached end-of-file (mpv keep-open pauses
@@ -223,7 +223,7 @@ class MediaPlayer:
 
     # ── Media keys ───────────────────────────────────────────────────────────
 
-    def start_media_keys(self, after_fn, on_stop=None, on_next=None, on_prev=None) -> None:
+    def start_media_keys(self, dispatch_fn, on_stop=None, on_next=None, on_prev=None) -> None:
         try:
             from pynput import keyboard as pynput_kb
         except Exception as exc:
@@ -233,13 +233,13 @@ class MediaPlayer:
 
         def on_press(key):
             if key == pynput_kb.Key.media_play_pause:
-                after_fn(0, self.toggle_pause)
+                dispatch_fn(self.toggle_pause)
             elif key == pynput_kb.Key.media_stop:
-                after_fn(0, on_stop if on_stop is not None else self.stop)
+                dispatch_fn(on_stop if on_stop is not None else self.stop)
             elif key == pynput_kb.Key.media_next and on_next is not None:
-                after_fn(0, on_next)
+                dispatch_fn(on_next)
             elif key == pynput_kb.Key.media_previous and on_prev is not None:
-                after_fn(0, on_prev)
+                dispatch_fn(on_prev)
 
         try:
             self._kb_listener = pynput_kb.Listener(on_press=on_press)
@@ -425,7 +425,7 @@ class MediaPlayer:
         else:
             mpv_installer.offer_download_once(
                 install_dir(),
-                self._after_fn or (lambda _ms, fn: fn()),
+                self._dispatch_fn or (lambda fn: fn()),
                 status_cb=self._status_cb,
                 on_unavailable=_show_unavailable,
             )

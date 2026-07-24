@@ -133,10 +133,7 @@ class BrowserPlaylistsMixin:
             hashes = load_song_hashes(self.custom_levels)
             for song in songs:
                 song.song_hash = hashes.get(song.folder.name, "")
-            try:
-                self.after(0, lambda: self._maybe_apply_loaded(gen, songs))
-            except tk.TclError:
-                pass
+            self._dispatcher.dispatch(lambda: self._maybe_apply_loaded(gen, songs))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -547,15 +544,9 @@ class BrowserPlaylistsMixin:
                 req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
                 with urllib.request.urlopen(req, timeout=30) as resp, open(tmp_path, "wb") as f:
                     shutil.copyfileobj(resp, f)
-                try:
-                    self.after(0, lambda: self._on_playlist_url_downloaded(tmp_path))
-                except tk.TclError:
-                    pass
+                self._dispatcher.dispatch(lambda: self._on_playlist_url_downloaded(tmp_path))
             except Exception as exc:
-                try:
-                    self.after(0, lambda e=exc: self.status_bar.config(text=f"Download failed: {e}"))
-                except tk.TclError:
-                    pass
+                self._dispatcher.dispatch(lambda e=exc: self.status_bar.config(text=f"Download failed: {e}"))
 
         threading.Thread(target=_download, daemon=True).start()
 

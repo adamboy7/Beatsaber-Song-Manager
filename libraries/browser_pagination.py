@@ -510,10 +510,7 @@ class BrowserPaginationMixin:
             hashes = load_song_hashes(self.custom_levels)
             for song in songs:
                 song.song_hash = hashes.get(song.folder.name, "")
-            try:
-                self.after(0, lambda: self._maybe_after_install_load(gen, songs))
-            except tk.TclError:
-                pass
+            self._dispatcher.dispatch(lambda: self._maybe_after_install_load(gen, songs))
 
         threading.Thread(target=worker, daemon=True).start()
 
