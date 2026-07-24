@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from libraries import dialogs
 from tkinterdnd2 import TkinterDnD
 from pathlib import Path
-from PIL import ImageTk
+from PIL import Image, ImageTk
 
 from libraries.constants import BG_COLOR, WINDOW_TITLE
 from libraries.steam_paths import find_beatsaber_custom_levels
@@ -97,7 +97,7 @@ class SongBrowser(
         self.geometry("780x680")
         self.minsize(600, 400)
         try:
-            _icon = tk.PhotoImage(file=Path(__file__).parent / "Icon.png")
+            _icon = ImageTk.PhotoImage(Image.open(Path(__file__).parent / "Icon.ico"))
             self.iconphoto(True, _icon)
             self._icon = _icon
         except Exception:
