@@ -51,7 +51,7 @@ def replace_art(cover_path: Path, new_path: str) -> None:
         if not bak.exists():
             shutil.copy2(cover_path, bak)
         os.replace(tmp_str, cover_path)
-    except:
+    except BaseException:
         tmp.unlink(missing_ok=True)
         raise
 
@@ -97,6 +97,6 @@ def replace_audio(audio_path: Path, new_path: str, ffmpeg_path: str) -> None:
         if not bak.exists():
             shutil.copy2(audio_path, bak)
         os.replace(tmp_str, audio_path)
-    except:
+    except BaseException:
         tmp.unlink(missing_ok=True)
         raise
