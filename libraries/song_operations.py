@@ -1,6 +1,5 @@
 import json
 import shutil
-import webbrowser
 import tkinter as tk
 import tkinter.filedialog as fd
 from pathlib import Path
@@ -8,7 +7,7 @@ from libraries import dialogs
 
 from libraries.song_data import SongInfo
 from libraries.asset_editor import bak_files, restore_files, replace_art, replace_audio
-from libraries.audio_utils import find_ffmpeg
+from libraries.audio_utils import find_ffmpeg, _local_dir
 from libraries.fs_utils import atomic_write_text
 from libraries.player_data import song_level_ids, load_player_stats
 from libraries.favorites import backup_player_data, confirm_player_data_write, _atomic_write_player_data
@@ -42,17 +41,29 @@ def replace_song_art(parent: tk.Misc, song: SongInfo) -> bool:
         return False
 
 
-def prompt_ffmpeg_download(parent: tk.Misc) -> None:
-    choice = dialogs.ask_custom(
-        "ffmpeg Required",
-        "ffmpeg is required to convert audio files.\n"
-        "Download it and add ffmpeg.exe to your PATH.",
-        buttons=[("Download", "download"), ("Cancel", "")],
-        parent=parent,
-        default="",
+def prompt_ffmpeg_download(parent: tk.Misc, on_ready=None) -> None:
+    """Offer to auto-download a prebuilt ffmpeg (at most once per run).
+
+    Fetches a static BtbN build and drops ffmpeg/ffprobe/ffplay next to the app
+    — no manual download or PATH edit needed. Runs in a background thread,
+    reporting to the app's status bar; ``find_ffmpeg`` re-probes on every miss,
+    so the fresh binaries are picked up live. Progress marshaling and status
+    reuse the app's own dispatcher/status bar when ``parent`` exposes them,
+    falling back to ``parent.after`` for a plain tk widget.
+    """
+    from libraries import ffmpeg_installer
+
+    dispatcher = getattr(parent, "_dispatcher", None)
+    dispatch_fn = getattr(dispatcher, "dispatch", None) or (lambda fn: parent.after(0, fn))
+    status_bar = getattr(parent, "status_bar", None)
+    status_cb = (lambda text: status_bar.config(text=text)) if status_bar is not None else None
+
+    ffmpeg_installer.offer_download_once(
+        _local_dir(),
+        dispatch_fn,
+        status_cb=status_cb,
+        on_ready=on_ready,
     )
-    if choice == "download":
-        webbrowser.open("https://ffmpeg.org/download.html#build-windows")
 
 
 def replace_song_audio(parent: tk.Misc, song: SongInfo, media_player=None) -> bool:
