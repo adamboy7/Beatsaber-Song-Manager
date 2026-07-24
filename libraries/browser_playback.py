@@ -367,9 +367,9 @@ class BrowserPlaybackMixin:
         paused = mp.is_paused
         queue_empty = not self._queue
 
-        if stopped and 0 <= self._queue_index < len(self._queue):
+        if stopped and not queue_empty:
             play_label = "Play"
-            play_cmd = lambda: self._play_audio(self._queue[self._queue_index])
+            play_cmd = self._on_player_play_btn_click
             play_state = "normal"
         elif paused:
             play_label = "Play"
