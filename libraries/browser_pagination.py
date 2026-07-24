@@ -85,7 +85,9 @@ def _song_matches_tags(
     stats = get_song_stats(song, player_stats) if needs_stats else None
     for tag, value in tags:
         if tag == "artist":
-            if value not in song.author.lower():
+            song_author = song.author.lower()
+            names = [n.strip() for n in value.split(",") if n.strip()]
+            if names and not any(n in song_author for n in names):
                 return False
         elif tag == "mapper":
             song_mapper = song.mapper.lower()
