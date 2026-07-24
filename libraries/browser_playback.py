@@ -391,6 +391,8 @@ class BrowserPlaybackMixin:
                        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR, bd=0)
         menu.add_command(label="View Queue",
                          command=self._open_queue_window)
+        menu.add_command(label="View Visualizer",
+                         command=self._open_visualizer_window)
         menu.add_separator()
         menu.add_command(label=play_label, command=play_cmd, state=play_state)
         menu.add_command(label="Stop", command=self._stop_playback,

@@ -1048,6 +1048,8 @@ class VisualizerWindow(tk.Toplevel):
             bg="#1e1e1e", fg="white",
             activebackground=ACCENT_COLOR, activeforeground="white", bd=0,
         )
+        menu.add_command(label="View Queue",
+                         command=self._browser._open_queue_window)
         menu.add_command(label="View Song", command=lambda: self._view_song(song))
         menu.add_command(label="Save Image…", command=lambda: self._save_cover_art(song))
         menu.tk_popup(event.x_root, event.y_root)
