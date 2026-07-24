@@ -33,10 +33,14 @@ from libraries.constants import (
     TEXT_COLOR,
 )
 
-# ── Palette ────────────────────────────────────────────────────────────────
-_DIALOG_BG = BG_COLOR
-_BTN_SECONDARY_BG = "#2a2a3a"
-_BTN_ACTIVE_BG = "#7a44c0"
+# ── Palette (shared by every app dialog) ────────────────────────────────────
+DIALOG_BG = BG_COLOR
+ENTRY_BG = "#1e1e1e"
+BTN_PRIMARY_BG = ACCENT_COLOR
+BTN_PRIMARY_ACTIVE = "#a01d90"
+BTN_SECONDARY_BG = "#2a2a3a"
+BTN_SECONDARY_ACTIVE = "#3a3a4a"
+
 _ERROR_COLOR = "#ff5c5c"
 _WARN_COLOR = "#ffb454"
 _INFO_COLOR = ACCENT_COLOR
@@ -81,6 +85,108 @@ def _resolve_parent(parent: Optional[tk.Misc]) -> Optional[tk.Misc]:
         return getattr(tk, "_default_root", None)
 
 
+def themed_button(
+    parent: tk.Misc,
+    text: str,
+    command=None,
+    *,
+    primary: bool = False,
+    **kw,
+) -> tk.Button:
+    """A flat, theme-consistent button. ``primary`` uses the magenta accent;
+    otherwise a muted secondary fill. Any keyword (``font``, ``padx`` …) can be
+    overridden via ``**kw``."""
+    opts = dict(
+        font=("Segoe UI", 9),
+        bg=BTN_PRIMARY_BG if primary else BTN_SECONDARY_BG,
+        fg=TEXT_COLOR,
+        activebackground=BTN_PRIMARY_ACTIVE if primary else BTN_SECONDARY_ACTIVE,
+        activeforeground=TEXT_COLOR,
+        bd=0,
+        relief="flat",
+        padx=16,
+        pady=6,
+        cursor="hand2",
+    )
+    opts.update(kw)
+    return tk.Button(parent, text=text, command=command, **opts)
+
+
+def themed_entry(parent: tk.Misc, **kw) -> tk.Entry:
+    """A dark, flat text entry matching the app theme."""
+    opts = dict(
+        font=("Segoe UI", 10),
+        bg=ENTRY_BG,
+        fg=TEXT_COLOR,
+        insertbackground=TEXT_COLOR,
+        relief="flat",
+        bd=4,
+    )
+    opts.update(kw)
+    return tk.Entry(parent, **opts)
+
+
+def _apply_icon(dlg: tk.Toplevel, parent: Optional[tk.Misc], icon) -> None:
+    """Set ``dlg``'s title-bar icon. ``icon`` may be a PhotoImage, a path/str to
+    a PNG, or None to inherit the parent window's icon."""
+    img = None
+    try:
+        if isinstance(icon, tk.PhotoImage):
+            img = icon
+        elif icon is not None:
+            img = tk.PhotoImage(file=icon, master=dlg)
+        elif parent is not None:
+            img = getattr(parent, "_icon", None)
+    except Exception:
+        img = None
+    if img is not None:
+        try:
+            dlg.iconphoto(False, img)
+            dlg._dialog_icon = img  # keep a reference alive
+        except Exception:
+            pass
+
+
+def themed_toplevel(
+    parent: tk.Misc,
+    title: str,
+    *,
+    icon=None,
+    modal: bool = True,
+) -> tk.Toplevel:
+    """Create a dark, non-resizable, modal ``Toplevel`` with a title-bar icon,
+    ready for a caller to fill with custom widgets. Pair with ``center_over``
+    after populating it."""
+    dlg = tk.Toplevel(parent)
+    dlg.title(title)
+    dlg.configure(bg=DIALOG_BG)
+    dlg.resizable(False, False)
+    try:
+        dlg.transient(parent.winfo_toplevel())
+    except Exception:
+        pass
+    _apply_icon(dlg, parent, icon)
+    if modal:
+        dlg.grab_set()
+    return dlg
+
+
+def center_over(dlg: tk.Toplevel, parent: tk.Misc) -> None:
+    """Position ``dlg`` centered over ``parent``'s top-level window, falling
+    back to screen-center if the parent isn't mapped."""
+    dlg.update_idletasks()
+    try:
+        anchor = parent.winfo_toplevel()
+        if not anchor.winfo_viewable():
+            raise RuntimeError
+        x = anchor.winfo_rootx() + (anchor.winfo_width() - dlg.winfo_width()) // 2
+        y = anchor.winfo_rooty() + (anchor.winfo_height() - dlg.winfo_height()) // 2
+    except Exception:
+        x = (dlg.winfo_screenwidth() - dlg.winfo_width()) // 2
+        y = (dlg.winfo_screenheight() - dlg.winfo_height()) // 2
+    dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+
+
 def _make_button(
     frame: tk.Frame,
     text: str,
@@ -88,20 +194,7 @@ def _make_button(
     *,
     primary: bool,
 ) -> tk.Button:
-    return tk.Button(
-        frame,
-        text=text,
-        font=("Segoe UI", 9),
-        bg=ACCENT_COLOR if primary else _BTN_SECONDARY_BG,
-        fg=TEXT_COLOR,
-        activebackground=_BTN_ACTIVE_BG,
-        activeforeground=TEXT_COLOR,
-        bd=0,
-        padx=16,
-        pady=6,
-        cursor="hand2",
-        command=command,
-    )
+    return themed_button(frame, text, command, primary=primary)
 
 
 def _run_dialog(
@@ -128,7 +221,7 @@ def _run_dialog(
 
     dlg = tk.Toplevel(master)
     dlg.title(title)
-    dlg.configure(bg=_DIALOG_BG)
+    dlg.configure(bg=DIALOG_BG)
     dlg.resizable(False, False)
     dlg.transient(master.winfo_toplevel())
 
@@ -142,14 +235,14 @@ def _run_dialog(
 
     glyph, glyph_color = _GLYPHS.get(severity, _GLYPHS["info"])
 
-    body = tk.Frame(dlg, bg=_DIALOG_BG)
+    body = tk.Frame(dlg, bg=DIALOG_BG)
     body.pack(fill="both", expand=True, padx=24, pady=(22, 8))
 
     tk.Label(
         body,
         text=glyph,
         font=("Segoe UI", 26),
-        bg=_DIALOG_BG,
+        bg=DIALOG_BG,
         fg=glyph_color,
     ).pack(side="left", anchor="n", padx=(0, 16))
 
@@ -157,13 +250,13 @@ def _run_dialog(
         body,
         text=message,
         font=("Segoe UI", 10),
-        bg=_DIALOG_BG,
+        bg=DIALOG_BG,
         fg=TEXT_COLOR,
         justify="left",
         wraplength=380,
     ).pack(side="left", anchor="n")
 
-    btn_frame = tk.Frame(dlg, bg=_DIALOG_BG)
+    btn_frame = tk.Frame(dlg, bg=DIALOG_BG)
     btn_frame.pack(padx=24, pady=(6, 20))
 
     def _choose(value: object) -> None:

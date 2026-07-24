@@ -1,4 +1,3 @@
-import functools
 import json
 import shutil
 import subprocess
@@ -13,22 +12,44 @@ def _local_dir() -> Path:
     return Path(__file__).parent.parent
 
 
-@functools.lru_cache(maxsize=1)
+# Cache only *successful* lookups. A permanent cache (e.g. lru_cache) would pin
+# a startup-time miss forever, so dropping ffmpeg.exe next to the app wouldn't be
+# picked up until a restart. By caching only a found path, a miss keeps re-probing
+# on each call and detects a newly added binary on the fly — no reload needed.
+_ffmpeg_cache: str | None = None
+_ffprobe_cache: str | None = None
+
+
+def _resolve(name: str) -> str | None:
+    """Locate a binary: check the app/script directory first, then PATH."""
+    local = _local_dir() / f"{name}.exe"
+    if local.exists():
+        return str(local)
+    return shutil.which(name)
+
+
 def find_ffmpeg() -> str | None:
-    """Return path to ffmpeg: checks script directory first, then PATH."""
-    local = _local_dir() / "ffmpeg.exe"
-    if local.exists():
-        return str(local)
-    return shutil.which("ffmpeg")
+    """Return path to ffmpeg: checks app directory first, then PATH.
+
+    Re-probes on every call until found, so an ffmpeg.exe placed beside the app
+    after launch is detected without restarting.
+    """
+    global _ffmpeg_cache
+    if _ffmpeg_cache is None:
+        _ffmpeg_cache = _resolve("ffmpeg")
+    return _ffmpeg_cache
 
 
-@functools.lru_cache(maxsize=1)
 def find_ffprobe() -> str | None:
-    """Return path to ffprobe: checks script directory first, then PATH."""
-    local = _local_dir() / "ffprobe.exe"
-    if local.exists():
-        return str(local)
-    return shutil.which("ffprobe")
+    """Return path to ffprobe: checks app directory first, then PATH.
+
+    Re-probes on every call until found, so an ffprobe.exe placed beside the app
+    after launch is detected without restarting.
+    """
+    global _ffprobe_cache
+    if _ffprobe_cache is None:
+        _ffprobe_cache = _resolve("ffprobe")
+    return _ffprobe_cache
 
 
 def get_audio_duration(path: Path) -> float | None:

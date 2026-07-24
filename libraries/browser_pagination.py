@@ -22,6 +22,7 @@ import re
 import threading
 import tkinter as tk
 
+from libraries import dialogs
 from libraries.constants import (
     BG_COLOR, ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
     SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR,
@@ -198,22 +199,14 @@ def _prompt_int_dialog(
     prompts. ``parse(text) -> int | None`` decides validity; on ``None``
     the dialog either flashes red and re-prompts (``flash_invalid``) or
     simply closes with no result (matching each caller's prior behavior)."""
-    dlg = tk.Toplevel(parent, bg=BG_COLOR)
-    dlg.title(title)
-    dlg.resizable(False, False)
-    dlg.transient(parent)
-    dlg.grab_set()
+    dlg = dialogs.themed_toplevel(parent, title)
 
     tk.Label(
         dlg, text=label_text,
         bg=BG_COLOR, fg=TEXT_COLOR, font=("Segoe UI", 10),
     ).pack(padx=20, pady=(16, 6))
 
-    entry = tk.Entry(
-        dlg, font=("Segoe UI", 10), width=10,
-        bg="#1e1e1e", fg=TEXT_COLOR, insertbackground=TEXT_COLOR,
-        relief="flat", bd=4, justify="center",
-    )
+    entry = dialogs.themed_entry(dlg, width=10, justify="center")
     entry.insert(0, initial)
     entry.select_range(0, "end")
     entry.pack(padx=20, pady=(0, 12))
@@ -228,7 +221,7 @@ def _prompt_int_dialog(
         # Brief red-tint to tell the user the entry wasn't a positive integer.
         try:
             entry.config(bg="#5a1f1f")
-            entry.after(600, lambda: entry.config(bg="#1e1e1e"))
+            entry.after(600, lambda: entry.config(bg=dialogs.ENTRY_BG))
         except tk.TclError:
             pass
 
@@ -248,27 +241,17 @@ def _prompt_int_dialog(
     def _cancel():
         dlg.destroy()
 
-    tk.Button(
-        btn_frame, text="OK", width=8,
-        bg="#1e1e1e", fg=TEXT_COLOR,
-        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-        relief="flat", bd=4, command=_confirm,
+    dialogs.themed_button(
+        btn_frame, "OK", _confirm, primary=True, width=8,
     ).pack(side="left", padx=(0, 8))
-
-    tk.Button(
-        btn_frame, text="Cancel", width=8,
-        bg="#1e1e1e", fg=TEXT_COLOR,
-        activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-        relief="flat", bd=4, command=_cancel,
+    dialogs.themed_button(
+        btn_frame, "Cancel", _cancel, width=8,
     ).pack(side="left")
 
     entry.bind("<Return>", lambda _: _confirm())
     entry.bind("<Escape>", lambda _: _cancel())
 
-    dlg.update_idletasks()
-    x = parent.winfo_rootx() + (parent.winfo_width() - dlg.winfo_width()) // 2
-    y = parent.winfo_rooty() + (parent.winfo_height() - dlg.winfo_height()) // 2
-    dlg.geometry(f"+{x}+{y}")
+    dialogs.center_over(dlg, parent)
 
     parent.wait_window(dlg)
     return result[0]

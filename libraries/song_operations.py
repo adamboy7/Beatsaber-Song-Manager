@@ -12,7 +12,6 @@ from libraries.audio_utils import find_ffmpeg
 from libraries.fs_utils import atomic_write_text
 from libraries.player_data import song_level_ids, load_player_stats
 from libraries.favorites import backup_player_data, confirm_player_data_write, _atomic_write_player_data
-from libraries.constants import BG_COLOR, ACCENT_COLOR, TEXT_COLOR
 
 
 def restore_song_files(song: SongInfo) -> tuple[int, list[str]]:
@@ -44,49 +43,16 @@ def replace_song_art(parent: tk.Misc, song: SongInfo) -> bool:
 
 
 def prompt_ffmpeg_download(parent: tk.Misc) -> None:
-    dlg = tk.Toplevel(parent)
-    dlg.title("ffmpeg Required")
-    dlg.configure(bg=BG_COLOR)
-    dlg.resizable(False, False)
-    dlg.grab_set()
-
-    tk.Label(
-        dlg,
-        text="ffmpeg is required to convert audio files.\n"
-             "Download it and add ffmpeg.exe to your PATH.",
-        font=("Segoe UI", 10),
-        bg=BG_COLOR, fg=TEXT_COLOR,
-        padx=24, pady=18,
-        justify="center",
-    ).pack()
-
-    btn_frame = tk.Frame(dlg, bg=BG_COLOR)
-    btn_frame.pack(pady=(0, 16))
-
-    tk.Button(
-        btn_frame,
-        text="Download",
-        font=("Segoe UI", 10),
-        bg=ACCENT_COLOR, fg=TEXT_COLOR,
-        activebackground="#a01d90", activeforeground=TEXT_COLOR,
-        relief="flat", padx=14, pady=5,
-        command=lambda: (
-            webbrowser.open("https://ffmpeg.org/download.html#build-windows"),
-            dlg.destroy(),
-        ),
-    ).pack(side="left", padx=6)
-
-    tk.Button(
-        btn_frame,
-        text="Cancel",
-        font=("Segoe UI", 10),
-        bg="#333333", fg=TEXT_COLOR,
-        activebackground="#444444", activeforeground=TEXT_COLOR,
-        relief="flat", padx=14, pady=5,
-        command=dlg.destroy,
-    ).pack(side="left", padx=6)
-
-    dlg.wait_window()
+    choice = dialogs.ask_custom(
+        "ffmpeg Required",
+        "ffmpeg is required to convert audio files.\n"
+        "Download it and add ffmpeg.exe to your PATH.",
+        buttons=[("Download", "download"), ("Cancel", "")],
+        parent=parent,
+        default="",
+    )
+    if choice == "download":
+        webbrowser.open("https://ffmpeg.org/download.html#build-windows")
 
 
 def replace_song_audio(parent: tk.Misc, song: SongInfo) -> bool:

@@ -493,18 +493,10 @@ class QueueWindow(tk.Toplevel):
     ) -> "tuple[str, int] | None":
         result: dict = {"query": None, "n": None}
 
-        dlg = tk.Toplevel(self)
-        dlg.title("Add Random Song")
-        dlg.configure(bg=BG_COLOR)
-        dlg.resizable(False, False)
-        dlg.transient(self)
-        dlg.grab_set()
-        try:
-            _rand_icon = tk.PhotoImage(file=Path(__file__).parent.parent / "Random.png")
-            dlg.iconphoto(False, _rand_icon)
-            dlg._rand_icon = _rand_icon
-        except Exception:
-            pass
+        dlg = dialogs.themed_toplevel(
+            self, "Add Random Song",
+            icon=Path(__file__).parent.parent / "Random.png",
+        )
 
         pad = {"padx": 12, "pady": 6}
 
@@ -513,10 +505,8 @@ class QueueWindow(tk.Toplevel):
         tk.Label(filter_frame, text="Filter:", bg=BG_COLOR, fg=TEXT_COLOR,
                  font=("Segoe UI", 9), width=7, anchor="w").pack(side="left")
         filter_var = tk.StringVar()
-        filter_entry = tk.Entry(
-            filter_frame, textvariable=filter_var,
-            bg="#1e1e1e", fg=TEXT_COLOR, insertbackground=TEXT_COLOR,
-            relief="flat", font=("Segoe UI", 9),
+        filter_entry = dialogs.themed_entry(
+            filter_frame, textvariable=filter_var, bd=0, font=("Segoe UI", 9),
         )
         filter_entry.pack(side="left", fill="x", expand=True)
 
@@ -552,19 +542,16 @@ class QueueWindow(tk.Toplevel):
         def _cancel(_event=None):
             dlg.destroy()
 
-        tk.Button(
-            bottom_frame, text="Cancel", command=_cancel,
-            bg="#1e1e1e", fg=TEXT_COLOR, activebackground="#333",
-            activeforeground=TEXT_COLOR, relief="flat", font=("Segoe UI", 9),
+        dialogs.themed_button(
+            bottom_frame, "Cancel", _cancel, font=("Segoe UI", 9),
         ).pack(side="right", padx=(4, 0))
-        tk.Button(
-            bottom_frame, text="Add", command=_ok,
-            bg=ACCENT_COLOR, fg=TEXT_COLOR, activebackground="#7a00cc",
-            activeforeground=TEXT_COLOR, relief="flat", font=("Segoe UI", 9, "bold"),
+        dialogs.themed_button(
+            bottom_frame, "Add", _ok, primary=True, font=("Segoe UI", 9, "bold"),
         ).pack(side="right")
 
         dlg.bind("<Return>", _ok)
         dlg.bind("<Escape>", _cancel)
+        dialogs.center_over(dlg, self)
         filter_entry.focus_set()
         self.wait_window(dlg)
 

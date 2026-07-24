@@ -224,12 +224,7 @@ class BrowserActionsMixin:
 
         result = [None]
 
-        dlg = tk.Toplevel(self)
-        dlg.title("Edit Info")
-        dlg.configure(bg=BG_COLOR)
-        dlg.resizable(False, False)
-        dlg.transient(self)
-        dlg.grab_set()
+        dlg = dialogs.themed_toplevel(self, "Edit Info")
 
         form = tk.Frame(dlg, bg=BG_COLOR, padx=20, pady=16)
         form.pack(fill="both")
@@ -245,10 +240,7 @@ class BrowserActionsMixin:
             row.pack(fill="x", pady=4)
             tk.Label(row, text=label_text, width=10, anchor="w",
                      font=("Segoe UI", 10), bg=BG_COLOR, fg=TEXT_COLOR).pack(side="left")
-            entry = tk.Entry(row, font=("Segoe UI", 10),
-                             bg="#1e1e1e", fg=TEXT_COLOR,
-                             insertbackground=TEXT_COLOR,
-                             relief="flat", bd=4, width=32)
+            entry = dialogs.themed_entry(row, width=32)
             entry.insert(0, default)
             entry.pack(side="left", fill="x", expand=True)
             entries.append(entry)
@@ -265,24 +257,15 @@ class BrowserActionsMixin:
         def _cancel(_event=None):
             dlg.destroy()
 
-        tk.Button(btn_frame, text="OK", font=("Segoe UI", 10),
-                  bg=ACCENT_COLOR, fg=TEXT_COLOR,
-                  activebackground="#a01d90", activeforeground=TEXT_COLOR,
-                  relief="flat", padx=14, pady=5,
-                  command=_ok).pack(side="left", padx=6)
-        tk.Button(btn_frame, text="Cancel", font=("Segoe UI", 10),
-                  bg="#333333", fg=TEXT_COLOR,
-                  activebackground="#444444", activeforeground=TEXT_COLOR,
-                  relief="flat", padx=14, pady=5,
-                  command=_cancel).pack(side="left", padx=6)
+        dialogs.themed_button(btn_frame, "OK", _ok, primary=True,
+                              font=("Segoe UI", 10), padx=14, pady=5).pack(side="left", padx=6)
+        dialogs.themed_button(btn_frame, "Cancel", _cancel,
+                              font=("Segoe UI", 10), padx=14, pady=5).pack(side="left", padx=6)
 
         dlg.bind("<Return>", _ok)
         dlg.bind("<Escape>", _cancel)
 
-        dlg.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
-        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"+{x}+{y}")
+        dialogs.center_over(dlg, self)
 
         entries[0].focus_set()
         entries[0].select_range(0, "end")
@@ -610,11 +593,9 @@ class BrowserActionsMixin:
         added: set[str] = set()
         removed: set[str] = set()
 
-        dlg = tk.Toplevel(self)
-        dlg.title("Custom Tags" if not multi else f"Custom Tags — {n} songs")
-        dlg.configure(bg=BG_COLOR)
-        dlg.resizable(False, False)
-        dlg.grab_set()
+        dlg = dialogs.themed_toplevel(
+            self, "Custom Tags" if not multi else f"Custom Tags — {n} songs"
+        )
 
         tk.Label(dlg, text="Tags:", font=("Segoe UI", 10, "bold"),
                  bg=BG_COLOR, fg=TEXT_COLOR, anchor="w").pack(
@@ -670,10 +651,7 @@ class BrowserActionsMixin:
         add_frame.pack(fill="x", padx=16, pady=(10, 4))
         tk.Label(add_frame, text="Add tag:", font=("Segoe UI", 10),
                  bg=BG_COLOR, fg=TEXT_COLOR).pack(side="left")
-        entry = tk.Entry(add_frame, font=("Segoe UI", 10),
-                         bg="#1e1e1e", fg=TEXT_COLOR,
-                         insertbackground=TEXT_COLOR,
-                         relief="flat", bd=4, width=22)
+        entry = dialogs.themed_entry(add_frame, width=22)
         entry.pack(side="left", padx=(6, 4))
 
         def _do_add(_event=None):
@@ -696,11 +674,8 @@ class BrowserActionsMixin:
             canvas.configure(scrollregion=canvas.bbox("all"))
             entry.delete(0, "end")
 
-        tk.Button(add_frame, text="Add", font=("Segoe UI", 10),
-                  bg=ACCENT_COLOR, fg=TEXT_COLOR,
-                  activebackground="#a01d90", activeforeground=TEXT_COLOR,
-                  relief="flat", padx=10, pady=3,
-                  command=_do_add).pack(side="left")
+        dialogs.themed_button(add_frame, "Add", _do_add, primary=True,
+                              font=("Segoe UI", 10), padx=10, pady=3).pack(side="left")
         entry.bind("<Return>", _do_add)
 
         # Save / Cancel
@@ -720,22 +695,13 @@ class BrowserActionsMixin:
         def _cancel(_event=None):
             dlg.destroy()
 
-        tk.Button(btn_frame, text="Save", font=("Segoe UI", 10),
-                  bg=ACCENT_COLOR, fg=TEXT_COLOR,
-                  activebackground="#a01d90", activeforeground=TEXT_COLOR,
-                  relief="flat", padx=14, pady=5,
-                  command=_save).pack(side="left", padx=6)
-        tk.Button(btn_frame, text="Cancel", font=("Segoe UI", 10),
-                  bg="#333333", fg=TEXT_COLOR,
-                  activebackground="#444444", activeforeground=TEXT_COLOR,
-                  relief="flat", padx=14, pady=5,
-                  command=_cancel).pack(side="left", padx=6)
+        dialogs.themed_button(btn_frame, "Save", _save, primary=True,
+                              font=("Segoe UI", 10), padx=14, pady=5).pack(side="left", padx=6)
+        dialogs.themed_button(btn_frame, "Cancel", _cancel,
+                              font=("Segoe UI", 10), padx=14, pady=5).pack(side="left", padx=6)
 
         dlg.bind("<Escape>", _cancel)
 
-        dlg.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
-        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"+{x}+{y}")
+        dialogs.center_over(dlg, self)
         entry.focus_set()
         dlg.wait_window()
