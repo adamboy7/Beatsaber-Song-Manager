@@ -24,7 +24,7 @@ import tkinter as tk
 
 from libraries.constants import (
     BG_COLOR, ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
-    SELECTED_BG, HOVER_BG, SEPARATOR_COLOR,
+    SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR,
 )
 from libraries.player_data import get_song_stats, song_level_ids
 from libraries.song_data import SongInfo, load_songs, load_song_hashes
@@ -563,6 +563,7 @@ class BrowserPaginationMixin:
 
         sep = tk.Frame(self.list_frame, bg=SEPARATOR_COLOR, height=1)
         sep.pack(fill="x")
+        sep.bind("<MouseWheel>", self._on_mousewheel)
 
         for w in [row, icon_lbl, text_frame, title_lbl, sub_lbl]:
             w.bind("<Button-1>",   lambda _, sid=song_id: self._trigger_install(sid))
@@ -579,7 +580,37 @@ class BrowserPaginationMixin:
         self.canvas.itemconfig(self.canvas_window, width=event.width)
 
     def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        # High-resolution wheels and touchpads deliver deltas smaller than the
+        # classic 120-per-notch; the old int(delta / 120) truncated those to
+        # zero steps, so fast flick-scrolling could feel stuck. Accumulate
+        # fractional ticks and only consume whole steps.
+        self._wheel_accum += event.delta
+        steps = int(self._wheel_accum / 120)
+        if steps:
+            self._wheel_accum -= steps * 120
+            self.canvas.yview_scroll(-steps, "units")
+
+        # Mark a scroll burst as active. While active, _hover and
+        # _show_mod_tooltip no-op: rows sweeping under a stationary cursor
+        # otherwise fire Enter/Leave storms whose per-widget recolors (and
+        # tooltip Toplevel churn) hitch high-speed scrolling.
+        if not self._scroll_active:
+            self._scroll_active = True
+            hover = self._hover_row
+            self._hover_row = None
+            if hover is not None:
+                try:
+                    if not self._row_is_selected(hover):
+                        self._recolor_row(hover, ITEM_BG)
+                except tk.TclError:
+                    pass
+        if self._scroll_idle_id:
+            self.after_cancel(self._scroll_idle_id)
+        self._scroll_idle_id = self.after(150, self._on_scroll_idle)
+
+    def _on_scroll_idle(self):
+        self._scroll_active = False
+        self._scroll_idle_id = None
 
     def _update_scroll(self):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))

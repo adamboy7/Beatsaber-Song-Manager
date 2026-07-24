@@ -111,6 +111,10 @@ class SongBrowser(
         self._last_shuffle_index: int | None = None
         self._cinema_downloads_active: set[str] = set()
         self._mod_tooltip = None
+        self._hover_row: tk.Frame | None = None   # row currently hover-highlighted
+        self._wheel_accum: float = 0.0            # fractional wheel ticks (high-res wheels/touchpads)
+        self._scroll_active: bool = False         # True during a wheel-scroll burst; suppresses hover work
+        self._scroll_idle_id: str | None = None   # tk `after` handle that ends the scroll burst
 
         self._build_ui()
 

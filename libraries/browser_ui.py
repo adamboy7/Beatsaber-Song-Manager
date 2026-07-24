@@ -177,6 +177,10 @@ class BrowserUIMixin:
         self.list_frame.bind("<Configure>", self._on_frame_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        # The 1px pady gaps between rows expose list_frame itself; without its
+        # own wheel binding those gaps are scroll dead zones that make fast
+        # scrolling stall when the cursor lands on one.
+        self.list_frame.bind("<MouseWheel>", self._on_mousewheel)
         self.bind("<F5>", self._refresh)
         self.bind("<space>", self._on_space)
         self.bind("<Escape>", self._deselect_all)
@@ -502,6 +506,7 @@ class BrowserUIMixin:
 
         self._render_gen += 1
         self._hide_mod_tooltip()
+        self._hover_row = None   # about to destroy every row widget
         for w in self.list_frame.winfo_children():
             w.destroy()
         self._row_frames.clear()
@@ -554,6 +559,7 @@ class BrowserUIMixin:
 
         sep = tk.Frame(self.list_frame, bg=SEPARATOR_COLOR, height=1)
         sep.pack(fill="x")
+        sep.bind("<MouseWheel>", self._on_mousewheel)
 
         for w in [row, icon_lbl, text_frame, title_lbl, sub_lbl]:
             w.bind("<Button-1>",   lambda _, u=url: self._install_playlist_from_url(u))
@@ -663,9 +669,11 @@ class BrowserUIMixin:
                 wraplength=0,
             ).pack(fill="x")
 
-        # Separator
+        # Separator (needs its own wheel binding — it's a scroll dead zone
+        # otherwise, since Tk doesn't propagate wheel events to parents)
         sep = tk.Frame(self.list_frame, bg=SEPARATOR_COLOR, height=1)
         sep.pack(fill="x")
+        sep.bind("<MouseWheel>", self._on_mousewheel)
 
         # Bind click / hover to all widgets in the row
         widgets = [row, thumb_lbl, text_frame, title_lbl]
@@ -696,6 +704,9 @@ class BrowserUIMixin:
     # ── Hover / selection / row coloring ──────────────────────────────────────
 
     def _hover(self, row: tk.Frame, sep: tk.Frame, entering: bool):
+        if self._scroll_active:
+            return  # suppressed during wheel-scroll bursts; see _on_mousewheel
+        self._hover_row = row if entering else None
         if self._row_is_selected(row):
             return
         bg = HOVER_BG if entering else ITEM_BG
@@ -707,6 +718,10 @@ class BrowserUIMixin:
         No-ops when the song needs no mods at all.
         """
         self._hide_mod_tooltip()
+        if self._scroll_active:
+            # Creating a Toplevel per thumbnail swept under the cursor is
+            # expensive enough to hitch high-speed scrolling; skip it.
+            return
         if not (song.mod_required or song.mod_suggested):
             return
 
@@ -758,15 +773,25 @@ class BrowserUIMixin:
         return row.cget("bg") == SELECTED_BG
 
     def _recolor_row(self, row: tk.Frame, bg: str):
-        # Recurse rather than hard-coding the current depth-3 row layout — any
-        # future wrapping frame around scores_frame/text_frame would otherwise
-        # leave the deepest widgets at the previous bg on hover/select.
-        try:
-            row.configure(bg=bg)
-        except Exception:
-            pass
-        for child in row.winfo_children():
-            self._recolor_row(child, bg)
+        # Rows are static after they're built, so collect each row's widget
+        # tree once (depth-agnostic, like the old recursion) and reuse the
+        # flat list — recursing winfo_children() on every hover/selection
+        # recolor cost dozens of Tcl round-trips per event, which added up
+        # badly during scroll-induced Enter/Leave storms.
+        widgets = getattr(row, "_recolor_widgets", None)
+        if widgets is None:
+            widgets = []
+            stack = [row]
+            while stack:
+                w = stack.pop()
+                widgets.append(w)
+                stack.extend(w.winfo_children())
+            row._recolor_widgets = widgets
+        for w in widgets:
+            try:
+                w.configure(bg=bg)
+            except Exception:
+                pass
 
     def _deselect_all(self, _event=None):
         page_start = self.page * self.page_size
