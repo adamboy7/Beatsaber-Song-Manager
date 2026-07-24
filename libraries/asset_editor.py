@@ -71,7 +71,7 @@ def replace_audio(audio_path: Path, new_path: str, ffmpeg_path: str) -> None:
             if not ffmpeg_path:
                 raise RuntimeError(
                     "ffmpeg not available — cannot convert audio.\n"
-                    "Place ffmpeg.exe next to this script or add it to PATH."
+                    "Place ffmpeg next to this app or add it to PATH."
                 )
             # Invoke ffmpeg directly with CREATE_NO_WINDOW rather than going
             # through pydub. Avoids the global `subprocess.Popen` monkey-patch

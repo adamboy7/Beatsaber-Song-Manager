@@ -1,7 +1,8 @@
 import re
 from pathlib import Path
 
-from libraries.constants import DEFAULT_VDF_PATH, STEAM_RELATIVE_PATH
+from libraries import platform_utils
+from libraries.constants import STEAM_RELATIVE_PATH
 
 
 def parse_vdf_library_paths(vdf_path: Path) -> list[Path]:
@@ -30,21 +31,45 @@ def get_steam_path_from_registry() -> Path | None:
         return None
 
 
-def find_beatsaber_custom_levels(vdf_path: Path | None = None) -> Path | None:
-    """Locate the CustomLevels folder by scanning Steam library folders."""
-    if vdf_path is not None:
-        candidates = [vdf_path]
-    else:
-        candidates = []
-        steam_root = get_steam_path_from_registry()
-        if steam_root:
-            candidates.append(steam_root / "steamapps" / "libraryfolders.vdf")
-        if DEFAULT_VDF_PATH not in candidates:
-            candidates.append(DEFAULT_VDF_PATH)
+def _vdf_candidates(vdf_path: Path | None = None) -> list[Path]:
+    """Ordered list of libraryfolders.vdf files to probe.
 
-    for candidate_vdf in candidates:
+    Starts with an explicit override, then Steam's registry-reported location
+    (Windows only), then the platform's default install/data dirs (including
+    Linux native and Flatpak).
+    """
+    if vdf_path is not None:
+        return [vdf_path]
+
+    candidates: list[Path] = []
+    steam_root = get_steam_path_from_registry()
+    if steam_root:
+        candidates.append(steam_root / "steamapps" / "libraryfolders.vdf")
+    for default in platform_utils.steam_library_vdf_candidates():
+        if default not in candidates:
+            candidates.append(default)
+    return candidates
+
+
+def steam_library_roots(vdf_path: Path | None = None) -> list[Path]:
+    """Every Steam library root discoverable on this machine."""
+    roots: list[Path] = []
+    for candidate_vdf in _vdf_candidates(vdf_path):
         for root in parse_vdf_library_paths(candidate_vdf):
-            candidate = root / STEAM_RELATIVE_PATH
-            if candidate.is_dir():
-                return candidate
+            if root not in roots:
+                roots.append(root)
+    return roots
+
+
+def find_beatsaber_custom_levels(vdf_path: Path | None = None) -> Path | None:
+    """Locate the CustomLevels folder by scanning Steam library folders.
+
+    ``STEAM_RELATIVE_PATH`` is the same under Proton — the game files live at
+    that relative path inside the library root regardless of platform — so this
+    works on Linux once the Linux VDF candidates are in play.
+    """
+    for root in steam_library_roots(vdf_path):
+        candidate = root / STEAM_RELATIVE_PATH
+        if candidate.is_dir():
+            return candidate
     return None

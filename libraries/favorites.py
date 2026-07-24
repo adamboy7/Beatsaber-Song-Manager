@@ -4,6 +4,7 @@ import subprocess
 import datetime
 from pathlib import Path
 from libraries import dialogs
+from libraries import platform_utils
 
 from libraries.song_data import SongInfo
 from libraries.audio_utils import _local_dir
@@ -31,18 +32,25 @@ def backup_player_data(player_dat_path: Path, raw: str) -> None:
 
 def beat_saber_running() -> bool:
     """Best-effort check for a running Beat Saber process. Returns False if we can't tell."""
-    if os.name != "nt":
-        return False
     try:
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        if platform_utils.IS_WINDOWS:
+            result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq Beat Saber.exe", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=platform_utils.no_window_flags(),
+            )
+            return "Beat Saber.exe" in (result.stdout or "")
+        # Linux/macOS: Beat Saber runs under Proton/Wine, so match the exe name
+        # against the process list. -f matches the full command line.
         result = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq Beat Saber.exe", "/NH"],
+            ["pgrep", "-f", "Beat Saber.exe"],
             capture_output=True,
             text=True,
             timeout=5,
-            creationflags=creationflags,
         )
-        return "Beat Saber.exe" in (result.stdout or "")
+        return result.returncode == 0 and bool((result.stdout or "").strip())
     except Exception:
         return False
 

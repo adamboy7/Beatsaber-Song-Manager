@@ -32,6 +32,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from libraries import dialogs
+from libraries import platform_utils
 
 RELEASES_API = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
 USER_AGENT = "BeatSaberSongManager/1.0 (github.com/adamboy8888/Beatsaber-Song-Manager)"
@@ -180,6 +181,24 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
         unavailable()
         return
     _offered = True
+
+    # The shinchiro mpv-dev builds this fetches (and the 7-Zip BCJ2 extraction)
+    # are Windows-only. There's no equivalent drop-in static libmpv for
+    # Linux/macOS, so point the user at their package manager instead. load_mpv()
+    # re-probes on every call, so a system install is picked up without restart.
+    if not platform_utils.IS_WINDOWS:
+        dialogs.show_info(
+            "libmpv Not Found",
+            "In-app audio/video playback needs libmpv, which wasn't found.\n\n"
+            "Install it with your package manager, then try again:\n"
+            "  • Debian/Ubuntu:  sudo apt install libmpv2\n"
+            "  • Fedora:         sudo dnf install mpv-libs\n"
+            "  • Arch:           sudo pacman -S mpv\n\n"
+            "(On older distros the package may be named libmpv1.) "
+            "No restart needed once it's installed.",
+        )
+        unavailable()
+        return
 
     arch = target_arch()
     if not dialogs.ask_yes_no(

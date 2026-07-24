@@ -21,7 +21,9 @@ separate progress window. Only the standard library is used for networking
 from __future__ import annotations
 
 import json
+import os
 import platform
+import tarfile
 import threading
 import time
 import urllib.error
@@ -30,12 +32,14 @@ import zipfile
 from pathlib import Path
 
 from libraries import dialogs
+from libraries import platform_utils
 
 RELEASES_API = "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/latest"
 USER_AGENT = "BeatSaberSongManager/1.0 (github.com/adamboy8888/Beatsaber-Song-Manager)"
 
-# The executables we pull out of the archive's bin/ directory.
-_WANTED = ("ffmpeg.exe", "ffprobe.exe", "ffplay.exe")
+# The executables we pull out of the archive's bin/ directory (extension-less
+# on Linux/macOS, .exe on Windows).
+_WANTED = tuple(platform_utils.exe_name(n) for n in ("ffmpeg", "ffprobe", "ffplay"))
 
 _META_TIMEOUT = 30
 _ARCHIVE_TIMEOUT = 600
@@ -52,8 +56,20 @@ class FfmpegInstallError(Exception):
 
 
 def target_arch() -> str:
-    """The BtbN asset arch tag matching this machine (win64 or winarm64)."""
-    return "winarm64" if platform.machine().lower() in ("arm64", "aarch64") else "win64"
+    """The BtbN asset arch tag matching this machine.
+
+    BtbN publishes Windows (win64/winarm64) and Linux (linux64/linuxarm64)
+    static builds under the same 'latest' release.
+    """
+    is_arm = platform.machine().lower() in ("arm64", "aarch64")
+    if platform_utils.IS_WINDOWS:
+        return "winarm64" if is_arm else "win64"
+    return "linuxarm64" if is_arm else "linux64"
+
+
+def _asset_ext() -> str:
+    """Archive extension for this platform's BtbN asset."""
+    return "zip" if platform_utils.IS_WINDOWS else "tar.xz"
 
 
 def _open(url: str, timeout: int, accept_json: bool = False):
@@ -81,7 +97,7 @@ def find_asset(arch: str | None = None) -> tuple[str, str]:
     except json.JSONDecodeError as e:
         raise FfmpegInstallError(f"bad JSON from GitHub releases API: {e}")
 
-    wanted = f"ffmpeg-master-latest-{arch}-gpl.zip"
+    wanted = f"ffmpeg-master-latest-{arch}-gpl.{_asset_ext()}"
     for asset in data.get("assets", []) or []:
         if asset.get("name") == wanted:
             url = asset.get("browser_download_url")
@@ -114,27 +130,53 @@ def _download(url: str, dest: Path, progress_cb=None) -> None:
 
 
 def _extract_exes(archive: Path, dest_dir: Path) -> list[str]:
-    """Extract bin/{ffmpeg,ffprobe,ffplay}.exe from ``archive`` into ``dest_dir``.
+    """Extract bin/{ffmpeg,ffprobe,ffplay} from ``archive`` into ``dest_dir``.
 
-    BtbN zips nest everything under a top-level ``<name>/`` folder, so entries
-    are matched by basename and written flat into ``dest_dir``. Returns the
-    list of executable names successfully written.
+    BtbN archives nest everything under a top-level ``<name>/`` folder, so
+    entries are matched by basename and written flat into ``dest_dir``. Windows
+    assets are ``.zip``; Linux assets are ``.tar.xz``. Returns the list of
+    executable names successfully written; on Unix the execute bit is set.
     """
     written: list[str] = []
     try:
-        with zipfile.ZipFile(archive) as zf:
-            for info in zf.infolist():
-                base = info.filename.rsplit("/", 1)[-1]
-                if base in _WANTED and "/bin/" in f"/{info.filename}":
-                    with zf.open(info) as src, open(dest_dir / base, "wb") as out:
-                        while True:
-                            chunk = src.read(_CHUNK)
-                            if not chunk:
-                                break
-                            out.write(chunk)
-                    written.append(base)
-    except (zipfile.BadZipFile, OSError) as e:
+        if archive.name.endswith((".tar.xz", ".tar.gz", ".tar.bz2")):
+            with tarfile.open(archive) as tf:
+                for member in tf.getmembers():
+                    if not member.isfile():
+                        continue
+                    base = member.name.rsplit("/", 1)[-1]
+                    if base in _WANTED and "/bin/" in f"/{member.name}":
+                        src = tf.extractfile(member)
+                        if src is None:
+                            continue
+                        with src, open(dest_dir / base, "wb") as out:
+                            while True:
+                                chunk = src.read(_CHUNK)
+                                if not chunk:
+                                    break
+                                out.write(chunk)
+                        written.append(base)
+        else:
+            with zipfile.ZipFile(archive) as zf:
+                for info in zf.infolist():
+                    base = info.filename.rsplit("/", 1)[-1]
+                    if base in _WANTED and "/bin/" in f"/{info.filename}":
+                        with zf.open(info) as src, open(dest_dir / base, "wb") as out:
+                            while True:
+                                chunk = src.read(_CHUNK)
+                                if not chunk:
+                                    break
+                                out.write(chunk)
+                        written.append(base)
+    except (zipfile.BadZipFile, tarfile.TarError, OSError) as e:
         raise FfmpegInstallError(f"could not extract archive: {e}")
+
+    if not platform_utils.IS_WINDOWS:
+        for base in written:
+            try:
+                os.chmod(dest_dir / base, 0o755)
+            except OSError:
+                pass
     return written
 
 
@@ -207,8 +249,9 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
                 archive_path.unlink()
             except OSError:
                 pass
-            if "ffmpeg.exe" not in written:
-                raise FfmpegInstallError("archive did not contain ffmpeg.exe")
+            ffmpeg_bin = platform_utils.exe_name("ffmpeg")
+            if ffmpeg_bin not in written:
+                raise FfmpegInstallError(f"archive did not contain {ffmpeg_bin}")
             result["written"] = written
         except FfmpegInstallError as e:
             result["error"] = str(e)

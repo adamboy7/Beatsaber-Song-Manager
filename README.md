@@ -8,9 +8,13 @@ A music browser, media player, playlist builder, and asset editor for Beat Saber
 
 ### Requirements
 
-- **ffmpeg** — place `ffmpeg.exe` and `ffprobe.exe` next to the application, or add them to your system PATH. [Download ffmpeg](https://ffmpeg.org/download.html) If it's missing when you convert audio, the app offers to download a prebuilt static build for you (from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), matching your platform), drops the binaries next to the app, and retries the conversion automatically — no manual download or PATH edit needed.
-- **libmpv** — place `libmpv-2.dll` next to the application, or add it to your system PATH. Powers all audio and Cinema video playback. [Download libmpv](https://mpv.io/installation/) (from the "libmpv" dev builds)
-- Beat Saber installed via Steam (recommended, but not required — see below)
+- **ffmpeg** — place `ffmpeg`/`ffmpeg.exe` and `ffprobe`/`ffprobe.exe` next to the application, or add them to your system PATH. [Download ffmpeg](https://ffmpeg.org/download.html) If it's missing when you convert audio, the app offers to download a prebuilt static build for you (from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), matching your platform — Windows or Linux), drops the binaries next to the app, and retries the conversion automatically — no manual download or PATH edit needed.
+- **libmpv** — powers all audio and Cinema video playback. On **Windows**, place `libmpv-2.dll` next to the application or add it to PATH ([download](https://mpv.io/installation/), "libmpv" dev builds); if missing, the app offers to fetch it. On **Linux**, install it from your package manager: `sudo apt install libmpv2` (Debian/Ubuntu), `sudo dnf install mpv-libs` (Fedora), or `sudo pacman -S mpv` (Arch).
+- Beat Saber installed via Steam (recommended, but not required — see below). On Linux, Beat Saber runs through Steam Play/Proton; the app locates your library and reads scores/favorites from the game's Proton prefix automatically.
+
+### Linux
+
+Native Linux support runs the same Python app. You'll also need Tk (`sudo apt install python3-tk` or your distro's equivalent) and the packages in `requirements.txt`. Run with `python3 Browser.py`, or build a standalone binary with `./build.sh` (uses `Browser.linux.spec`). See [Linux.md](Linux.md) for details on how library and score detection works under Proton.
 
 ### How the App Finds Your Files
 

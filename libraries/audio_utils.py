@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from libraries import platform_utils
+
 
 def _local_dir() -> Path:
     # When frozen by PyInstaller, look next to the EXE, not in the temp bundle.
@@ -21,8 +23,13 @@ _ffprobe_cache: str | None = None
 
 
 def _resolve(name: str) -> str | None:
-    """Locate a binary: check the app/script directory first, then PATH."""
-    local = _local_dir() / f"{name}.exe"
+    """Locate a binary: check the app/script directory first, then PATH.
+
+    The local filename is platform-aware (``ffmpeg.exe`` on Windows,
+    ``ffmpeg`` on Linux/macOS), matching the extension-less binaries dropped
+    beside the app or fetched by the auto-downloader.
+    """
+    local = _local_dir() / platform_utils.exe_name(name)
     if local.exists():
         return str(local)
     return shutil.which(name)

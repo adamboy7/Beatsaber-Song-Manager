@@ -15,16 +15,32 @@ import ctypes
 import os
 from pathlib import Path
 
+from libraries import platform_utils
 from libraries.audio_utils import _local_dir
 
-# Accepted DLL filenames, in preference order. libmpv-2.dll is what current
-# mpv releases ship; the others cover older builds and manual renames.
-_DLL_NAMES = ("libmpv-2.dll", "mpv-2.dll", "mpv-1.dll", "libmpv.dll")
+# Accepted library filenames, in preference order. On Windows libmpv-2.dll is
+# what current mpv releases ship; the others cover older builds and manual
+# renames. On Linux/macOS the loader looks for the versioned shared object
+# (SONAME libmpv.so.2 on current builds) next to the app or via the dynamic
+# linker.
+if platform_utils.IS_WINDOWS:
+    _DLL_NAMES = ("libmpv-2.dll", "mpv-2.dll", "mpv-1.dll", "libmpv.dll")
+elif platform_utils.IS_MAC:
+    _DLL_NAMES = ("libmpv.2.dylib", "libmpv.dylib")
+else:
+    _DLL_NAMES = ("libmpv.so.2", "libmpv.so.1", "libmpv.so")
 
-LIBMPV_HINT = (
-    "libmpv not found. Place libmpv-2.dll next to the application "
-    "(same place as ffmpeg.exe) or add it to your PATH."
-)
+if platform_utils.IS_WINDOWS:
+    LIBMPV_HINT = (
+        "libmpv not found. Place libmpv-2.dll next to the application "
+        "(same place as ffmpeg.exe) or add it to your PATH."
+    )
+else:
+    LIBMPV_HINT = (
+        "libmpv not found. Install it with your package manager "
+        "(e.g. 'sudo apt install libmpv2', 'sudo dnf install mpv-libs', "
+        "or 'sudo pacman -S mpv'), or place a libmpv.so.2 next to the app."
+    )
 
 # Human-readable reason the last load_mpv() call returned None, for error
 # dialogs — distinguishes "DLL missing" from "python-mpv not installed" from
@@ -82,19 +98,23 @@ def load_mpv():
         # clobber one the user has already set themselves.
         os.environ.setdefault("MPV_DLL_PATH", local)
         dll_dir = str(Path(local).parent)
+        # add_dll_directory only exists on Windows; harmless no-op elsewhere.
         try:
             os.add_dll_directory(dll_dir)
         except (OSError, AttributeError):
             pass
-        # Also prepend to PATH: older python-mpv versions ignore MPV_DLL_PATH
-        # and search PATH via ctypes.util.find_library instead. Guard against
-        # re-adding it on retries so a repeated miss doesn't grow PATH.
-        path_entries = os.environ.get("PATH", "").split(os.pathsep)
-        if dll_dir not in path_entries:
-            os.environ["PATH"] = dll_dir + os.pathsep + os.environ.get("PATH", "")
-        # Validate the DLL actually loads before python-mpv tries — this
-        # surfaces the real Windows error (bad arch, corrupt download,
-        # missing VC runtime) instead of a generic import failure.
+        # Point the loader at the local library's directory. On Windows,
+        # older python-mpv versions ignore MPV_DLL_PATH and search PATH via
+        # ctypes.util.find_library; on Linux the equivalent is LD_LIBRARY_PATH.
+        # Guard against re-adding on retries so a repeated miss doesn't grow
+        # the variable.
+        _env_var = "PATH" if platform_utils.IS_WINDOWS else "LD_LIBRARY_PATH"
+        entries = os.environ.get(_env_var, "").split(os.pathsep)
+        if dll_dir not in entries:
+            os.environ[_env_var] = dll_dir + os.pathsep + os.environ.get(_env_var, "")
+        # Validate the library actually loads before python-mpv tries — this
+        # surfaces the real OS error (bad arch, corrupt download, missing
+        # runtime) instead of a generic import failure.
         try:
             ctypes.CDLL(local)
         except OSError as exc:

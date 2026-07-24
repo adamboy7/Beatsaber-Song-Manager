@@ -492,7 +492,7 @@ class VisualizerWindow(tk.Toplevel):
             self._set_status("Song has no audio file.")
             return
         if find_ffmpeg() is None:
-            self._set_status("ffmpeg not found — place ffmpeg.exe next to Browser.py.")
+            self._set_status("ffmpeg not found — place ffmpeg next to the app or add it to PATH.")
             return
 
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
@@ -1107,7 +1107,7 @@ class VisualizerWindow(tk.Toplevel):
             self._set_status("Song has no audio file.")
             return
         if find_ffmpeg() is None:
-            self._set_status("ffmpeg not found — place ffmpeg.exe next to Browser.py.")
+            self._set_status("ffmpeg not found — place ffmpeg next to the app or add it to PATH.")
             return
         if initial and not mp.is_stopped:
             elapsed = mp.elapsed_seconds() or 0.0

@@ -18,6 +18,7 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from libraries import dialogs
+from libraries import platform_utils
 
 from libraries.audio_utils import _local_dir
 from libraries.beatsaver_api import USER_AGENT
@@ -302,17 +303,22 @@ class BrowserActionsMixin:
         return None
 
     def _find_yt_dlp(self) -> Path | None:
-        """Look for yt-dlp.exe in Beat Saber\\Libs, then next to the app
-        (same folder as ffmpeg — beside the exe or script)."""
+        """Look for yt-dlp in Beat Saber\\Libs, then next to the app
+        (same folder as ffmpeg — beside the exe or script). The binary name
+        is platform-aware: ``yt-dlp.exe`` on Windows, ``yt-dlp`` elsewhere."""
+        yt_name = platform_utils.exe_name("yt-dlp")
         install = self._beatsaber_install_dir()
         if install is not None:
-            candidate = install / "Libs" / "yt-dlp.exe"
+            candidate = install / "Libs" / yt_name
             if candidate.exists():
                 return candidate
-        candidate = _local_dir() / "yt-dlp.exe"
+        candidate = _local_dir() / yt_name
         if candidate.exists():
             return candidate
-        return None
+        # On Linux yt-dlp is commonly installed system-wide via pip/pipx/distro.
+        import shutil as _shutil
+        found = _shutil.which("yt-dlp")
+        return Path(found) if found else None
 
     def _download_cinema_video(self, song: SongInfo):
         if not song.cinema_video_id or not song.cinema_video_file:
@@ -329,20 +335,29 @@ class BrowserActionsMixin:
             self._run_yt_dlp(yt_dlp, song)
             return
 
+        yt_name = platform_utils.exe_name("yt-dlp")
         if not dialogs.ask_yes_no(
             "yt-dlp Not Found",
-            "yt-dlp.exe is required to download videos but wasn't found.\n\n"
+            f"{yt_name} is required to download videos but wasn't found.\n\n"
             "Download it from github.com/yt-dlp/yt-dlp?",
         ):
             return
 
         install = self._beatsaber_install_dir()
         if install is not None and (install / "Libs").is_dir():
-            dest = install / "Libs" / "yt-dlp.exe"
+            dest = install / "Libs" / yt_name
         else:
-            dest = _local_dir() / "yt-dlp.exe"
+            dest = _local_dir() / yt_name
 
-        url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+        # yt-dlp ships an OS-specific release asset: yt-dlp.exe (Windows),
+        # yt-dlp_macos (macOS), and the plain 'yt-dlp' zipapp (Linux/other).
+        if platform_utils.IS_WINDOWS:
+            asset = "yt-dlp.exe"
+        elif platform_utils.IS_MAC:
+            asset = "yt-dlp_macos"
+        else:
+            asset = "yt-dlp"
+        url = f"https://github.com/yt-dlp/yt-dlp/releases/latest/download/{asset}"
 
         def do_download():
             import urllib.request
@@ -365,6 +380,13 @@ class BrowserActionsMixin:
                                 self._dispatcher.dispatch(lambda p=pct: self.status_bar.config(
                                     text=f"Downloading yt-dlp… {p}%"
                                 ))
+                # A freshly downloaded Unix binary needs the execute bit set.
+                if not platform_utils.IS_WINDOWS:
+                    try:
+                        import os as _os
+                        _os.chmod(dest, 0o755)
+                    except OSError:
+                        pass
                 self._dispatcher.dispatch(lambda: self._run_yt_dlp(dest, song))
             except Exception as exc:
                 self._dispatcher.dispatch(lambda e=exc: self.status_bar.config(
@@ -452,9 +474,7 @@ class BrowserActionsMixin:
     # ── Context menus ─────────────────────────────────────────────────────────
 
     def _open_folder(self, path: Path) -> None:
-        if os.name != "nt":
-            return
-        os.startfile(path)
+        platform_utils.open_in_file_manager(path)
 
     def _show_context_menu(self, event: tk.Event, song: SongInfo):
         is_fav = self._is_favorite(song)

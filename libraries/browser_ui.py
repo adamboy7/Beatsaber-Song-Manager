@@ -16,6 +16,7 @@ from pathlib import Path
 from tkinter import ttk
 from PIL import Image, ImageTk
 
+from libraries import platform_utils
 from libraries.constants import (
     BG_COLOR, ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
     SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR, SCROLLBAR_BG,
@@ -35,15 +36,29 @@ class BrowserUIMixin:
 
     # ── Menus / chrome ────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _beatsaber_appdata_dir(custom_songs: "Path | None") -> "Path | None":
+        """Beat Saber's LocalLow AppData dir, platform-aware.
+
+        On Windows it's under the user's home; under Proton it lives inside the
+        game's Wine prefix, derived from the CustomLevels path's library root
+        (``<root>/steamapps/common/Beat Saber/Beat Saber_Data/CustomLevels``).
+        """
+        bs_sub = Path("Hyperbolic Magnetism") / "Beat Saber"
+        if platform_utils.IS_WINDOWS:
+            return Path.home() / "AppData" / "LocalLow" / bs_sub
+        if custom_songs is not None and len(custom_songs.parents) >= 5:
+            library_root = custom_songs.parents[4]
+            return platform_utils.proton_prefix_appdata(library_root) / bs_sub
+        return None
+
     def _add_folder_menu_items(self):
         custom_songs = self.custom_levels
         bs_install = custom_songs.parent.parent if custom_songs else None
-        appdata = Path.home() / "AppData" / "LocalLow" / "Hyperbolic Magnetism" / "Beat Saber"
+        appdata = self._beatsaber_appdata_dir(custom_songs)
 
         def _open(p: Path):
-            if os.name != "nt":
-                return
-            os.startfile(p)
+            platform_utils.open_in_file_manager(p)
 
         for label, path in (
             ("Open Custom Songs Folder", custom_songs),

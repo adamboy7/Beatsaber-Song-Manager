@@ -2,6 +2,7 @@ import os
 import json
 from pathlib import Path
 
+from libraries import platform_utils
 from libraries.song_data import SongInfo
 
 # Beat Saber difficulty int → label
@@ -15,6 +16,23 @@ def find_player_data() -> tuple["Path | None", str]:
     """Locate PlayerData.dat. Returns (path_or_None, debug_string)."""
     debug = []
     bs_relative = Path("Hyperbolic Magnetism") / "Beat Saber" / "PlayerData.dat"
+
+    # Strategy 0 (Linux/Proton): Beat Saber runs under Proton, so it writes
+    # into its Wine prefix rather than the host home dir. Scan each Steam
+    # library's compatdata/620980 prefix for the LocalLow AppData.
+    if not platform_utils.IS_WINDOWS:
+        try:
+            from libraries.steam_paths import steam_library_roots
+            roots = steam_library_roots()
+            debug.append(f"Proton:scanned {len(roots)} steam lib root(s)")
+            for root in roots:
+                local_low = platform_utils.proton_prefix_appdata(root)
+                debug.append(f"Proton->LocalLow:{local_low}")
+                candidate = local_low / bs_relative
+                if candidate.exists():
+                    return candidate, " | ".join(debug)
+        except Exception as e:
+            debug.append(f"proton_fail:{e}")
 
     # Strategy 1: Registry — 'Local AppData' value tells us the real path;
     # LocalLow is always a sibling folder (Local -> LocalLow).
