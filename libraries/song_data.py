@@ -100,7 +100,7 @@ class SongInfo:
         if info_file:
             try:
                 data = json.loads(info_file.read_text(encoding="utf-8", errors="replace"))
-                is_v4 = data.get("version", "").startswith("4")
+                is_v4 = str(data.get("version", "")).startswith("4")
 
                 if is_v4:
                     song_obj = data.get("song", {})

@@ -134,7 +134,7 @@ def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> 
     except Exception as exc:
         return f"Failed to read Info.dat: {exc}"
     try:
-        is_v4 = data.get("version", "").startswith("4")
+        is_v4 = str(data.get("version", "")).startswith("4")
         if is_v4:
             if "song" not in data:
                 data["song"] = {}
