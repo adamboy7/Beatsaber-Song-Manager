@@ -55,8 +55,15 @@ def prompt_ffmpeg_download(parent: tk.Misc) -> None:
         webbrowser.open("https://ffmpeg.org/download.html#build-windows")
 
 
-def replace_song_audio(parent: tk.Misc, song: SongInfo) -> bool:
-    """Open file dialog and replace audio file. Returns True if replaced."""
+def replace_song_audio(parent: tk.Misc, song: SongInfo, media_player=None) -> bool:
+    """Open file dialog and replace audio file. Returns True if replaced.
+
+    If ``media_player`` is playing this very song, its libmpv instance holds
+    an open handle on the audio file — on Windows the in-place overwrite would
+    fail with a sharing violation. Stop playback (and wait for the handle to
+    release) before writing. Done only after the user actually picks a file so
+    cancelling the picker leaves playback untouched.
+    """
     if not song.audio_path:
         dialogs.show_warning("Replace Audio", "This song has no audio file to replace.")
         return False
@@ -77,6 +84,8 @@ def replace_song_audio(parent: tk.Misc, song: SongInfo) -> bool:
     if not ffmpeg_path and Path(new_path_str).suffix.lower() not in (".egg", ".ogg"):
         prompt_ffmpeg_download(parent)
         return False
+    if media_player is not None and song is media_player.playing_song:
+        media_player.stop_and_wait()
     try:
         replace_audio(song.audio_path, new_path_str, ffmpeg_path or "")
         return True

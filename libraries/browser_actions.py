@@ -92,7 +92,7 @@ class BrowserActionsMixin:
             self._render_list()
 
     def _replace_audio(self, song: SongInfo):
-        if replace_song_audio(self, song):
+        if replace_song_audio(self, song, self._media_player):
             self.status_bar.config(text=f"Audio replaced for: {song.display_name}")
 
     def _copy(self, text: str):
