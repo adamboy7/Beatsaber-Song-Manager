@@ -210,14 +210,23 @@ class BrowserPlaybackMixin:
         self._notify_queue_window()
 
     def _add_to_queue_and_jump(self, songs: list[SongInfo]) -> None:
-        """Append songs to the queue and immediately jump to the first one."""
+        """Force-play songs. For each song, jump to its last existing instance
+        in the queue if present, otherwise append it. Plays the final song
+        processed so a force-play never leaves a duplicate behind."""
         playable = [s for s in songs if s.audio_path]
         if not playable:
             return
-        insert_index = len(self._queue)
-        self._queue.extend(playable)
-        self._queue_index = insert_index
-        self._play_audio(self._queue[insert_index])
+        jump_index = None
+        for song in playable:
+            existing = [i for i, s in enumerate(self._queue)
+                        if s.folder == song.folder]
+            if existing:
+                jump_index = existing[-1]
+            else:
+                self._queue.append(song)
+                jump_index = len(self._queue) - 1
+        self._queue_index = jump_index
+        self._play_audio(self._queue[jump_index])
         self._notify_queue_window()
 
     def _queue_next(self) -> None:
