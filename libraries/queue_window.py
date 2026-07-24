@@ -402,12 +402,17 @@ class QueueWindow(tk.Toplevel):
             bg=bg, fg=TEXT_COLOR, anchor="w",
         ).pack(fill="x")
         subtitle = self._subtitle(song)
+        subtitle_lbl = tk.Label(
+            text_frame, text=subtitle,
+            font=("Segoe UI", 8),
+            bg=bg, fg=SUBTEXT_COLOR, anchor="w",
+        )
         if subtitle:
-            tk.Label(
-                text_frame, text=subtitle,
-                font=("Segoe UI", 8),
-                bg=bg, fg=SUBTEXT_COLOR, anchor="w",
-            ).pack(fill="x")
+            subtitle_lbl.pack(fill="x")
+        # Keep references so an async duration arrival can update just this
+        # row's subtitle instead of rebuilding the whole queue (#24).
+        row._song = song
+        row._subtitle_lbl = subtitle_lbl
 
         sep = tk.Frame(self._list_frame, bg=SEPARATOR_COLOR, height=1)
         sep.pack(fill="x")
@@ -759,12 +764,23 @@ class QueueWindow(tk.Toplevel):
     def _apply_duration(self, key: str, dur) -> None:
         if dur is None:
             return
+        if self._durations.get(key) == dur:
+            return
         self._durations[key] = dur
-        # A duration just arrived — re-render so the row text updates.
-        try:
-            self.refresh()
-        except tk.TclError:
-            pass
+        for row in self._row_frames:
+            song = getattr(row, "_song", None)
+            if song is None or str(song.folder) != key:
+                continue
+            lbl = getattr(row, "_subtitle_lbl", None)
+            if lbl is None:
+                continue
+            try:
+                new_text = self._subtitle(song)
+                lbl.config(text=new_text)
+                if new_text and not lbl.winfo_manager():
+                    lbl.pack(fill="x")
+            except tk.TclError:
+                pass
 
     def _get_placeholder_thumb(self) -> ImageTk.PhotoImage:
         """Return a single shared placeholder thumbnail (cached on first use)."""

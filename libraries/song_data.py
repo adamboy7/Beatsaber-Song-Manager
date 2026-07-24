@@ -447,9 +447,22 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
                 for bak_name in ("Info.dat.bak", "info.dat.bak", "INFO.DAT.bak")
             )
             if has_edit_bak:
+                mtime = _folder_mtime(entry)
+                cached = cache.get(entry.name)
+                if (
+                    isinstance(cached, dict)
+                    and cached.get("mtime") == mtime
+                    and isinstance(cached.get("hash"), str)
+                    and cached["hash"]
+                ):
+                    result[entry.name] = cached["hash"]
+                    new_cache[entry.name] = cached
+                    continue
                 recomputed = compute_song_hash(entry)
                 if recomputed:
                     result[entry.name] = recomputed
+                    new_cache[entry.name] = {"mtime": mtime, "hash": recomputed}
+                    dirty = True
                 continue
             if entry.name in result:
                 continue
