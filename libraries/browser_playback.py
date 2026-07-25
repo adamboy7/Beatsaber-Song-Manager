@@ -93,8 +93,9 @@ class BrowserPlaybackMixin:
 
         Otherwise offer to download it (once per run) and return False.
         ``on_ready`` fires when ffmpeg lands, letting the caller enable the
-        ffmpeg-dependent extra (the media progress bar's duration, the
-        visualizer's spectrum bars); ``on_unavailable`` fires if the user
+        ffmpeg-dependent extra (the visualizer's spectrum bars); the media
+        progress bar's duration no longer needs it — that comes from libmpv.
+        ``on_unavailable`` fires if the user
         declines or the download fails. This never blocks the underlying
         feature — callers use it only to light up the ffmpeg-only extras."""
         if self._ffmpeg_available:
@@ -124,10 +125,6 @@ class BrowserPlaybackMixin:
         self._save_playback_config()
         if want:
             self._reveal_player_bar()
-            # The progress bar's total time / fill comes from ffprobe. If it's
-            # missing, offer the download — but the bar is already showing and
-            # playback is unaffected either way.
-            self._ensure_ffmpeg()
         else:
             self._hide_player_bar()
 
@@ -529,7 +526,7 @@ class BrowserPlaybackMixin:
                 self._play_audio(self._queue[0])
                 return
             last_song = mp.playing_song
-            last_duration = mp.song_duration
+            last_duration = mp.duration_seconds()
             mp.stop()
             self._show_player_bar_idle(last_song, last_duration)
             self._refresh_player_play_btn()
@@ -537,7 +534,7 @@ class BrowserPlaybackMixin:
             return
 
         elapsed = mp.elapsed_seconds() or 0.0
-        duration = mp.song_duration
+        duration = mp.duration_seconds()
         paused = mp.is_paused
 
         icon = "▌▌" if paused else "▶"

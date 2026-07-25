@@ -297,6 +297,26 @@ class MediaPlayer:
             elapsed -= time.time() - self._pause_start
         return max(0.0, elapsed)
 
+    def duration_seconds(self) -> float | None:
+        """Total length of the current song in seconds, or None if unknown.
+
+        Prefers mpv's own ``duration`` property — the demuxer knows the length
+        of the file it already has open, so the progress bar works with no
+        ffmpeg/ffprobe present. Falls back to the ffprobe-derived value
+        (``song_duration``) for the brief window right after loadfile() while
+        mpv is still parsing the header, and after stop() when the player has
+        gone idle but callers still want the last known length.
+        """
+        player = self._player
+        if player is not None:
+            try:
+                dur = player.duration
+            except Exception:
+                dur = None
+            if dur:
+                return float(dur)
+        return self.song_duration
+
     def _stop_mpv(self) -> None:
         player = self._player
         if player is not None:
