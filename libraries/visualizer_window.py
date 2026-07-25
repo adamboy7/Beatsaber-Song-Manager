@@ -140,6 +140,7 @@ class VisualizerWindow(tk.Toplevel):
         # the canvas).
         self._mpv_video = None  # mpv.MPV | None
         self._video_active: bool = False
+        self._showing_degraded_art: bool = False
         # Set (from mpv's event thread) when the video hits end-of-file
         # earlier than Cinema's metadata predicted; polled by _tick.
         self._video_eof = threading.Event()
@@ -421,12 +422,15 @@ class VisualizerWindow(tk.Toplevel):
                 elif (
                     not stopped and not paused and song is not None
                     and (self._ffmpeg_proc is not None
-                         or self._mpv_video is not None)
+                         or self._mpv_video is not None
+                         or self._showing_degraded_art)
                 ):
                     # Same song, same play/pause state — but a Cinema video's
                     # active window (offset..offset+duration) may have just
                     # started or ended, which means the stream should switch
-                    # between video and spectrum mode.
+                    # between video and spectrum mode. This also covers the
+                    # ffmpeg-less degraded fallback, where static art is up and
+                    # the video should take over once its offset is reached.
                     elapsed = mp.elapsed_seconds() or 0.0
                     if self._desired_mode(song, elapsed) != self._stream_mode:
                         self._restart_stream_at_elapsed()
@@ -567,6 +571,7 @@ class VisualizerWindow(tk.Toplevel):
         if ffmpeg is None:
             self._set_status("ffmpeg not found — showing cover art (sound bars need ffmpeg).")
             self._show_bright_art()
+            self._showing_degraded_art = True
             return
 
         self._start_spectrum_stream(ffmpeg, song, elapsed, w, h)
@@ -797,6 +802,7 @@ class VisualizerWindow(tk.Toplevel):
             self._y_scale_anim_start = time.time()
 
     def _stop_stream(self):
+        self._showing_degraded_art = False
         self._stop_mpv_video()
         self._reader_stop.set()
         proc = self._ffmpeg_proc
