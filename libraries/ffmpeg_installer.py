@@ -273,8 +273,7 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
         else:
             dialogs.show_info(
                 "ffmpeg Installed",
-                "ffmpeg was installed next to the app — audio conversion is "
-                "now available.",
+                "ffmpeg was installed — audio conversion is now available.",
             )
 
     threading.Thread(target=worker, daemon=True).start()

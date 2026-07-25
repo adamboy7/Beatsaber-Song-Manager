@@ -406,9 +406,10 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
     folder that file doesn't cover (e.g. songs added since SongCore last
     ran), we fall back to computing the hash from the map files directly.
 
-    The fallback computation is cached in ``<custom_levels>/.bsm_hash_cache.json``
-    keyed by folder name + Info.dat mtime so subsequent launches with the same
-    library skip the expensive SHA1 work for unchanged folders.
+    The fallback computation is cached in the app-data folder's
+    ``.bsm_hash_cache.json`` (see app_config.hash_cache_path) keyed by folder
+    name + Info.dat mtime so subsequent launches with the same library skip the
+    expensive SHA1 work for unchanged folders.
     """
     hash_file = custom_levels.parent.parent / "UserData" / "SongCore" / "SongHashData.dat"
     result: dict[str, str] = {}
@@ -422,8 +423,11 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
     except Exception:
         pass
 
-    # Load the sidecar cache (best-effort).
-    cache_path = custom_levels / ".bsm_hash_cache.json"
+    # Load the sidecar cache (best-effort). Stored in the app-data folder so it
+    # survives a CustomLevels folder change and never needs write access to a
+    # (possibly read-only) game directory.
+    from libraries import app_config
+    cache_path = app_config.hash_cache_path()
     cache: dict[str, dict] = {}
     try:
         cache = json.loads(cache_path.read_text(encoding="utf-8"))

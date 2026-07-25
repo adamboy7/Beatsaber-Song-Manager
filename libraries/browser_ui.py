@@ -114,9 +114,64 @@ class BrowserUIMixin:
         options_menu.add_checkbutton(label="Loop",
                                      variable=self._loop_var,
                                      command=self._toggle_loop)
+        options_menu.add_separator()
+        options_menu.add_command(label="Set CustomLevels Folder…",
+                                 command=self._set_custom_levels_folder)
         menubar.add_cascade(label="Options", menu=options_menu)
 
         self.config(menu=menubar)
+
+    def _set_custom_levels_folder(self):
+        """Let the user pick a CustomLevels folder, persist it to the config,
+        and refresh the browser to point at it.
+
+        The picker defaults to the auto-detected game's CustomLevels folder
+        when one is found, otherwise the currently-loaded folder.
+        """
+        import tkinter.filedialog as fd
+        from libraries import app_config
+        from libraries.steam_paths import find_beatsaber_custom_levels
+
+        detected = find_beatsaber_custom_levels()
+        initial = detected if detected is not None else self.custom_levels
+        path_str = fd.askdirectory(
+            title="Select CustomLevels folder",
+            initialdir=str(initial) if initial else None,
+        )
+        if not path_str:
+            return
+        new_path = Path(path_str)
+        if new_path == self.custom_levels:
+            return
+
+        app_config.set_custom_levels(new_path)
+        self.custom_levels = new_path
+        # A detected pick means the game is present; otherwise treat it as a
+        # manual selection (some game-relative menu items stay disabled).
+        self._game_found = detected is not None and new_path == detected
+
+        # Point the install/playlist managers at the new folder so downloads
+        # land in the right place.
+        for _mgr_attr in ("_install_manager", "_playlist_installer"):
+            _mgr = getattr(self, _mgr_attr, None)
+            if _mgr is not None:
+                _mgr.custom_levels = new_path
+
+        # Refresh the on-screen path and the File-menu folder shortcuts.
+        try:
+            self.path_label.config(text=f"📂  {new_path}")
+        except Exception:
+            pass
+        try:
+            # File menu layout: Open Playlist… (0), separator (1), then the
+            # folder shortcuts — rebuild those in place.
+            self._file_menu.delete(2, "end")
+            self._add_folder_menu_items()
+        except Exception:
+            pass
+
+        self.status_bar.config(text=f"CustomLevels folder set to {new_path}")
+        self._load_async()
 
     def _build_ui(self):
         self._build_menubar()
@@ -164,14 +219,14 @@ class BrowserUIMixin:
         self.search_entry = search_entry
 
         # Path label
-        path_label = tk.Label(
+        self.path_label = tk.Label(
             self,
             text=f"📂  {self.custom_levels}",
             font=("Segoe UI", 8),
             bg=BG_COLOR, fg="#555555",
             anchor="w",
         )
-        path_label.pack(fill="x", padx=16, pady=(0, 6))
+        self.path_label.pack(fill="x", padx=16, pady=(0, 6))
 
         # Scrollable song list
         container = tk.Frame(self, bg=BG_COLOR)

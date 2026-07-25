@@ -52,14 +52,17 @@ def prompt_ffmpeg_download(parent: tk.Misc, on_ready=None) -> None:
     falling back to ``parent.after`` for a plain tk widget.
     """
     from libraries import ffmpeg_installer
+    from libraries import app_config
 
     dispatcher = getattr(parent, "_dispatcher", None)
     dispatch_fn = getattr(dispatcher, "dispatch", None) or (lambda fn: parent.after(0, fn))
     status_bar = getattr(parent, "status_bar", None)
     status_cb = (lambda text: status_bar.config(text=text)) if status_bar is not None else None
 
+    # Download into the per-user app-data folder (writable even for a frozen/
+    # read-only install); a side-by-side ffmpeg is still preferred by find_ffmpeg.
     ffmpeg_installer.offer_download_once(
-        _local_dir(),
+        app_config.app_data_dir(),
         dispatch_fn,
         status_cb=status_cb,
         on_ready=on_ready,

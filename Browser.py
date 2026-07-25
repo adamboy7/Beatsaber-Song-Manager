@@ -201,6 +201,75 @@ def _load_player_data_headless():
     return {}, set()
 
 
+def _headless_custom_levels() -> Path | None:
+    """Resolve a CustomLevels folder for headless commands.
+
+    Auto-detection first (headless callers expect the game to be found), then
+    the folder saved in the config as a fallback so a manually-configured
+    library still works without the GUI.
+    """
+    detected = find_beatsaber_custom_levels()
+    if detected is not None:
+        return detected
+    from libraries import app_config
+    configured = app_config.get_custom_levels()
+    if configured is not None and configured.is_dir():
+        return configured
+    return None
+
+
+def _resolve_startup_custom_levels() -> tuple[Path, bool] | None:
+    """Resolve the CustomLevels folder for a GUI launch.
+
+    Order:
+      1. Honor a valid folder stored in the config.
+      2. Otherwise auto-detect the game and persist what we find.
+      3. Otherwise (game not found, or the configured folder has gone missing)
+         prompt the user and persist their pick.
+
+    Returns ``(custom_levels, game_found)``, or ``None`` if the user cancelled
+    the folder picker. ``game_found`` reports whether the game resolved without
+    a manual pick (drives which game-relative menu items are enabled).
+    """
+    from libraries import app_config
+
+    configured = app_config.get_custom_levels()
+    if configured is not None and configured.is_dir():
+        return configured, True
+
+    # No usable config: either nothing saved yet, or the saved folder vanished.
+    # (Re)scan for the game and persist a fresh detection.
+    detected = find_beatsaber_custom_levels()
+    if detected is not None:
+        app_config.set_custom_levels(detected)
+        return detected, True
+
+    # Game not found — fall back to asking the user, then remember their pick.
+    import tkinter.filedialog as fd
+    root = tk.Tk()
+    root.withdraw()
+    if configured is not None:
+        message = (
+            "Your saved CustomLevels folder is no longer there, and Beat Saber "
+            "could not be located automatically.\n"
+            "Please select your CustomLevels folder manually."
+        )
+    else:
+        message = (
+            "Could not locate Beat Saber automatically.\n"
+            "Please select your CustomLevels folder manually."
+        )
+    dialogs.show_info("Beat Saber not found", message)
+    initial_dir = str(configured.parent) if configured is not None else ""
+    path_str = fd.askdirectory(title="Select CustomLevels folder", initialdir=initial_dir or None)
+    root.destroy()
+    if not path_str:
+        return None
+    custom_levels = Path(path_str)
+    app_config.set_custom_levels(custom_levels)
+    return custom_levels, False
+
+
 def main():
     # Normalize --randomadd (any casing) to --randomAdd before parsing
     normalized = []
@@ -347,7 +416,7 @@ def main():
         if playlist_path is None:
             print("--install requires a valid .bplist or .json playlist file.")
             sys.exit(1)
-        custom_levels = find_beatsaber_custom_levels()
+        custom_levels = _headless_custom_levels()
         if custom_levels is None:
             print("Beat Saber not found automatically; cannot determine CustomLevels path.")
             sys.exit(1)
@@ -420,7 +489,7 @@ def main():
         added_count = 0
         first_pick = None
         if random_groups:
-            custom_levels = find_beatsaber_custom_levels()
+            custom_levels = _headless_custom_levels()
             if custom_levels is None:
                 print("--randomAdd requires Beat Saber to be found automatically.")
                 sys.exit(1)
@@ -497,25 +566,12 @@ def main():
             print(f"{summary.capitalize()} in '{playlist_arg.name}'.")
         sys.exit(0)
 
-    # Try to find custom levels automatically
-    custom_levels = find_beatsaber_custom_levels()
-    game_found = custom_levels is not None
-
-    if custom_levels is None:
-        # Fallback: ask user
-        import tkinter.filedialog as fd
-        root = tk.Tk()
-        root.withdraw()
-        dialogs.show_info(
-            "Beat Saber not found",
-            "Could not locate Beat Saber automatically.\n"
-            "Please select your CustomLevels folder manually.",
-        )
-        path_str = fd.askdirectory(title="Select CustomLevels folder")
-        root.destroy()
-        if not path_str:
-            return
-        custom_levels = Path(path_str)
+    # Resolve the CustomLevels folder: config → auto-detect → prompt, persisting
+    # the result so the game only has to be located once.
+    resolved = _resolve_startup_custom_levels()
+    if resolved is None:
+        return
+    custom_levels, game_found = resolved
 
     app = SongBrowser(custom_levels, startup_playlist=playlist_path, startup_random_groups=random_groups, startup_shuffle=args.shuffle, game_found=game_found)
     app.mainloop()

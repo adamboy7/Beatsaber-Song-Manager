@@ -23,15 +23,21 @@ _ffprobe_cache: str | None = None
 
 
 def _resolve(name: str) -> str | None:
-    """Locate a binary: check the app/script directory first, then PATH.
+    """Locate a binary: app/script directory first, then the per-user app-data
+    folder, then PATH.
 
     The local filename is platform-aware (``ffmpeg.exe`` on Windows,
     ``ffmpeg`` on Linux/macOS), matching the extension-less binaries dropped
-    beside the app or fetched by the auto-downloader.
+    beside the app or fetched by the auto-downloader. Side-by-side installs win;
+    the app-data folder is where the auto-downloader lands binaries when the app
+    itself is in a read-only/frozen location.
     """
-    local = _local_dir() / platform_utils.exe_name(name)
-    if local.exists():
-        return str(local)
+    from libraries import app_config
+    exe = platform_utils.exe_name(name)
+    for directory in (_local_dir(), app_config.app_data_dir()):
+        candidate = directory / exe
+        if candidate.exists():
+            return str(candidate)
     return shutil.which(name)
 
 

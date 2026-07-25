@@ -304,17 +304,21 @@ class BrowserActionsMixin:
 
     def _find_yt_dlp(self) -> Path | None:
         """Look for yt-dlp in Beat Saber\\Libs, then next to the app
-        (same folder as ffmpeg — beside the exe or script). The binary name
-        is platform-aware: ``yt-dlp.exe`` on Windows, ``yt-dlp`` elsewhere."""
+        (same folder as ffmpeg — beside the exe or script), then the per-user
+        app-data folder where the auto-downloader lands it when there's no
+        writable side-by-side location. The binary name is platform-aware:
+        ``yt-dlp.exe`` on Windows, ``yt-dlp`` elsewhere."""
+        from libraries import app_config
         yt_name = platform_utils.exe_name("yt-dlp")
         install = self._beatsaber_install_dir()
         if install is not None:
             candidate = install / "Libs" / yt_name
             if candidate.exists():
                 return candidate
-        candidate = _local_dir() / yt_name
-        if candidate.exists():
-            return candidate
+        for directory in (_local_dir(), app_config.app_data_dir()):
+            candidate = directory / yt_name
+            if candidate.exists():
+                return candidate
         # On Linux yt-dlp is commonly installed system-wide via pip/pipx/distro.
         import shutil as _shutil
         found = _shutil.which("yt-dlp")
@@ -343,11 +347,14 @@ class BrowserActionsMixin:
         ):
             return
 
+        from libraries import app_config
         install = self._beatsaber_install_dir()
         if install is not None and (install / "Libs").is_dir():
             dest = install / "Libs" / yt_name
         else:
-            dest = _local_dir() / yt_name
+            # No Beat Saber Libs folder: land it in the per-user app-data
+            # folder, which is writable even for a frozen/read-only install.
+            dest = app_config.app_data_dir() / yt_name
 
         # yt-dlp ships an OS-specific release asset: yt-dlp.exe (Windows),
         # yt-dlp_macos (macOS), and the plain 'yt-dlp' zipapp (Linux/other).

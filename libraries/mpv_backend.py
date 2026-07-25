@@ -54,12 +54,29 @@ def load_error() -> str | None:
     return _load_error
 
 
+def _search_dirs() -> list[Path]:
+    """Directories to probe for a local libmpv DLL, in preference order.
+
+    The app's own directory (beside ffmpeg) comes first for backward
+    compatibility with existing side-by-side installs; the per-user app-data
+    folder is the fallback the auto-downloader now targets, so a frozen/
+    read-only install still has somewhere writable to land the DLL.
+    """
+    from libraries import app_config
+    dirs = [_local_dir()]
+    appdata = app_config.app_data_dir()
+    if appdata not in dirs:
+        dirs.append(appdata)
+    return dirs
+
+
 def find_libmpv() -> str | None:
     """Return the path to a local libmpv DLL, or None if not present."""
-    for name in _DLL_NAMES:
-        p = _local_dir() / name
-        if p.exists():
-            return str(p)
+    for directory in _search_dirs():
+        for name in _DLL_NAMES:
+            p = directory / name
+            if p.exists():
+                return str(p)
     return None
 
 
@@ -72,9 +89,14 @@ def dll_present() -> bool:
 
 
 def install_dir() -> Path:
-    """Directory a manually-placed or downloaded libmpv DLL belongs in — the
-    same folder as ffmpeg.exe / the app's other side-by-side binaries."""
-    return _local_dir()
+    """Directory the auto-downloader should drop a fetched libmpv DLL into.
+
+    Targets the per-user app-data folder so the download works even when the
+    app itself lives in a read-only/frozen location. A DLL manually placed
+    beside the app (same folder as ffmpeg.exe) is still honored by
+    ``find_libmpv``."""
+    from libraries import app_config
+    return app_config.app_data_dir()
 
 
 def load_mpv():
