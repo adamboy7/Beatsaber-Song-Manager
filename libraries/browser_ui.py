@@ -119,7 +119,8 @@ class BrowserUIMixin:
                                  command=self._set_custom_levels_folder)
         menubar.add_cascade(label="Options", menu=options_menu)
 
-        self._tools_menu = tk.Menu(menubar, tearoff=0)
+        self._tools_menu = tk.Menu(menubar, tearoff=0,
+                                   postcommand=self._refresh_tools_menu)
         self._refresh_tools_menu()
         menubar.add_cascade(label="Tools", menu=self._tools_menu)
 
@@ -129,11 +130,14 @@ class BrowserUIMixin:
         """(Re)build the Tools menu, showing a check mark next to each
         dependency that's currently detected.
 
-        Rebuilt from scratch each call so the check marks reflect live state —
-        it's re-run after a successful ffmpeg/mpv download so the entry flips to
-        checked without a restart. Missing dependencies stay clickable and
-        prompt the respective auto-downloader; Mod Assistant just opens its repo
-        (detection/check-mark support is a later TODO).
+        Rebuilt from scratch each call (also wired as the menu's postcommand) so
+        the check marks reflect live state — it's re-run after a successful
+        ffmpeg/mpv download, and on every menu-open, so the entry flips to
+        checked without a restart. mpv is listed first as the preferred playback
+        engine. Missing dependencies stay clickable and prompt the respective
+        installer; on Linux libmpv can't be auto-downloaded, so its installer
+        shows package-manager instructions instead. Mod Assistant just opens its
+        repo (detection/check-mark support is a later TODO).
         """
         from libraries.audio_utils import find_ffmpeg
         from libraries.mpv_backend import find_libmpv
@@ -144,18 +148,18 @@ class BrowserUIMixin:
         def _mark(found: bool) -> str:
             return "✓  " if found else "      "
 
-        ffmpeg_found = find_ffmpeg() is not None
         mpv_found = find_libmpv() is not None
+        ffmpeg_found = find_ffmpeg() is not None
 
-        menu.add_command(
-            label=f"{_mark(ffmpeg_found)}ffmpeg",
-            command=None if ffmpeg_found else self._tools_install_ffmpeg,
-            state="disabled" if ffmpeg_found else "normal",
-        )
         menu.add_command(
             label=f"{_mark(mpv_found)}mpv",
             command=None if mpv_found else self._tools_install_mpv,
             state="disabled" if mpv_found else "normal",
+        )
+        menu.add_command(
+            label=f"{_mark(ffmpeg_found)}ffmpeg",
+            command=None if ffmpeg_found else self._tools_install_ffmpeg,
+            state="disabled" if ffmpeg_found else "normal",
         )
         menu.add_command(
             label=f"{_mark(False)}Mod Assistant",
