@@ -203,10 +203,11 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
     arch = target_arch()
     if not dialogs.ask_yes_no(
         "libmpv Not Found",
-        "libmpv-2.dll wasn't found next to the app, so in-app audio/video "
-        "playback is unavailable.\n\n"
+        "libmpv-2.dll wasn't found in the app-data folder, on your PATH, or "
+        "next to the app, so in-app audio/video playback is unavailable.\n\n"
         f"Download the latest mpv-dev ({arch}) build from "
-        "github.com/shinchiro/mpv-winbuild-cmake and install libmpv-2.dll now?",
+        "github.com/shinchiro/mpv-winbuild-cmake and install libmpv-2.dll to "
+        "the app-data folder now?",
     ):
         unavailable()
         return
