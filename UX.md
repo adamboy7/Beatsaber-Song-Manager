@@ -103,6 +103,30 @@ The app works without Beat Saber installed at all. If the Steam path isn't found
 
 ---
 
+## Dependency Degradation
+
+The playback stack depends on external media libraries — libmpv and ffmpeg — that may or may not be present on a given machine. The governing principle is that a missing optional dependency should **degrade a feature, never brick the app**. A user who launches without libmpv should not meet a crash, a blank Visualizer, or a frozen progress bar; they should get a slightly lesser version of the same experience, ideally without even being interrupted to fix it.
+
+This is deliberately the opposite of a catastrophic-failure model, where one absent library takes the whole feature — or the whole app — down with it. Each capability is designed to fall to the next-best implementation on its own, and the fallbacks are ordered so the drop in quality at each step is as small as possible.
+
+### The playback ladder
+
+| Available | Audio | Cinema video | Visualizer | Progress bar | Prompt? |
+|---|---|---|---|---|---|
+| libmpv (+ ffmpeg) | libmpv, live controls | Yes, synced overlay | Spectrum (ffmpeg) | mpv duration | — |
+| ffmpeg only | ffplay subprocess | — (needs libmpv) | Spectrum (ffmpeg) | ffprobe duration | No |
+| neither | none — skip with message | — | — (nothing plays) | — (nothing plays) | Offer libmpv download |
+
+The key calibration is the middle row: **falling back should be silent when the result is still good.** ffmpeg is already a hard requirement elsewhere in the app and is a tool many users happen to have on their PATH anyway, so the ffplay fallback is a likely-available, genuinely usable path — not a broken one. Interrupting the user with a "libmpv missing" dialog when their music is about to play fine through ffmpeg would be friction without payoff. The prompt is reserved for the bottom row, where there's no in-app playback engine at all and the user actually needs to act.
+
+The bottom row deliberately stops at a clear message rather than reaching for a system-level fallback. Handing the audio file to the OS default player isn't dependable — Beat Saber audio is `.egg`/`.ogg`, formats most systems don't associate with any player, so it would mostly produce an error or silence, which is worse than an honest "install libmpv to play audio." A degradation ladder is only worth having if every rung actually works. Because nothing plays in this state, the Visualizer and progress bar don't degrade to a lesser view — they simply never initialize, since there's no playback for them to track; the em dashes in that row mean "does not appear," not "shows a reduced version."
+
+The same logic runs *within* the Visualizer: a Cinema video plays only while its own window (offset to offset-plus-duration) is active and libmpv is available; outside that window, or without libmpv, it drops to the spectrum; without ffmpeg, it drops again to a static cover-art background rather than going blank. Every rung is a smaller, self-contained step down, so the failure of any one piece is contained to the smallest possible loss of function.
+
+This mirrors the [Progressive Enhancement](#progressive-enhancement) stance on Beat Saber itself: the richest experience when everything is present, a coherent and useful experience when it isn't, and no hard dependency wall that turns a missing extra into a dead end.
+
+---
+
 ## Escape Hatches
 
 The app consistently guides users toward external tools rather than trying to replace them:

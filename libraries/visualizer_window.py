@@ -148,6 +148,8 @@ class VisualizerWindow(tk.Toplevel):
         # we don't keep retrying to decode it for the rest of the song.
         self._video_ended: bool = False
 
+        self._mpv_available = load_mpv() is not None
+
         # Playback-state mirrors so we only act on transitions.
         self._was_paused = False
         self._was_stopped = True
@@ -357,8 +359,8 @@ class VisualizerWindow(tk.Toplevel):
         """Return Tk keyboard focus to this window after entering fullscreen.
 
         libmpv renders into a child of our own canvas and never creates a
-        top-level window, so — unlike the old embedded-ffplay backend — no
-        Win32 foreground-stealing counter-dance is needed anymore.
+        top-level window, so no Win32 foreground-stealing counter-dance is
+        needed.
         """
         try:
             self.lift()
@@ -479,6 +481,7 @@ class VisualizerWindow(tk.Toplevel):
         self._stop_stream()
         self._clear_canvas()
         self._video_ended = False
+        self._mpv_available = load_mpv() is not None
 
         if song is None:
             self._name_label.config(text="")
@@ -520,6 +523,8 @@ class VisualizerWindow(tk.Toplevel):
 
     def _desired_mode(self, song: "SongInfo | None", elapsed: float) -> str:
         if song is None or not song.has_playable_cinema_video:
+            return "spectrum"
+        if not self._mpv_available:
             return "spectrum"
         if self._video_ended:
             return "spectrum"
@@ -758,8 +763,7 @@ class VisualizerWindow(tk.Toplevel):
         if self._video_active:
             # mpv's pause property freezes decode and clock in-process — the
             # video holds its current frame and resumes exactly where the
-            # audio's frozen elapsed time expects it. (This replaces the old
-            # relaunch-seek-behind-then-NtSuspendProcess dance entirely.)
+            # audio's frozen elapsed time expects it.
             player = self._mpv_video
             if player is not None:
                 try:

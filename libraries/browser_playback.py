@@ -94,7 +94,7 @@ class BrowserPlaybackMixin:
         Otherwise offer to download it (once per run) and return False.
         ``on_ready`` fires when ffmpeg lands, letting the caller enable the
         ffmpeg-dependent extra (the visualizer's spectrum bars); the media
-        progress bar's duration no longer needs it — that comes from libmpv.
+        progress bar's duration comes from libmpv and doesn't need ffmpeg.
         ``on_unavailable`` fires if the user
         declines or the download fails. This never blocks the underlying
         feature — callers use it only to light up the ffmpeg-only extras."""

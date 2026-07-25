@@ -9,8 +9,20 @@ A music browser, media player, playlist builder, and asset editor for Beat Saber
 ### Requirements
 
 - **ffmpeg** — place `ffmpeg`/`ffmpeg.exe` and `ffprobe`/`ffprobe.exe` next to the application, or add them to your system PATH. [Download ffmpeg](https://ffmpeg.org/download.html) If it's missing when you convert audio, the app offers to download a prebuilt static build for you (from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), matching your platform — Windows or Linux), drops the binaries next to the app, and retries the conversion automatically — no manual download or PATH edit needed.
-- **libmpv** — powers all audio and Cinema video playback. On **Windows**, place `libmpv-2.dll` next to the application or add it to PATH ([download](https://mpv.io/installation/), "libmpv" dev builds); if missing, the app offers to fetch it. On **Linux**, install it from your package manager: `sudo apt install libmpv2` (Debian/Ubuntu), `sudo dnf install mpv-libs` (Fedora), or `sudo pacman -S mpv` (Arch).
+- **libmpv** — the preferred engine for audio and Cinema video playback. On **Windows**, place `libmpv-2.dll` next to the application or add it to PATH ([download](https://mpv.io/installation/), "libmpv" dev builds); if missing, the app offers to fetch it. On **Linux**, install it from your package manager: `sudo apt install libmpv2` (Debian/Ubuntu), `sudo dnf install mpv-libs` (Fedora), or `sudo pacman -S mpv` (Arch). If libmpv isn't present, the app falls back to ffmpeg for audio playback — see [Playback Engines](#playback-engines-mpv-and-ffmpeg) below.
 - Beat Saber installed via Steam (recommended, but not required — see below). On Linux, Beat Saber runs through Steam Play/Proton; the app locates your library and reads scores/favorites from the game's Proton prefix automatically.
+
+### Playback Engines: mpv and ffmpeg
+
+The app leans on two media libraries, each for what it's best at, and neither is strictly mandatory — it degrades cleanly when one is absent.
+
+**libmpv is the preferred engine.** It plays the song audio in-process, with live volume, pause, and seek that apply instantly without relaunching anything. More importantly, it's what makes Cinema video support tractable: playing a map's video behind its audio means running two media streams that stay frame-accurately in sync through pauses, seeks, and offsets. libmpv handles that overlay natively — its pause property freezes the video clock in lockstep with the audio, so there's no manual reseek dance. Doing the same by hand over raw ffmpeg processes would mean orchestrating multiple subprocesses and threads and constantly correcting drift; libmpv collapses all of that into one embedded player. That's why it's the default for both audio and video.
+
+**ffmpeg covers conversion and visualizer flair, and serves as the playback fallback.** ffmpeg (with `ffprobe`) is already required elsewhere in the app — it converts replacement audio to Beat Saber's native `.ogg`/`.egg` on import, reads track durations, and renders the real-time frequency-bar spectrum in the Visualizer. Because it's a common tool that many users already have installed or on their PATH for other reasons, it's a reasonable thing to assume might already be present. That makes it a natural fallback: when libmpv is missing but ffmpeg is, audio plays through ffmpeg's bundled `ffplay` instead, the progress bar gets its total length from `ffprobe`, and the Visualizer shows its spectrum bars. The trade-off in this mode is that Cinema video is unavailable (that overlay genuinely needs libmpv) and volume changes relaunch playback at the current position rather than applying live. No prompt interrupts you — the app just uses what's there.
+
+**When both are missing**, the app offers to download libmpv (once per run). If you decline, there's no engine available to play the audio, so the song is skipped with a message explaining what's missing. (Beat Saber audio is `.egg`/`.ogg` — formats most systems don't associate with any player — so handing the file to your OS isn't a dependable fallback, and the app doesn't try.)
+
+See [Design Notes → Dependency Degradation](UX.md#dependency-degradation) for the full reasoning behind the fallback ladder.
 
 ### Linux
 

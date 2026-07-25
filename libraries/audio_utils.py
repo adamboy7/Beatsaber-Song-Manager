@@ -20,6 +20,7 @@ def _local_dir() -> Path:
 # on each call and detects a newly added binary on the fly — no reload needed.
 _ffmpeg_cache: str | None = None
 _ffprobe_cache: str | None = None
+_ffplay_cache: str | None = None
 
 
 def _resolve(name: str) -> str | None:
@@ -63,6 +64,20 @@ def find_ffprobe() -> str | None:
     if _ffprobe_cache is None:
         _ffprobe_cache = _resolve("ffprobe")
     return _ffprobe_cache
+
+
+def find_ffplay() -> str | None:
+    """Return path to ffplay: checks app directory first, then PATH.
+
+    ffplay ships in the same bundle as ffmpeg/ffprobe and is the audio-playback
+    fallback used when libmpv is unavailable. Re-probes on every call until
+    found, so an ffplay dropped beside the app after launch is picked up without
+    restarting.
+    """
+    global _ffplay_cache
+    if _ffplay_cache is None:
+        _ffplay_cache = _resolve("ffplay")
+    return _ffplay_cache
 
 
 def get_audio_duration(path: Path) -> float | None:
