@@ -54,6 +54,33 @@ from libraries.browser_pagination import BrowserPaginationMixin, filter_songs, p
 PAGE_SIZE = 50
 
 
+def resource_path(name: str) -> Path:
+    """Resolve a bundled data file both in dev and inside a PyInstaller build.
+
+    PyInstaller extracts the `datas` files to a temp dir exposed as
+    `sys._MEIPASS`; in a normal checkout they sit next to this script.
+    """
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    return base / name
+
+
+def _set_windows_app_id() -> None:
+    """Give the app its own taskbar identity on Windows.
+
+    Without an explicit AppUserModelID, Windows groups the window under the
+    generic Python/Tk taskbar icon regardless of the window icon we set.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "BeatSaberSongManager.App"
+        )
+    except Exception:
+        pass
+
+
 class SongBrowser(
     BrowserUIMixin,
     BrowserPlaybackMixin,
@@ -99,12 +126,20 @@ class SongBrowser(
         self.configure(bg=BG_COLOR)
         self.geometry("780x680")
         self.minsize(600, 400)
+        _set_windows_app_id()
+        _icon_path = resource_path("Icon.ico")
         try:
-            _icon = ImageTk.PhotoImage(Image.open(Path(__file__).parent / "Icon.ico"))
-            self.iconphoto(True, _icon)
-            self._icon = _icon
+            if sys.platform == "win32":
+                self.iconbitmap(default=str(_icon_path))
+            else:
+                raise RuntimeError("use iconphoto")
         except Exception:
-            pass
+            try:
+                _icon = ImageTk.PhotoImage(Image.open(_icon_path))
+                self.iconphoto(True, _icon)
+                self._icon = _icon
+            except Exception:
+                pass
 
         self._favorites_only: bool = False
         self._hide_favorites: bool = False
@@ -280,6 +315,8 @@ def _resolve_startup_custom_levels() -> tuple[Path, bool] | None:
 
 
 def main():
+    _set_windows_app_id()
+
     # Normalize --randomadd (any casing) to --randomAdd before parsing
     normalized = []
     for a in sys.argv:
