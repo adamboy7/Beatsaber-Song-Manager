@@ -119,7 +119,73 @@ class BrowserUIMixin:
                                  command=self._set_custom_levels_folder)
         menubar.add_cascade(label="Options", menu=options_menu)
 
+        self._tools_menu = tk.Menu(menubar, tearoff=0)
+        self._refresh_tools_menu()
+        menubar.add_cascade(label="Tools", menu=self._tools_menu)
+
         self.config(menu=menubar)
+
+    def _refresh_tools_menu(self):
+        """(Re)build the Tools menu, showing a check mark next to each
+        dependency that's currently detected.
+
+        Rebuilt from scratch each call so the check marks reflect live state —
+        it's re-run after a successful ffmpeg/mpv download so the entry flips to
+        checked without a restart. Missing dependencies stay clickable and
+        prompt the respective auto-downloader; Mod Assistant just opens its repo
+        (detection/check-mark support is a later TODO).
+        """
+        from libraries.audio_utils import find_ffmpeg
+        from libraries.mpv_backend import find_libmpv
+
+        menu = self._tools_menu
+        menu.delete(0, "end")
+
+        def _mark(found: bool) -> str:
+            return "✓  " if found else "      "
+
+        ffmpeg_found = find_ffmpeg() is not None
+        mpv_found = find_libmpv() is not None
+
+        menu.add_command(
+            label=f"{_mark(ffmpeg_found)}ffmpeg",
+            command=None if ffmpeg_found else self._tools_install_ffmpeg,
+            state="disabled" if ffmpeg_found else "normal",
+        )
+        menu.add_command(
+            label=f"{_mark(mpv_found)}mpv",
+            command=None if mpv_found else self._tools_install_mpv,
+            state="disabled" if mpv_found else "normal",
+        )
+        menu.add_command(
+            label=f"{_mark(False)}Mod Assistant",
+            command=self._open_mod_assistant,
+        )
+
+    def _tools_install_ffmpeg(self):
+        """Prompt to auto-download ffmpeg, refreshing the check mark when done."""
+        from libraries import song_operations, ffmpeg_installer
+        ffmpeg_installer._offered = False
+        song_operations.prompt_ffmpeg_download(self, on_ready=self._refresh_tools_menu)
+
+    def _tools_install_mpv(self):
+        """Prompt to auto-download libmpv, refreshing the check mark when done."""
+        from libraries import mpv_installer
+        from libraries.mpv_backend import install_dir
+        mpv_installer._offered = False
+        dispatcher = getattr(self, "_dispatcher", None)
+        dispatch_fn = getattr(dispatcher, "dispatch", None) or (lambda fn: self.after(0, fn))
+        status_bar = getattr(self, "status_bar", None)
+        status_cb = (lambda text: status_bar.config(text=text)) if status_bar is not None else None
+        mpv_installer.offer_download_once(
+            install_dir(),
+            dispatch_fn,
+            status_cb=status_cb,
+            on_ready=self._refresh_tools_menu,
+        )
+
+    def _open_mod_assistant(self):
+        webbrowser.open("https://github.com/bsmg/ModAssistant")
 
     def _set_custom_levels_folder(self):
         """Let the user pick a CustomLevels folder, persist it to the config,
