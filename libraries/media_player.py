@@ -490,9 +490,16 @@ class MediaPlayer:
             except Exception:
                 pass
 
-    def play(self, song: SongInfo) -> None:
+    def play(self, song: SongInfo, warn_unavailable: bool = True) -> None:
+        """Play ``song``. ``warn_unavailable`` controls what happens when no
+        playback engine (libmpv or ffplay) is available: when True (an explicit
+        play/toggle), the user is warned and offered the libmpv download; when
+        False (an implicit auto-start, e.g. adding to an empty queue), playback
+        is skipped silently so building a queue without an engine doesn't spam
+        dialogs."""
         if not song.audio_path:
-            dialogs.show_warning("Play Audio", "This song has no audio file.")
+            if warn_unavailable:
+                dialogs.show_warning("Play Audio", "This song has no audio file.")
             return
         self.stop()
         self._stopped = False
@@ -502,7 +509,7 @@ class MediaPlayer:
             if ffplay is not None:
                 self._play_with_ffplay(song, ffplay)
             else:
-                self._play_without_mpv(song)
+                self._play_without_mpv(song, warn_unavailable)
             return
         self._backend = "mpv"
         try:
@@ -602,7 +609,7 @@ class MediaPlayer:
         except Exception as exc:
             dialogs.show_error("Pause Failed", str(exc))
 
-    def _play_without_mpv(self, song: SongInfo) -> None:
+    def _play_without_mpv(self, song: SongInfo, warn_unavailable: bool = True) -> None:
         """Neither libmpv nor ffplay is available — the last-resort path.
 
         (When ffplay is present, play() uses the ffplay backend instead and
@@ -617,7 +624,15 @@ class MediaPlayer:
         per run. On a successful install the DLL loads live (no restart), and
         ``on_ready`` retries this song straight away. The explain-and-skip
         fallback below only runs if that offer is declined (now or already,
-        earlier this run) or the download/extraction fails."""
+        earlier this run) or the download/extraction fails.
+
+        When ``warn_unavailable`` is False the song was auto-started implicitly
+        (e.g. added to an empty queue), so there's nothing to warn about or offer
+        — just mark it finished and let the queue move on silently."""
+
+        if not warn_unavailable:
+            self._finished = True
+            return
 
         def _show_unavailable() -> None:
             dialogs.show_warning("Play Audio", _mpv_unavailable_message())

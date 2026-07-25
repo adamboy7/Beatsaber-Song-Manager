@@ -231,10 +231,10 @@ class BrowserPlaybackMixin:
 
     # ── Play / queue ──────────────────────────────────────────────────────────
 
-    def _play_audio(self, song: SongInfo):
+    def _play_audio(self, song: SongInfo, warn_unavailable: bool = True):
         if song is not self._media_player.playing_song:
             self._media_player.is_looping = False
-        self._media_player.play(song)
+        self._media_player.play(song, warn_unavailable=warn_unavailable)
         self._show_player_bar(song)
         self._start_player_tick()
 
@@ -254,7 +254,7 @@ class BrowserPlaybackMixin:
         self._queue.extend(playable)
         if self._media_player.playing_song is None:
             self._queue_index = len(self._queue) - len(playable)
-            self._play_audio(self._queue[self._queue_index])
+            self._play_audio(self._queue[self._queue_index], warn_unavailable=False)
         self._notify_queue_window()
 
     def _add_to_queue_and_jump(self, songs: list[SongInfo]) -> None:
