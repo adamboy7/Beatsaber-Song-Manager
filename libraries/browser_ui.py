@@ -60,12 +60,14 @@ class BrowserUIMixin:
         def _open(p: Path):
             platform_utils.open_in_file_manager(p)
 
-        for label, path in (
-            ("Open Custom Songs Folder", custom_songs),
-            ("Open Beat Saber AppData",  appdata),
-            ("Open Beat Saber Folder",   bs_install),
+        game_found = getattr(self, "_game_found", True)
+
+        for label, path, requires_game in (
+            ("Open Custom Songs Folder", custom_songs, False),
+            ("Open Beat Saber AppData",  appdata,      False),
+            ("Open Beat Saber Folder",   bs_install,   True),
         ):
-            valid = path is not None and path.is_dir()
+            valid = path is not None and path.is_dir() and (game_found or not requires_game)
             self._file_menu.add_command(
                 label=label,
                 command=(lambda p=path: _open(p)) if valid else None,

@@ -60,11 +60,12 @@ class SongBrowser(
     BrowserPaginationMixin,
     TkinterDnD.Tk,
 ):
-    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None, startup_random_groups: list[tuple[int, str | None]] | None = None, startup_shuffle: bool = False):
+    def __init__(self, custom_levels: Path, startup_playlist: Path | None = None, startup_random_groups: list[tuple[int, str | None]] | None = None, startup_shuffle: bool = False, game_found: bool = True):
         super().__init__()
         self._dispatcher = Dispatcher()
         self._dispatcher.start(self)
         self.custom_levels = custom_levels
+        self._game_found = game_found
         self.songs: list[SongInfo] = []
         self.filtered: list[SongInfo] = []
         self.selected_index: int | None = None
@@ -498,6 +499,7 @@ def main():
 
     # Try to find custom levels automatically
     custom_levels = find_beatsaber_custom_levels()
+    game_found = custom_levels is not None
 
     if custom_levels is None:
         # Fallback: ask user
@@ -515,7 +517,7 @@ def main():
             return
         custom_levels = Path(path_str)
 
-    app = SongBrowser(custom_levels, startup_playlist=playlist_path, startup_random_groups=random_groups, startup_shuffle=args.shuffle)
+    app = SongBrowser(custom_levels, startup_playlist=playlist_path, startup_random_groups=random_groups, startup_shuffle=args.shuffle, game_found=game_found)
     app.mainloop()
 
 
