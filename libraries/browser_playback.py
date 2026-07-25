@@ -69,20 +69,71 @@ class BrowserPlaybackMixin:
 
     # ── View toggles tied to playback ─────────────────────────────────────────
 
+    def _save_playback_config(self):
+        """Persist the media-player and repeat-queue preferences to the config."""
+        from libraries import app_config
+        cfg = app_config.load_config()
+        cfg["show_media_player"] = self._show_media_player_pref
+        cfg["repeat_queue"] = self._loop_queue
+        app_config.save_config(cfg)
+
+    def _reveal_player_bar(self):
+        """Show the media-player bar in its current (playing or idle) state."""
+        if self._player_bar_visible:
+            return
+        if self._media_player.is_active:
+            self._show_player_bar(self._media_player.playing_song)
+        else:
+            self._show_player_bar_idle(None, None)
+            self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
+            self._player_bar_visible = True
+
+    def _ensure_ffmpeg(self, on_ready=None, on_unavailable=None) -> bool:
+        """Return True if ffmpeg is available right now.
+
+        Otherwise offer to download it (once per run) and return False.
+        ``on_ready`` fires when ffmpeg lands, letting the caller enable the
+        ffmpeg-dependent extra (the media progress bar's duration, the
+        visualizer's spectrum bars); ``on_unavailable`` fires if the user
+        declines or the download fails. This never blocks the underlying
+        feature — callers use it only to light up the ffmpeg-only extras."""
+        if self._ffmpeg_available:
+            return True
+        # Re-probe: an ffmpeg dropped beside the app after launch is picked up live.
+        from libraries.audio_utils import find_ffmpeg
+        if find_ffmpeg() is not None:
+            self._ffmpeg_available = True
+            return True
+
+        from libraries import song_operations
+
+        def _ready():
+            self._ffmpeg_available = True
+            if on_ready is not None:
+                on_ready()
+
+        song_operations.prompt_ffmpeg_download(
+            self, on_ready=_ready, on_unavailable=on_unavailable
+        )
+        return False
+
     def _toggle_keep_player_visible(self):
-        self._keep_player_visible = self._keep_player_visible_var.get()
-        if self._keep_player_visible and not self._player_bar_visible:
-            if self._media_player.is_active:
-                self._show_player_bar(self._media_player.playing_song)
-            else:
-                self._show_player_bar_idle(None, None)
-                self._player_bar_frame.pack(fill="x", padx=16, pady=(0, 4), before=self.status_bar)
-                self._player_bar_visible = True
-        elif not self._keep_player_visible:
+        want = self._keep_player_visible_var.get()
+        self._keep_player_visible = want
+        self._show_media_player_pref = want
+        self._save_playback_config()
+        if want:
+            self._reveal_player_bar()
+            # The progress bar's total time / fill comes from ffprobe. If it's
+            # missing, offer the download — but the bar is already showing and
+            # playback is unaffected either way.
+            self._ensure_ffmpeg()
+        else:
             self._hide_player_bar()
 
     def _toggle_loop_queue(self):
         self._loop_queue = self._loop_queue_var.get()
+        self._save_playback_config()
 
     def _toggle_loop(self):
         self._media_player.toggle_loop()

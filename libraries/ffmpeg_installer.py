@@ -219,8 +219,9 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
     arch = target_arch()
     if not dialogs.ask_yes_no(
         "ffmpeg Not Found",
-        "ffmpeg wasn't found next to the app or on your PATH, so audio "
-        "conversion is unavailable.\n\n"
+        "ffmpeg wasn't found next to the app or on your PATH. It's used for the "
+        "media player's progress bar, the visualizer's sound bars, and audio "
+        "conversion. Music playback and Cinema video work without it.\n\n"
         f"Download the latest static ffmpeg ({arch}) build from "
         "github.com/BtbN/FFmpeg-Builds and install it now?",
     ):
@@ -273,7 +274,8 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
         else:
             dialogs.show_info(
                 "ffmpeg Installed",
-                "ffmpeg was installed — audio conversion is now available.",
+                "ffmpeg was installed — the media progress bar, the visualizer's "
+                "sound bars, and audio conversion are now available.",
             )
 
     threading.Thread(target=worker, daemon=True).start()

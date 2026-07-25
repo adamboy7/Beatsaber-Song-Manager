@@ -41,7 +41,7 @@ def replace_song_art(parent: tk.Misc, song: SongInfo) -> bool:
         return False
 
 
-def prompt_ffmpeg_download(parent: tk.Misc, on_ready=None) -> None:
+def prompt_ffmpeg_download(parent: tk.Misc, on_ready=None, on_unavailable=None) -> None:
     """Offer to auto-download a prebuilt ffmpeg (at most once per run).
 
     Fetches a static BtbN build and drops ffmpeg/ffprobe/ffplay next to the app
@@ -65,6 +65,7 @@ def prompt_ffmpeg_download(parent: tk.Misc, on_ready=None) -> None:
         app_config.app_data_dir(),
         dispatch_fn,
         status_cb=status_cb,
+        on_unavailable=on_unavailable,
         on_ready=on_ready,
     )
 

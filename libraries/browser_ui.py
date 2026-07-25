@@ -98,8 +98,8 @@ class BrowserUIMixin:
         menubar.add_cascade(label="View", menu=view_menu)
 
         options_menu = tk.Menu(menubar, tearoff=0)
-        self._keep_player_visible_var = tk.BooleanVar(value=True)
-        self._loop_queue_var = tk.BooleanVar(value=False)
+        self._keep_player_visible_var = tk.BooleanVar(value=self._keep_player_visible)
+        self._loop_queue_var = tk.BooleanVar(value=self._loop_queue)
         self._shuffle_queue_var = tk.BooleanVar(value=False)
         self._loop_var = tk.BooleanVar(value=False)
         options_menu.add_checkbutton(label="Show Media Player",

@@ -613,6 +613,13 @@ class BrowserPlaylistsMixin:
             return
         self._visualizer_window = VisualizerWindow(self)
 
+        def _on_ffmpeg_ready():
+            win = self._visualizer_window
+            if win is not None and win.winfo_exists():
+                win._restart_stream_at_elapsed()
+
+        self._ensure_ffmpeg(on_ready=_on_ffmpeg_ready)
+
     def _notify_playlist_art_window(self):
         if self._playlist_art_window and self._playlist_art_window.winfo_exists():
             self._playlist_art_window.refresh()

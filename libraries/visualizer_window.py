@@ -491,9 +491,6 @@ class VisualizerWindow(tk.Toplevel):
         if not song.audio_path:
             self._set_status("Song has no audio file.")
             return
-        if find_ffmpeg() is None:
-            self._set_status("ffmpeg not found — place ffmpeg next to the app or add it to PATH.")
-            return
 
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
         self._start_stream(song, elapsed)
@@ -501,8 +498,6 @@ class VisualizerWindow(tk.Toplevel):
     def _restart_stream_at_elapsed(self):
         song = self._current_song
         if song is None or not song.audio_path:
-            return
-        if find_ffmpeg() is None:
             return
         self._stop_stream()
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
@@ -540,11 +535,13 @@ class VisualizerWindow(tk.Toplevel):
         Synchronous either way: Cinema videos start via an embedded libmpv
         instance, and if that isn't available (no libmpv DLL, no video file,
         load failure) this falls back to the spectrum stream immediately.
+
+        ffmpeg is only needed for the frequency-bar spectrum. Cinema video
+        (libmpv) and the static cover-art background work without it, so when
+        ffmpeg is absent the visualizer runs in a degraded mode — video plays if
+        available, otherwise the cover art is shown — instead of going blank.
         """
         self._stop_stream()
-        ffmpeg = find_ffmpeg()
-        if ffmpeg is None:
-            return
 
         w, h = self._canvas_size()
         if w < _MIN_W or h < _MIN_H:
@@ -565,6 +562,12 @@ class VisualizerWindow(tk.Toplevel):
             # libmpv couldn't start the video — fall back to the frequency-bar
             # spectrum for this stream instead.
             self._stream_mode = "spectrum"
+
+        ffmpeg = find_ffmpeg()
+        if ffmpeg is None:
+            self._set_status("ffmpeg not found — showing cover art (sound bars need ffmpeg).")
+            self._show_bright_art()
+            return
 
         self._start_spectrum_stream(ffmpeg, song, elapsed, w, h)
 
@@ -1105,9 +1108,6 @@ class VisualizerWindow(tk.Toplevel):
         self._name_label.config(text=f"♫  {name}{author}")
         if not song.audio_path:
             self._set_status("Song has no audio file.")
-            return
-        if find_ffmpeg() is None:
-            self._set_status("ffmpeg not found — place ffmpeg next to the app or add it to PATH.")
             return
         if initial and not mp.is_stopped:
             elapsed = mp.elapsed_seconds() or 0.0

@@ -30,6 +30,8 @@ from tkinterdnd2 import TkinterDnD
 from pathlib import Path
 from PIL import Image, ImageTk
 
+from libraries import app_config
+from libraries.audio_utils import find_ffmpeg
 from libraries.constants import BG_COLOR, WINDOW_TITLE
 from libraries.steam_paths import find_beatsaber_custom_levels
 from libraries.song_data import SongInfo, load_songs, load_song_hashes
@@ -106,8 +108,15 @@ class SongBrowser(
 
         self._favorites_only: bool = False
         self._hide_favorites: bool = False
-        self._keep_player_visible: bool = True
-        self._loop_queue: bool = False
+        # Persisted playback preferences (loaded from the app config).
+        _cfg = app_config.load_config()
+        self._loop_queue: bool = bool(_cfg.get("repeat_queue", False))
+        # The media player bar works without ffmpeg (playback is in-process
+        # libmpv); only the progress bar's total/fill depends on ffprobe. So the
+        # bar is shown purely per the stored preference — ffmpeg just enriches it.
+        self._show_media_player_pref: bool = bool(_cfg.get("show_media_player", True))
+        self._ffmpeg_available: bool = find_ffmpeg() is not None
+        self._keep_player_visible: bool = self._show_media_player_pref
         self._shuffle_queue: bool = False
         self._last_shuffle_index: int | None = None
         self._cinema_downloads_active: set[str] = set()
