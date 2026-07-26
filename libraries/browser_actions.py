@@ -549,7 +549,7 @@ class BrowserActionsMixin:
                              command=lambda: self._download_cinema_video(song),
                              state="disabled" if downloading else "normal")
         menu.add_separator()
-        menu.add_command(label="Open Folder…",
+        menu.add_command(label="Open Folder",
                          command=lambda: self._open_folder(song.folder))
         menu.add_separator()
         if shift_held:
