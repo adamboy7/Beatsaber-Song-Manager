@@ -5,7 +5,7 @@ import tkinter.filedialog as fd
 from pathlib import Path
 from libraries import dialogs
 
-from libraries.song_data import SongInfo
+from libraries.song_data import SongInfo, compute_song_hash
 from libraries.asset_editor import bak_files, restore_files, replace_art, replace_audio
 from libraries.audio_utils import find_ffmpeg, _local_dir
 from libraries.fs_utils import atomic_write_text
@@ -19,6 +19,9 @@ def restore_song_files(song: SongInfo) -> tuple[int, list[str]]:
     if not baks:
         return 0, []
     errors = restore_files(song)
+    recomputed = compute_song_hash(song.folder)
+    if recomputed:
+        song.song_hash = recomputed
     return len(baks), errors
 
 
@@ -166,6 +169,9 @@ def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> 
     else:
         song.display_name = song.folder.name
     song.update_search_blob()
+    recomputed = compute_song_hash(song.folder)
+    if recomputed:
+        song.song_hash = recomputed
     return None
 
 
