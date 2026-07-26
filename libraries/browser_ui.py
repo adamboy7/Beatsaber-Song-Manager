@@ -75,7 +75,7 @@ class BrowserUIMixin:
             )
 
         self._file_menu.add_separator()
-        self._file_menu.add_command(label="Open SongBrowser AppData",
+        self._file_menu.add_command(label="Open Song Browser AppData",
                                     command=self._open_app_data_folder)
 
     def _open_app_data_folder(self):
