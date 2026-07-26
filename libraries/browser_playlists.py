@@ -161,6 +161,25 @@ class BrowserPlaylistsMixin:
             songs = [s for s in songs if not self._is_favorite(s)]
         return songs
 
+    def _playlist_dialog_initialdir(self) -> str | None:
+        """Default folder for the playlist open/save dialogs.
+
+        Prefers the game's ``Playlists`` folder when a Beat Saber install is
+        detected and that folder actually exists, so playlists land where the
+        game reads them. Falls back to the active CustomLevels (custom songs)
+        folder otherwise. Returns ``None`` if neither resolves, letting the
+        dialog use its own default. The user can still browse elsewhere.
+        """
+        install = self._beatsaber_install_dir()
+        if install is not None:
+            playlists = install / "Playlists"
+            if playlists.is_dir():
+                return str(playlists)
+        custom = getattr(self, "custom_levels", None)
+        if custom is not None and Path(custom).is_dir():
+            return str(custom)
+        return None
+
     def _toggle_favorites_only(self):
         self._favorites_only = self._favorites_only_var.get()
         self._do_search()
@@ -240,6 +259,7 @@ class BrowserPlaylistsMixin:
             title="Save Playlist",
             filetypes=[("Beat Saber Playlist", "*.bplist"), ("All files", "*.*")],
             defaultextension=".bplist",
+            initialdir=self._playlist_dialog_initialdir(),
             parent=parent or self,
         )
         if not save_path:
@@ -320,6 +340,7 @@ class BrowserPlaylistsMixin:
         path = fd.askopenfilename(
             title="Open Playlist",
             filetypes=[("Beat Saber Playlist", "*.bplist"), ("All files", "*.*")],
+            initialdir=self._playlist_dialog_initialdir(),
         )
         if not path:
             return

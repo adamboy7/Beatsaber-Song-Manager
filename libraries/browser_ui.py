@@ -78,6 +78,23 @@ class BrowserUIMixin:
         self._file_menu.add_command(label="Open Song Browser AppData",
                                     command=self._open_app_data_folder)
 
+    def _refresh_file_menu(self):
+        """(Re)build the File menu from scratch (wired as its postcommand so it
+        reflects live state on every open). A "Save Queue…" entry appears only
+        when the playback queue holds more than one song."""
+        self._file_menu.delete(0, "end")
+        self._file_menu.add_command(label="Open Playlist…", command=self._open_playlist)
+
+        if len(getattr(self, "_queue", []) or []) > 1:
+            art = self._playlist_art_b64 if self._playlist_art_locked else None
+            self._file_menu.add_command(
+                label="Save Queue…",
+                command=lambda: self._share_playlist(list(self._queue), art_b64=art),
+            )
+
+        self._file_menu.add_separator()
+        self._add_folder_menu_items()
+
     def _open_app_data_folder(self):
         """Reveal this app's per-user AppData/config folder in the file manager."""
         from libraries import app_config
@@ -86,11 +103,9 @@ class BrowserUIMixin:
     def _build_menubar(self):
         menubar = tk.Menu(self)
 
-        self._file_menu = tk.Menu(menubar, tearoff=0)
-        self._file_menu.add_command(label="Open Playlist…", command=self._open_playlist)
-        self._file_menu.add_separator()
-        self._add_folder_menu_items()
-
+        self._file_menu = tk.Menu(menubar, tearoff=0,
+                                   postcommand=self._refresh_file_menu)
+        self._refresh_file_menu()
         menubar.add_cascade(label="File", menu=self._file_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)
