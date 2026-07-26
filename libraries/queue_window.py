@@ -151,6 +151,7 @@ class QueueWindow(tk.Toplevel):
 
         self.bind("<Delete>", self._delete_selected)
         self.bind("<BackSpace>", self._delete_selected)
+        self.bind("<space>", self._on_space)
         self.bind("<Escape>", self._deselect_all)
         self.bind("<Control-a>", self._select_all)
         self.bind("<Control-s>", self._on_save_shortcut)
@@ -262,6 +263,13 @@ class QueueWindow(tk.Toplevel):
             b._play_audio(b._queue[b._queue_index])
         else:
             mp.toggle_pause()
+
+    def _on_space(self, event=None):
+        focused = self.focus_get()
+        if isinstance(focused, (tk.Entry, tk.Spinbox, tk.Text, tk.Button)):
+            return
+        self._on_play_btn_click()
+        return "break"
 
     def _refresh_play_btn(self):
         b = self._browser

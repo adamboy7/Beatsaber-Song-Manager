@@ -7,7 +7,7 @@ from libraries import dialogs
 from libraries import platform_utils
 
 from libraries.song_data import SongInfo
-from libraries.audio_utils import _local_dir
+from libraries import app_config
 from libraries.fs_utils import atomic_write_text
 from libraries.player_data import song_level_ids
 
@@ -19,8 +19,8 @@ def favorite_level_id(song: SongInfo) -> str:
 
 
 def backup_player_data(player_dat_path: Path, raw: str) -> None:
-    bak_dir = _local_dir() / "backups"
-    bak_dir.mkdir(exist_ok=True)
+    bak_dir = app_config.app_data_dir() / "backups"
+    bak_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
     (bak_dir / f"PlayerData_{stamp}.dat.bak").write_text(raw, encoding="utf-8")
     # Build the sibling backup name by string concatenation rather than
