@@ -136,11 +136,15 @@ class BrowserUIMixin:
         checked without a restart. mpv is listed first as the preferred playback
         engine. Missing dependencies stay clickable and prompt the respective
         installer; on Linux libmpv can't be auto-downloaded, so its installer
-        shows package-manager instructions instead. Mod Assistant just opens its
-        repo (detection/check-mark support is a later TODO).
+        shows package-manager instructions instead. Mod Assistant is detected on
+        Windows via its registered URL-protocol handler: when found the entry is
+        checked and clicking launches the app; otherwise (and on every non-
+        Windows platform) it stays clickable and opens the Mod Assistant repo in
+        a browser.
         """
         from libraries.audio_utils import find_ffmpeg, find_ffprobe
         from libraries.mpv_backend import find_libmpv
+        from libraries.mod_assistant import find_mod_assistant
 
         menu = self._tools_menu
         menu.delete(0, "end")
@@ -175,8 +179,9 @@ class BrowserUIMixin:
             command=ffmpeg_command,
             state=ffmpeg_state,
         )
+        mod_assistant = find_mod_assistant()
         menu.add_command(
-            label=f"{_mark(False)}Mod Assistant",
+            label=f"{_mark(mod_assistant is not None)}Mod Assistant",
             command=self._open_mod_assistant,
         )
 
@@ -269,6 +274,24 @@ class BrowserUIMixin:
         )
 
     def _open_mod_assistant(self):
+        """Launch a detected Mod Assistant, else open its repo in a browser.
+
+        On Windows the app is located via its registered URL-protocol handler;
+        when present we start the executable directly. Everywhere else (and if
+        detection fails) we fall back to the GitHub repo so the user can install
+        it.
+        """
+        from libraries.mod_assistant import find_mod_assistant
+
+        exe = find_mod_assistant()
+        if exe is not None:
+            try:
+                import subprocess
+                subprocess.Popen([str(exe)], cwd=str(exe.parent),
+                                 creationflags=platform_utils.no_window_flags())
+                return
+            except OSError:
+                pass  # fall through to the browser if launching fails
         webbrowser.open("https://github.com/bsmg/ModAssistant")
 
     def _set_custom_levels_folder(self):
