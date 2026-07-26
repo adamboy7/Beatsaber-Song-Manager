@@ -493,7 +493,7 @@ class BrowserActionsMixin:
         queue_empty = not self._queue
         if queue_empty:
             menu.add_command(label="Play",
-                             command=lambda: self._add_to_queue([song]),
+                             command=lambda: self._play_queue([song]),
                              state="normal" if song.audio_path else "disabled")
         elif shift_held:
             menu.add_command(label="Play",
