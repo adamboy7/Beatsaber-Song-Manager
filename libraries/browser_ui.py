@@ -139,7 +139,7 @@ class BrowserUIMixin:
         shows package-manager instructions instead. Mod Assistant just opens its
         repo (detection/check-mark support is a later TODO).
         """
-        from libraries.audio_utils import find_ffmpeg
+        from libraries.audio_utils import find_ffmpeg, find_ffprobe
         from libraries.mpv_backend import find_libmpv
 
         menu = self._tools_menu
@@ -150,21 +150,101 @@ class BrowserUIMixin:
 
         mpv_found = find_libmpv() is not None
         ffmpeg_found = find_ffmpeg() is not None
+        ffprobe_found = find_ffprobe() is not None
 
         menu.add_command(
             label=f"{_mark(mpv_found)}mpv",
             command=None if mpv_found else self._tools_install_mpv,
             state="disabled" if mpv_found else "normal",
         )
+        ffmpeg_warn = ffmpeg_found and not ffprobe_found and not mpv_found
+        if ffmpeg_found and not ffmpeg_warn:
+            ffmpeg_label = f"{_mark(True)}ffmpeg"
+            ffmpeg_command = None
+            ffmpeg_state = "disabled"
+        elif ffmpeg_warn:
+            ffmpeg_label = "⚠  ffmpeg"
+            ffmpeg_command = self._tools_ffmpeg_warning
+            ffmpeg_state = "normal"
+        else:
+            ffmpeg_label = f"{_mark(False)}ffmpeg"
+            ffmpeg_command = self._tools_install_ffmpeg
+            ffmpeg_state = "normal"
         menu.add_command(
-            label=f"{_mark(ffmpeg_found)}ffmpeg",
-            command=None if ffmpeg_found else self._tools_install_ffmpeg,
-            state="disabled" if ffmpeg_found else "normal",
+            label=ffmpeg_label,
+            command=ffmpeg_command,
+            state=ffmpeg_state,
         )
         menu.add_command(
             label=f"{_mark(False)}Mod Assistant",
             command=self._open_mod_assistant,
         )
+
+    def _tools_ffmpeg_warning(self):
+        """Explain the ⚠ ffmpeg state and offer a fix.
+
+        Reached only when ffmpeg is present but neither ffprobe nor mpv is
+        available, so durations can't be probed. Offers the two ways out —
+        install mpv (preferred playback engine, also covers probing) or
+        reinstall ffmpeg (pulls a full build that includes ffprobe) — plus
+        Cancel. Each button reuses the existing installer entry points.
+
+        Built on the shared ``dialogs`` helpers so it matches the ffmpeg
+        installer's look: dark theme, Warning.png title-bar icon, ⚠ glyph and
+        wrapped body. mpv is styled as the primary (accent) button and holds
+        focus so Enter installs it; the three buttons are equal width and
+        evenly spaced, centered under the message.
+        """
+        from libraries import dialogs
+
+        dlg = dialogs.themed_toplevel(self, "ffmpeg incomplete",
+                                      icon=dialogs._ICON_PATH, modal=True)
+
+        body = tk.Frame(dlg, bg=dialogs.DIALOG_BG)
+        body.pack(fill="both", expand=True, padx=24, pady=(22, 8))
+        glyph, glyph_color = dialogs._GLYPHS["warning"]
+        tk.Label(body, text=glyph, font=("Segoe UI", 26),
+                 bg=dialogs.DIALOG_BG, fg=glyph_color).pack(
+                     side="left", anchor="n", padx=(0, 16))
+        tk.Label(
+            body,
+            text=("ffmpeg was found, but ffprobe is missing and mpv isn't "
+                  "installed, so audio durations can't be read.\n\n"
+                  "Install mpv, or reinstall ffmpeg (which includes ffprobe)."),
+            font=("Segoe UI", 10), bg=dialogs.DIALOG_BG, fg=TEXT_COLOR,
+            justify="left", wraplength=360,
+        ).pack(side="left", anchor="n")
+
+        btn_frame = tk.Frame(dlg, bg=dialogs.DIALOG_BG)
+        btn_frame.pack(pady=(6, 20))
+
+        def _choose(action):
+            dlg.destroy()
+            if action is not None:
+                action()
+
+        buttons = [
+            ("Download mpv", self._tools_install_mpv, True),
+            ("Reinstall ffmpeg", self._tools_install_ffmpeg, False),
+            ("Cancel", None, False),
+        ]
+        default_btn = None
+        for label, action, is_primary in buttons:
+            b = dialogs.themed_button(
+                btn_frame, label, (lambda a=action: _choose(a)),
+                primary=is_primary, width=14,
+            )
+            b.pack(side="left", padx=6)
+            if is_primary:
+                default_btn = b
+
+        dlg.bind("<Return>", lambda _e: _choose(self._tools_install_mpv))
+        dlg.bind("<Escape>", lambda _e: _choose(None))
+        dlg.protocol("WM_DELETE_WINDOW", lambda: _choose(None))
+
+        dialogs.center_over(dlg, self)
+        if default_btn is not None:
+            default_btn.focus_set()
 
     def _tools_install_ffmpeg(self):
         """Prompt to auto-download ffmpeg, refreshing the check mark when done."""
