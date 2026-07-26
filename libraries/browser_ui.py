@@ -575,6 +575,10 @@ class BrowserUIMixin:
         self._vol_canvas.bind("<B1-Motion>", self._vol_canvas_set)
         self._vol_canvas.bind("<Configure>", lambda _: self._draw_vol_canvas())
         self._vol_canvas.bind("<MouseWheel>", lambda e: "break")
+        self._vol_canvas.bind("<Left>", lambda _: self._nudge_volume(-1))
+        self._vol_canvas.bind("<Down>", lambda _: self._nudge_volume(-1))
+        self._vol_canvas.bind("<Right>", lambda _: self._nudge_volume(1))
+        self._vol_canvas.bind("<Up>", lambda _: self._nudge_volume(1))
 
         self._player_next_btn = tk.Button(
             volume_row, text="⏭",
@@ -665,8 +669,24 @@ class BrowserUIMixin:
         c.create_oval(ball_x - 5, cy - 5, ball_x + 5, cy + 5, fill="white", outline=ACCENT_COLOR, width=2)
 
     def _vol_canvas_press(self, event: tk.Event) -> None:
+        self._vol_canvas.focus_set()  # enable arrow-key nudging
         self._vol_drag_start = self._volume_var.get()
         self._vol_canvas_set(event)
+
+    def _nudge_volume(self, delta: int) -> None:
+        level = max(0, min(100, self._volume_var.get() + delta))
+        if level == self._volume_var.get():
+            return "break"
+        self._volume_var.set(level)
+        if level == 0 and not self._vol_muted:
+            self._vol_muted = True
+            self._vol_icon_label.config(text="🔇")
+        elif level > 0 and self._vol_muted:
+            self._vol_muted = False
+            self._vol_icon_label.config(text="🔊")
+        self._draw_vol_canvas()
+        self._on_volume_change(level)
+        return "break"
 
     def _vol_canvas_set(self, event: tk.Event) -> None:
         c = self._vol_canvas
