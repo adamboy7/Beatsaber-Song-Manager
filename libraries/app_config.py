@@ -108,3 +108,22 @@ def set_custom_levels(path: Path) -> bool:
     cfg = load_config()
     cfg["custom_levels"] = str(path)
     return save_config(cfg)
+
+
+DEFAULT_VOLUME = 75
+
+
+def get_volume() -> int:
+    """The stored playback volume (0-100), defaulting to 75 if unset/invalid."""
+    try:
+        val = int(load_config().get("volume", DEFAULT_VOLUME))
+    except (TypeError, ValueError):
+        return DEFAULT_VOLUME
+    return max(0, min(100, val))
+
+
+def set_volume(level: int) -> bool:
+    """Record the playback volume (clamped 0-100), preserving other keys."""
+    cfg = load_config()
+    cfg["volume"] = max(0, min(100, int(level)))
+    return save_config(cfg)

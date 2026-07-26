@@ -225,9 +225,18 @@ class BrowserPlaybackMixin:
 
     def _on_volume_change(self, level: int) -> None:
         self._volume_label.config(text=f"{level}%")
+        self._volume_level = level
         if self._volume_apply_id:
             self.after_cancel(self._volume_apply_id)
-        self._volume_apply_id = self.after(250, lambda: self._media_player.set_volume(level))
+
+        def _apply():
+            self._media_player.set_volume(level)
+            # Persist only genuine user-set levels, not a transient mute-to-0.
+            if not getattr(self, "_vol_muted", False):
+                from libraries import app_config
+                app_config.set_volume(level)
+
+        self._volume_apply_id = self.after(250, _apply)
 
     # ── Play / queue ──────────────────────────────────────────────────────────
 

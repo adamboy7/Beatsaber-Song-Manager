@@ -150,6 +150,7 @@ class SongBrowser(
         # libmpv); only the progress bar's total/fill depends on ffprobe. So the
         # bar is shown purely per the stored preference — ffmpeg just enriches it.
         self._show_media_player_pref: bool = bool(_cfg.get("show_media_player", True))
+        self._volume_level: int = app_config.get_volume()
         self._ffmpeg_available: bool = find_ffmpeg() is not None
         self._keep_player_visible: bool = self._show_media_player_pref
         self._shuffle_queue: bool = False
@@ -165,6 +166,7 @@ class SongBrowser(
         self._build_ui()
 
         self._media_player = MediaPlayer(self._dispatcher.dispatch, lambda text: self.status_bar.config(text=text))
+        self._media_player.set_volume(self._volume_level)
         self._media_player.start_media_keys(self._dispatcher.dispatch, self._stop_playback, self._queue_next, self._queue_prev)
         self._queue: list[SongInfo] = []
         self._queue_index: int = -1

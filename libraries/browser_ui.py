@@ -556,11 +556,12 @@ class BrowserUIMixin:
         )
         self._vol_icon_label.pack(side="left")
         self._vol_icon_label.bind("<Button-1>", lambda _: self._toggle_mute())
+        _vol_init = getattr(self, "_volume_level", 75)
         self._vol_muted: bool = False
-        self._vol_pre_mute: int = 75
-        self._vol_drag_start: int = 75
+        self._vol_pre_mute: int = _vol_init
+        self._vol_drag_start: int = _vol_init
 
-        self._volume_var = tk.IntVar(value=75)
+        self._volume_var = tk.IntVar(value=_vol_init)
         self._vol_canvas = tk.Canvas(
             volume_row,
             width=160,
@@ -609,7 +610,7 @@ class BrowserUIMixin:
         self._player_back_btn.pack(side="right", padx=(6, 0))
 
         self._volume_label = tk.Label(
-            volume_row, text="75%", width=4,
+            volume_row, text=f"{_vol_init}%", width=4,
             bg="#0d0d1a", fg=SUBTEXT_COLOR,
             font=("Segoe UI", 8),
             anchor="w",
