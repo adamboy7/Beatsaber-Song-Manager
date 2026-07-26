@@ -74,6 +74,15 @@ class BrowserUIMixin:
                 state="normal" if valid else "disabled",
             )
 
+        self._file_menu.add_separator()
+        self._file_menu.add_command(label="Open SongBrowser AppData",
+                                    command=self._open_app_data_folder)
+
+    def _open_app_data_folder(self):
+        """Reveal this app's per-user AppData/config folder in the file manager."""
+        from libraries import app_config
+        platform_utils.open_in_file_manager(app_config.app_data_dir())
+
     def _build_menubar(self):
         menubar = tk.Menu(self)
 
