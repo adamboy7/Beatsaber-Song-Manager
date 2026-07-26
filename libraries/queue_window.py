@@ -455,7 +455,11 @@ class QueueWindow(tk.Toplevel):
         )
         art = self._browser._playlist_art_b64 if self._browser._playlist_art_locked else None
         menu.add_command(
-            label="Save Queue",
+            label="Open Playlist…",
+            command=self._open_playlist,
+        )
+        menu.add_command(
+            label="Save Queue…",
             state="normal" if queue else "disabled",
             command=lambda: self._browser._share_playlist(list(queue), parent=self, art_b64=art),
         )
