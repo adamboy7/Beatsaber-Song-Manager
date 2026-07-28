@@ -220,9 +220,8 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
     if not dialogs.ask_yes_no(
         "ffmpeg Not Found",
         "ffmpeg wasn't found in the app-data folder, on your PATH, or next to "
-        "the app. It's used for the media player's progress bar, the "
-        "visualizer's sound bars, and audio conversion. Music playback and "
-        "Cinema video work without it.\n\n"
+        "the app. It's used for the visualizer's sound bars and audio "
+        "conversion. Music playback and Cinema video work without it.\n\n"
         f"Download the latest static ffmpeg ({arch}) build from "
         "github.com/BtbN/FFmpeg-Builds and install it to the app-data folder now?",
     ):
@@ -275,8 +274,8 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
         else:
             dialogs.show_info(
                 "ffmpeg Installed",
-                "ffmpeg was installed — the media progress bar, the visualizer's "
-                "sound bars, and audio conversion are now available.",
+                "ffmpeg was installed — the visualizer's sound bars and audio "
+                "conversion are now available.",
             )
 
     threading.Thread(target=worker, daemon=True).start()
