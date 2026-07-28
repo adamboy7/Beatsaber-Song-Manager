@@ -81,7 +81,34 @@ def find_ffplay() -> str | None:
 
 
 def get_audio_duration(path: Path) -> float | None:
-    """Return audio duration in seconds using ffprobe, or None if unavailable."""
+    """Return audio duration in seconds, read directly from the file header.
+
+    Uses mutagen (pure Python, no sidecar binary) as the primary path, which
+    covers all supported formats: Ogg Vorbis (.ogg/.egg), MP3, WAV and M4A.
+    mutagen sniffs by content rather than extension, so an .egg (really Ogg)
+    is detected correctly, so the common case needs no external binary.
+
+    Falls back to ffprobe when mutagen can't parse the file, then to libmpv
+    (already bundled for playback) when no ffprobe binary is present — mpv is
+    last because spinning up an instance is the heaviest of the three.
+    """
+    try:
+        from mutagen import File as MutagenFile
+        mf = MutagenFile(str(path))
+        if mf is not None and mf.info is not None:
+            length = getattr(mf.info, "length", None)
+            if length:
+                return float(length)
+    except Exception:
+        pass
+    dur = _ffprobe_duration(path)
+    if dur is not None:
+        return dur
+    return _mpv_duration(path)
+
+
+def _ffprobe_duration(path: Path) -> float | None:
+    """Fallback duration probe using ffprobe, or None if unavailable."""
     ffprobe = find_ffprobe()
     if not ffprobe:
         return None
@@ -98,4 +125,37 @@ def get_audio_duration(path: Path) -> float | None:
                 return float(dur)
     except Exception:
         pass
+    return None
+
+
+def _mpv_duration(path: Path) -> float | None:
+    """Last-resort duration probe via libmpv, or None if unavailable.
+
+    Reuses the libmpv already bundled for playback (loaded through
+    mpv_backend), so no additional binary is required. Loads the file paused
+    with audio and video output disabled, reads the parsed ``duration``
+    property, then tears the instance down. Imported lazily to avoid a circular
+    import — mpv_backend imports from this module.
+    """
+    from libraries import mpv_backend
+    mpv = mpv_backend.load_mpv()
+    if mpv is None:
+        return None
+    player = None
+    try:
+        player = mpv.MPV(pause=True, idle=True, video=False,
+                         ao="null", vo="null", mute=True)
+        player.play(str(path))
+        # Block until libmpv has demuxed the header and populated duration.
+        dur = player.wait_for_property("duration", timeout=5)
+        if dur:
+            return float(dur)
+    except Exception:
+        pass
+    finally:
+        if player is not None:
+            try:
+                player.terminate()
+            except Exception:
+                pass
     return None

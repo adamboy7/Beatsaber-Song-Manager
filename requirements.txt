@@ -1,4 +1,5 @@
 Pillow
+mutagen
 pydub
 audioop-lts
 pynput
