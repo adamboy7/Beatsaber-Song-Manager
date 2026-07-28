@@ -30,6 +30,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import NamedTuple
 
 from libraries import dialogs
 from libraries import platform_utils
@@ -45,6 +46,9 @@ _META_TIMEOUT = 30
 _ARCHIVE_TIMEOUT = 600
 _MAX_RETRIES = 3
 _CHUNK = 1 << 16  # 64 KiB
+
+_PART_SUFFIX = ".part"
+_SUPERSEDED_PREFIX = ".old-"
 
 # Ask at most once per run — every subsequent failure should just fall back
 # quietly rather than re-nag with the same dialog.
@@ -129,15 +133,180 @@ def _download(url: str, dest: Path, progress_cb=None) -> None:
     raise FfmpegInstallError(f"download failed: {last_err}")
 
 
-def _extract_exes(archive: Path, dest_dir: Path) -> list[str]:
+class ExtractResult(NamedTuple):
+    """Outcome of installing the executables from an archive.
+
+    ``written`` lists the executable names now in place. ``deferred`` lists the
+    ones whose previous copy was still running at swap time: the new binary is
+    installed and will be used by the next invocation, but any process already
+    running keeps the superseded copy open until it exits.
+    """
+
+    written: list[str]
+    deferred: list[str]
+
+
+def in_use(path: Path) -> bool:
+    """True if ``path`` exists and can't currently be opened for writing.
+
+    Windows opens a running executable with FILE_SHARE_READ only, so a write
+    open fails while it runs — that's what makes an in-place overwrite blow up.
+    POSIX has no such lock (and swapping a running binary by rename is safe
+    there anyway), so this is only ever True on Windows.
+    """
+    if not path.exists():
+        return False
+    try:
+        with open(path, "r+b"):
+            return False
+    except OSError:
+        return True
+
+
+def binaries_in_use(dest_dir: Path) -> list[str]:
+    """Which of the target executables in ``dest_dir`` are currently running.
+
+    Callers can use this to warn up front; the install itself no longer needs
+    them idle (see ``_swap_into_place``).
+    """
+    return [base for base in _WANTED if in_use(dest_dir / base)]
+
+
+def _is_leftover(name: str) -> bool:
+    """True for our own ``<exe>.part`` / ``<exe>.old-<n>`` scratch files.
+
+    Deliberately anchored to the three executable names: ``dest_dir`` is the
+    shared app-data folder, which also holds the config, the song-hash cache and
+    libmpv, and none of those should ever be in scope for deletion.
+    """
+    for base in _WANTED:
+        if not name.startswith(base):
+            continue
+        rest = name[len(base):]
+        if rest == _PART_SUFFIX or rest.startswith(_SUPERSEDED_PREFIX):
+            return True
+    return False
+
+
+def _clear_superseded(dest_dir: Path) -> None:
+    """Delete leftovers from an earlier install whose targets were in use.
+
+    They stay behind because Windows won't unlink a running executable. By the
+    time we're called again those processes are almost always gone, so this is
+    the natural place to reap them; failures are ignored and retried next run.
+    """
+    try:
+        entries = list(dest_dir.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if _is_leftover(entry.name):
+            try:
+                entry.unlink()
+            except OSError:
+                pass  # still locked, or gone already — try again next install
+
+
+def _swap_into_place(staged: dict[str, Path], dest_dir: Path) -> list[str]:
+    """Move freshly-extracted binaries over their live counterparts.
+
+    ``os.replace`` is atomic per file but fails on Windows when the target is a
+    running executable, which is what used to break this installer: a playing
+    song means ffplay (and, with the visualizer open, ffmpeg) is live, so
+    reinstalling to recover a missing ffprobe died partway through — after
+    clobbering some binaries and before writing the one being repaired.
+
+    Windows does allow *renaming* a running executable, so this runs in three
+    phases. Every existing binary is moved aside first, then the new ones are
+    dropped in, then the aside copies are deleted. A process still holding one
+    keeps the renamed copy open and plays on undisturbed; that leftover survives
+    phase three and is reaped by ``_clear_superseded`` on the next install.
+
+    Moving *every* original aside (not just the locked ones) is what makes the
+    set recoverable: any failure rolls the whole group back, so a half-updated
+    mix of old and new binaries is never left on disk.
+
+    Returns the names whose previous copy was still in use.
+    """
+    moved: list[tuple[str, Path, Path]] = []  # (base, target, aside)
+    placed: list[Path] = []
+    deferred: list[str] = []
+
+    def rollback() -> None:
+        for target in placed:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+        for _base, target, aside in reversed(moved):
+            try:
+                os.replace(aside, target)
+            except OSError:
+                pass  # best effort; _clear_superseded picks up the remains
+
+    try:
+        # Phase 1 — move the current binaries out of the way, noting which ones
+        # a running process still has open.
+        for base in staged:
+            target = dest_dir / base
+            if not target.exists():
+                continue
+            was_live = in_use(target)
+            aside = dest_dir / f"{base}{_SUPERSEDED_PREFIX}{time.time_ns()}"
+            os.replace(target, aside)
+            moved.append((base, target, aside))
+            if was_live:
+                deferred.append(base)
+
+        # Phase 2 — put the new ones in place.
+        for base, part in staged.items():
+            target = dest_dir / base
+            os.replace(part, target)
+            placed.append(target)
+    except OSError as e:
+        rollback()
+        raise FfmpegInstallError(f"could not install binaries: {e}")
+
+    # Phase 3 — drop the superseded copies nothing is using. The in-use ones
+    # can't be unlinked on Windows and are left for _clear_superseded.
+    for base, _target, aside in moved:
+        if base in deferred:
+            continue
+        try:
+            aside.unlink()
+        except OSError:
+            pass
+
+    return deferred
+
+
+def _extract_exes(archive: Path, dest_dir: Path) -> ExtractResult:
     """Extract bin/{ffmpeg,ffprobe,ffplay} from ``archive`` into ``dest_dir``.
 
     BtbN archives nest everything under a top-level ``<name>/`` folder, so
     entries are matched by basename and written flat into ``dest_dir``. Windows
-    assets are ``.zip``; Linux assets are ``.tar.xz``. Returns the list of
-    executable names successfully written; on Unix the execute bit is set.
+    assets are ``.zip``; Linux assets are ``.tar.xz``.
+
+    Everything is extracted to ``.part`` files first and only swapped over the
+    live binaries once all of them are on disk, so a mid-extraction failure
+    can't leave a mix of old and new. On Unix the execute bit is set.
     """
-    written: list[str] = []
+    staged: dict[str, Path] = {}
+
+    def part_for(base: str) -> Path:
+        return dest_dir / f"{base}{_PART_SUFFIX}"
+
+    def drain(src, base: str) -> None:
+        part = part_for(base)
+        with open(part, "wb") as out:
+            while True:
+                chunk = src.read(_CHUNK)
+                if not chunk:
+                    break
+                out.write(chunk)
+        staged[base] = part
+
+    _clear_superseded(dest_dir)
     try:
         if archive.name.endswith((".tar.xz", ".tar.gz", ".tar.bz2")):
             with tarfile.open(archive) as tf:
@@ -149,35 +318,32 @@ def _extract_exes(archive: Path, dest_dir: Path) -> list[str]:
                         src = tf.extractfile(member)
                         if src is None:
                             continue
-                        with src, open(dest_dir / base, "wb") as out:
-                            while True:
-                                chunk = src.read(_CHUNK)
-                                if not chunk:
-                                    break
-                                out.write(chunk)
-                        written.append(base)
+                        with src:
+                            drain(src, base)
         else:
             with zipfile.ZipFile(archive) as zf:
                 for info in zf.infolist():
                     base = info.filename.rsplit("/", 1)[-1]
                     if base in _WANTED and "/bin/" in f"/{info.filename}":
-                        with zf.open(info) as src, open(dest_dir / base, "wb") as out:
-                            while True:
-                                chunk = src.read(_CHUNK)
-                                if not chunk:
-                                    break
-                                out.write(chunk)
-                        written.append(base)
+                        with zf.open(info) as src:
+                            drain(src, base)
     except (zipfile.BadZipFile, tarfile.TarError, OSError) as e:
+        for part in staged.values():
+            try:
+                part.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise FfmpegInstallError(f"could not extract archive: {e}")
 
     if not platform_utils.IS_WINDOWS:
-        for base in written:
+        for part in staged.values():
             try:
-                os.chmod(dest_dir / base, 0o755)
+                os.chmod(part, 0o755)
             except OSError:
                 pass
-    return written
+
+    deferred = _swap_into_place(staged, dest_dir)
+    return ExtractResult(list(staged), deferred)
 
 
 def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
@@ -246,15 +412,16 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
             _download(url, archive_path, on_progress)
 
             report("Extracting ffmpeg…")
-            written = _extract_exes(archive_path, dest_dir)
+            extracted = _extract_exes(archive_path, dest_dir)
             try:
                 archive_path.unlink()
             except OSError:
                 pass
             ffmpeg_bin = platform_utils.exe_name("ffmpeg")
-            if ffmpeg_bin not in written:
+            if ffmpeg_bin not in extracted.written:
                 raise FfmpegInstallError(f"archive did not contain {ffmpeg_bin}")
-            result["written"] = written
+            result["written"] = extracted.written
+            result["deferred"] = extracted.deferred
         except FfmpegInstallError as e:
             result["error"] = str(e)
         try:
@@ -269,9 +436,18 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
             unavailable()
             return
 
+        deferred = result.get("deferred") or []
         report("ffmpeg installed.")
         if on_ready is not None:
             on_ready()
+        elif deferred:
+            dialogs.show_info(
+                "ffmpeg Installed",
+                "ffmpeg was installed. "
+                f"{', '.join(sorted(deferred))} was in use by playback, so the "
+                "running copy stays active until playback stops — anything "
+                "started after that uses the new build.",
+            )
         else:
             dialogs.show_info(
                 "ffmpeg Installed",
