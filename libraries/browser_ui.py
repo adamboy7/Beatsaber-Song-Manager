@@ -185,7 +185,7 @@ class BrowserUIMixin:
             command=None if mpv_found else self._tools_install_mpv,
             state="disabled" if mpv_found else "normal",
         )
-        ffmpeg_warn = ffmpeg_found and not ffprobe_found and not mpv_found
+        ffmpeg_warn = ffmpeg_found and not ffprobe_found
         if ffmpeg_found and not ffmpeg_warn:
             ffmpeg_label = f"{_mark(True)}ffmpeg"
             ffmpeg_command = None
@@ -212,17 +212,18 @@ class BrowserUIMixin:
     def _tools_ffmpeg_warning(self):
         """Explain the ⚠ ffmpeg state and offer a fix.
 
-        Reached only when ffmpeg is present but neither ffprobe nor mpv is
-        available, so durations can't be probed. Offers the two ways out —
-        install mpv (preferred playback engine, also covers probing) or
-        reinstall ffmpeg (pulls a full build that includes ffprobe) — plus
-        Cancel. Each button reuses the existing installer entry points.
+        Reached when ffmpeg is present but ffprobe is missing — an incomplete
+        build. Durations are normally read by the built-in reader (mutagen);
+        ffprobe is only its fallback for files it can't parse, so this is
+        informational rather than a blocker. The single fix is reinstalling
+        ffmpeg, which bundles ffprobe. mpv is unrelated to this path and is no
+        longer offered here.
 
         Built on the shared ``dialogs`` helpers so it matches the ffmpeg
         installer's look: dark theme, Warning.png title-bar icon, ⚠ glyph and
-        wrapped body. mpv is styled as the primary (accent) button and holds
-        focus so Enter installs it; the three buttons are equal width and
-        evenly spaced, centered under the message.
+        wrapped body. Reinstall is the primary (accent) button and holds focus
+        so Enter triggers it; both buttons are equal width and evenly spaced,
+        centered under the message.
         """
         from libraries import dialogs
 
@@ -237,9 +238,12 @@ class BrowserUIMixin:
                      side="left", anchor="n", padx=(0, 16))
         tk.Label(
             body,
-            text=("ffmpeg was found, but ffprobe is missing and mpv isn't "
-                  "installed, so audio durations can't be read.\n\n"
-                  "Install mpv, or reinstall ffmpeg (which includes ffprobe)."),
+            text=("ffmpeg was found, but it's missing ffprobe. Audio durations "
+                  "are read by a built-in reader that handles the usual "
+                  "formats, so normal use isn't affected — ffprobe is only a "
+                  "fallback for unusual files.\n\n"
+                  "Reinstall ffmpeg to include ffprobe and restore that "
+                  "fallback."),
             font=("Segoe UI", 10), bg=dialogs.DIALOG_BG, fg=TEXT_COLOR,
             justify="left", wraplength=360,
         ).pack(side="left", anchor="n")
@@ -253,8 +257,7 @@ class BrowserUIMixin:
                 action()
 
         buttons = [
-            ("Download mpv", self._tools_install_mpv, True),
-            ("Reinstall ffmpeg", self._tools_install_ffmpeg, False),
+            ("Reinstall ffmpeg", self._tools_install_ffmpeg, True),
             ("Cancel", None, False),
         ]
         default_btn = None
@@ -267,7 +270,7 @@ class BrowserUIMixin:
             if is_primary:
                 default_btn = b
 
-        dlg.bind("<Return>", lambda _e: _choose(self._tools_install_mpv))
+        dlg.bind("<Return>", lambda _e: _choose(self._tools_install_ffmpeg))
         dlg.bind("<Escape>", lambda _e: _choose(None))
         dlg.protocol("WM_DELETE_WINDOW", lambda: _choose(None))
 
