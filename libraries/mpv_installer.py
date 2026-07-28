@@ -133,6 +133,7 @@ def _extract_dll(seven_zip: str, archive: Path, dest_dir: Path) -> bool:
             [seven_zip, "e", str(archive), f"-o{dest_dir}", "libmpv-2.dll", "-y"],
             capture_output=True,
             timeout=120,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError):
         return False
