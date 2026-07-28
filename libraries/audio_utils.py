@@ -22,6 +22,15 @@ _ffmpeg_cache: str | None = None
 _ffprobe_cache: str | None = None
 _ffplay_cache: str | None = None
 
+_probe_fallback_notifier = None  # type: ignore[var-annotated]
+_incomplete_ffmpeg_notified = False
+
+
+def set_probe_fallback_notifier(cb) -> None:
+    """Register the callback described above (or None to clear it)."""
+    global _probe_fallback_notifier
+    _probe_fallback_notifier = cb
+
 
 def _resolve(name: str) -> str | None:
     """Locate a binary: app/script directory first, then the per-user app-data
@@ -104,7 +113,26 @@ def get_audio_duration(path: Path) -> float | None:
     dur = _ffprobe_duration(path)
     if dur is not None:
         return dur
+    _notify_incomplete_ffmpeg()
     return _mpv_duration(path)
+
+
+def _notify_incomplete_ffmpeg() -> None:
+    """Fire the probe-fallback notifier once, if this is the incomplete-ffmpeg
+    case (ffmpeg present, ffprobe missing) and a notifier is registered."""
+    global _incomplete_ffmpeg_notified
+    if _incomplete_ffmpeg_notified:
+        return
+    if find_ffprobe() is not None or find_ffmpeg() is None:
+        return  # ffprobe is available, or no ffmpeg at all — not this case.
+    cb = _probe_fallback_notifier
+    if cb is None:
+        return
+    _incomplete_ffmpeg_notified = True
+    try:
+        cb()
+    except Exception:
+        pass
 
 
 def _ffprobe_duration(path: Path) -> float | None:
