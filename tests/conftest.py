@@ -27,7 +27,9 @@ if str(ROOT) not in sys.path:
 
 try:
     import tkinter  # noqa: F401
+    HAS_REAL_TK = True
 except ImportError:
+    HAS_REAL_TK = False
     from unittest.mock import MagicMock
 
     def _make_stub(name: str) -> types.ModuleType:
