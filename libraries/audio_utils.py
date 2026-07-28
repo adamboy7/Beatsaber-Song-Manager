@@ -23,11 +23,13 @@ _ffprobe_cache: str | None = None
 _ffplay_cache: str | None = None
 
 _probe_fallback_notifier = None  # type: ignore[var-annotated]
-_incomplete_ffmpeg_notified = False
+_probe_tools_notified = False
 
 
 def set_probe_fallback_notifier(cb) -> None:
-    """Register the callback described above (or None to clear it)."""
+    """Register the callback described above (or None to clear it).
+
+    ``cb`` is called as ``cb(ffmpeg_found: bool)``."""
     global _probe_fallback_notifier
     _probe_fallback_notifier = cb
 
@@ -98,8 +100,10 @@ def get_audio_duration(path: Path) -> float | None:
     is detected correctly, so the common case needs no external binary.
 
     Falls back to ffprobe when mutagen can't parse the file, then to libmpv
-    (already bundled for playback) when no ffprobe binary is present — mpv is
-    last because spinning up an instance is the heaviest of the three.
+    (already bundled for playback) when ffprobe doesn't yield a value — mpv is
+    last because spinning up an instance is the heaviest of the three. If both
+    ffprobe and libmpv are missing, a one-per-run UI hook is fired to offer the
+    right install prompt (see ``set_probe_fallback_notifier``).
     """
     try:
         from mutagen import File as MutagenFile
@@ -110,27 +114,45 @@ def get_audio_duration(path: Path) -> float | None:
                 return float(length)
     except Exception:
         pass
+    # mutagen couldn't get it — try ffprobe, then libmpv. Each returns None when
+    # its tool is missing or can't parse the file.
     dur = _ffprobe_duration(path)
     if dur is not None:
         return dur
-    _notify_incomplete_ffmpeg()
-    return _mpv_duration(path)
+    dur = _mpv_duration(path)
+    if dur is not None:
+        return dur
+    # Every probe failed. If that's because both fallback tools are absent,
+    # surface the appropriate install prompt.
+    _notify_missing_probe_tools()
+    return None
 
 
-def _notify_incomplete_ffmpeg() -> None:
-    """Fire the probe-fallback notifier once, if this is the incomplete-ffmpeg
-    case (ffmpeg present, ffprobe missing) and a notifier is registered."""
-    global _incomplete_ffmpeg_notified
-    if _incomplete_ffmpeg_notified:
+def _notify_missing_probe_tools() -> None:
+    """Fire the probe-fallback notifier once when both ffprobe and libmpv are
+    missing, so the UI can offer an install. No-op if either tool is present
+    (the fallback chain isn't tool-starved) or no notifier is registered.
+
+    The callback gets ``ffmpeg_found`` so the UI distinguishes an incomplete
+    ffmpeg build (present but no ffprobe → offer a reinstall) from ffmpeg being
+    absent entirely (offer a normal install)."""
+    global _probe_tools_notified
+    if _probe_tools_notified:
         return
-    if find_ffprobe() is not None or find_ffmpeg() is None:
-        return  # ffprobe is available, or no ffmpeg at all — not this case.
+    if find_ffprobe() is not None:
+        return  # ffprobe present — the chain isn't starved of tools.
+    try:
+        from libraries import mpv_backend
+        if mpv_backend.load_mpv() is not None:
+            return  # libmpv is a viable alternative — no prompt needed.
+    except Exception:
+        pass  # treat an unloadable mpv as missing
     cb = _probe_fallback_notifier
     if cb is None:
         return
-    _incomplete_ffmpeg_notified = True
+    _probe_tools_notified = True
     try:
-        cb()
+        cb(find_ffmpeg() is not None)
     except Exception:
         pass
 
