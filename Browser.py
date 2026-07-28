@@ -169,15 +169,20 @@ class SongBrowser(
 
         self._media_player = MediaPlayer(self._dispatcher.dispatch, lambda text: self.status_bar.config(text=text))
         self._media_player.set_volume(self._volume_level)
-        # When a duration probe exhausts its fallbacks because both ffprobe and
-        # libmpv are missing, offer the right fix automatically (once per run):
-        # reinstall an incomplete ffmpeg, or install ffmpeg if it's absent
-        # entirely. Probes can run on background threads, so marshal to the main
-        # thread.
+        # When a duration probe exhausts every fallback, offer the fix that
+        # actually addresses the cause (once per run): a missing built-in reader
+        # is a broken app install and no amount of ffmpeg fixes it, so only the
+        # other two cases lead to the ffmpeg prompts. Probes can run on
+        # background threads, so marshal to the main thread.
         from libraries import audio_utils
 
-        def _on_probe_tools_missing(ffmpeg_found: bool) -> None:
-            fix = self._tools_ffmpeg_warning if ffmpeg_found else self._tools_install_ffmpeg
+        def _on_probe_tools_missing(failure: audio_utils.ProbeFailure) -> None:
+            if not failure.reader_available:
+                fix = self._tools_reader_warning
+            elif failure.ffmpeg_found:
+                fix = self._tools_ffmpeg_warning
+            else:
+                fix = self._tools_install_ffmpeg
             self._dispatcher.dispatch(fix)
 
         audio_utils.set_probe_fallback_notifier(_on_probe_tools_missing)
