@@ -37,7 +37,8 @@ from libraries.player_data import (
 )
 from libraries.playlist_installer import PlaylistInstaller
 from libraries.playlist_model import (
-    read_playlist, entry_key, installable_entries, match_library,
+    read_playlist, entry_key, installable_entries, fetchable_entries,
+    match_library,
 )
 from libraries.queue_window import QueueWindow
 from libraries.playlist_art_window import PlaylistArtWindow
@@ -385,17 +386,23 @@ class BrowserPlaylistsMixin:
             self.status_bar.config(text=f"Playlist '{title}': {len(found)} songs queued")
             return
 
+        # Two different filters, deliberately:
+        #   fetchable  — the batch installer resolves a hash *or* a key, so
+        #                these are what we can actually download.
+        #   installable — key-only, for the per-song InstallManager fallback
+        #                below, which can't trigger by hash.
+        fetchable = fetchable_entries(missing)
         installable = installable_entries(missing)
-        uninstallable_count = len(missing) - len(installable)
+        unfetchable_count = len(missing) - len(fetchable)
 
         names = "\n".join(f"  • {e.get('songName', 'Unknown')}" for e in missing[:10])
         if len(missing) > 10:
             names += f"\n  … and {len(missing) - 10} more"
 
-        if not installable:
+        if not fetchable:
             msg = (
                 f"{len(missing)} song(s) are not installed and cannot be auto-installed "
-                f"(no BeatSaver key):\n\n{names}"
+                f"(no BeatSaver key or hash):\n\n{names}"
             )
             if found:
                 msg += f"\n\nQueue the {len(found)} available song(s) instead?"
@@ -406,10 +413,13 @@ class BrowserPlaylistsMixin:
             return
 
         msg = f"{len(missing)} song(s) are not installed:\n\n{names}\n\n"
-        if uninstallable_count:
-            msg += f"({uninstallable_count} cannot be auto-installed — no BeatSaver key.)\n\n"
+        if unfetchable_count:
+            msg += (
+                f"({unfetchable_count} cannot be auto-installed — no BeatSaver "
+                f"key or hash.)\n\n"
+            )
         msg += (
-            f"Download {len(installable)} song(s) from BeatSaver and queue all "
+            f"Download {len(fetchable)} song(s) from BeatSaver and queue all "
             f"songs when done?\n\nSelecting 'No' will queue only the "
             f"{len(found)} already-installed song(s)."
         )
@@ -421,10 +431,14 @@ class BrowserPlaylistsMixin:
 
         self._pending_playlist_entries = list(entries)
 
-        # Hand the whole playlist to the installer, which downloads every
-        # missing song directly from BeatSaver. Falls back to the per-song
-        # loop only if the installer declines to launch.
-        launched = self._playlist_installer.install(Path(path))
+        # Hand the installer the entries we already know are missing and
+        # fetchable. Passing the playlist path alone would make it re-read the
+        # file and walk every song, costing one BeatSaver metadata request per
+        # already-installed song. Falls back to the per-song loop only if the
+        # installer declines to launch.
+        launched = self._playlist_installer.install(
+            Path(path), entries=fetchable
+        )
         if launched:
             self._pending_playlist_queue = []
             return
@@ -523,11 +537,19 @@ class BrowserPlaylistsMixin:
     def _on_playlist_url_downloaded(self, tmp_path: Path) -> None:
         """Validate the downloaded .bplist and download its songs from BeatSaver."""
         try:
-            read_playlist(tmp_path)
+            data = read_playlist(tmp_path)
         except Exception as e:
             self.status_bar.config(text=f"Could not parse playlist: {e}")
             tmp_path.unlink(missing_ok=True)
             return
+
+        # Unlike the local-file path there's no dialog here, so nothing has
+        # diffed this playlist against the library yet. Do it now: entries we
+        # already have are dropped before the installer spends a rate-limited
+        # metadata request on them.
+        entries = data.get("songs", []) or []
+        _, missing = match_library(entries, self.songs)
+        to_install = fetchable_entries(missing)
 
         # Belt-and-suspenders: drop any previous pending temp path so we don't
         # leak it if a rapid re-trigger raced through _install_playlist_from_url.
@@ -539,7 +561,7 @@ class BrowserPlaylistsMixin:
                 pass
         self._pending_playlist_temp_path = tmp_path
 
-        launched = self._playlist_installer.install(tmp_path)
+        launched = self._playlist_installer.install(tmp_path, entries=to_install)
         if not launched:
             tmp_path.unlink(missing_ok=True)
             self._pending_playlist_temp_path = None

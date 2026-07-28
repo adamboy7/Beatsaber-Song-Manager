@@ -9,6 +9,7 @@ import pytest
 
 from libraries.playlist_model import (
     entry_key,
+    fetchable_entries,
     installable_entries,
     match_library,
     read_playlist,
@@ -42,6 +43,23 @@ class TestEntryKey:
     def test_installable_entries(self):
         entries = [{"key": "a"}, {"hash": "X"}, {"id": "b"}]
         assert installable_entries(entries) == [{"key": "a"}, {"id": "b"}]
+
+
+class TestFetchableEntries:
+    def test_hash_only_entries_are_fetchable(self):
+        """installable_entries drops these (no key), but the playlist installer
+        resolves them by hash — so they must survive this filter."""
+        entries = [{"key": "a"}, {"hash": "X"}, {"id": "b"}]
+        assert fetchable_entries(entries) == entries
+
+    def test_entries_with_neither_are_dropped(self):
+        entries = [{"hash": "X"}, {"songName": "orphan"}, {}, {"key": ""}]
+        assert fetchable_entries(entries) == [{"hash": "X"}]
+
+    def test_is_a_superset_of_installable(self):
+        entries = [{"key": "a"}, {"hash": "X"}, {}, {"id": "b"}]
+        fetchable = fetchable_entries(entries)
+        assert all(e in fetchable for e in installable_entries(entries))
 
 
 class TestMatchLibrary:

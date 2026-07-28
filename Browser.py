@@ -499,7 +499,11 @@ def main():
             print,
             _on_complete,
         )
-        if not installer.install(playlist_path):
+        try:
+            installed_hashes = set(load_song_hashes(custom_levels).values())
+        except Exception:
+            installed_hashes = set()
+        if not installer.install(playlist_path, installed_hashes=installed_hashes):
             # install() returned False without scheduling _complete_cb
             # (e.g. playlist vanished or was unreadable). Don't block on
             # _done forever.

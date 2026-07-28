@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import NamedTuple
 
 API_PREFIX = "https://api.beatsaver.com"
 
@@ -177,12 +178,31 @@ def _already_installed(folder: Path) -> bool:
     )
 
 
+class InstallResult(NamedTuple):
+    """Outcome of a single map install.
+
+    ``downloaded`` is False when the map was already present on disk and the
+    zip fetch was skipped, so callers can report "downloaded" and "already
+    installed" as separate counts instead of conflating them.
+    """
+
+    folder: Path
+    downloaded: bool
+
+
 def download_map(map_json: dict, custom_levels: Path,
-                 want_hash: str | None = None) -> Path:
+                 want_hash: str | None = None) -> InstallResult:
     """Download and extract a resolved map into ``custom_levels``.
 
-    Returns the song folder. If the folder already contains an ``Info.dat`` the
-    download is skipped and the existing folder is returned.
+    If the destination folder already contains an ``Info.dat`` the download is
+    skipped and the existing folder is returned with ``downloaded=False``.
+
+    Note this only catches an existing install under the *canonical* folder
+    name; a map installed under some other name (renamed by hand, or by another
+    manager) is not detected here. Callers that know the installed song hashes
+    should filter against those first — that also avoids the metadata request
+    below, which happens before this check because the folder name is derived
+    from the map JSON.
     """
     version = _pick_version(map_json, want_hash)
     url = version.get("downloadURL")
@@ -191,20 +211,20 @@ def download_map(map_json: dict, custom_levels: Path,
 
     dest = Path(custom_levels) / folder_name(map_json)
     if _already_installed(dest):
-        return dest
+        return InstallResult(dest, False)
 
     _extract_zip(_download_bytes(url), dest)
-    return dest
+    return InstallResult(dest, True)
 
 
 # ── Convenience entry points ────────────────────────────────────────────────
 
-def install_song(key: str, custom_levels: Path) -> Path:
+def install_song(key: str, custom_levels: Path) -> InstallResult:
     """Install a single map by its BeatSaver key/id."""
     return download_map(fetch_map(key, by="key"), custom_levels)
 
 
-def install_by_hash(song_hash: str, custom_levels: Path) -> Path:
+def install_by_hash(song_hash: str, custom_levels: Path) -> InstallResult:
     """Install a single map by its version hash."""
     return download_map(
         fetch_map(song_hash, by="hash"), custom_levels, want_hash=song_hash

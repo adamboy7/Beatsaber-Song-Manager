@@ -25,8 +25,24 @@ def entry_key(entry: dict) -> str:
 
 
 def installable_entries(entries: list[dict]) -> list[dict]:
-    """Entries that carry a BeatSaver key/id (and so can be downloaded)."""
+    """Entries that carry a BeatSaver key/id.
+
+    This is the narrower of the two filters: it's what the per-song
+    ``InstallManager`` fallback needs, since that path can only trigger an
+    install by key. For the batch playlist installer use
+    ``fetchable_entries``, which also accepts hash-only entries.
+    """
     return [e for e in entries if entry_key(e)]
+
+
+def fetchable_entries(entries: list[dict]) -> list[dict]:
+    """Entries the playlist installer can download — a hash or a key is enough.
+
+    Playlists exported by some tools carry only hashes; those are still
+    fetchable via BeatSaver's ``/maps/hash`` endpoint, so they must not be
+    filtered out the way ``installable_entries`` does.
+    """
+    return [e for e in entries if e.get("hash") or entry_key(e)]
 
 
 def match_library(entries, songs) -> tuple[list["SongInfo"], list[dict]]:
