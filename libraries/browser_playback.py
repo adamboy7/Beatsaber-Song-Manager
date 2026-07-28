@@ -118,6 +118,43 @@ class BrowserPlaybackMixin:
         )
         return False
 
+    def _ensure_mpv(self, on_ready=None, on_unavailable=None) -> bool:
+        """Return True if libmpv is available right now.
+
+        Otherwise offer to download it (once per run) and return False.
+        ``on_ready`` fires when libmpv lands, letting the caller enable the
+        libmpv-dependent extra (the visualizer's Cinema video playback). This
+        mirrors ``_ensure_ffmpeg`` — audio playback itself falls back to ffplay
+        without libmpv, so this only lights up the libmpv-only extras.
+        ``on_unavailable`` fires if the user declines, the download fails, or a
+        libmpv is already present but won't load (a fresh download wouldn't fix
+        an arch mismatch or a missing python-mpv, so we don't offer then)."""
+        from libraries.mpv_backend import load_mpv, dll_present, install_dir
+        if self._mpv_available or load_mpv() is not None:
+            self._mpv_available = True
+            return True
+        if dll_present():
+            # A libmpv DLL exists but won't load — downloading again is futile.
+            if on_unavailable is not None:
+                on_unavailable()
+            return False
+
+        from libraries import mpv_installer
+
+        def _ready():
+            self._mpv_available = True
+            if on_ready is not None:
+                on_ready()
+
+        mpv_installer.offer_download_once(
+            install_dir(),
+            self._dispatcher.dispatch,
+            status_cb=lambda text: self.status_bar.config(text=text),
+            on_unavailable=on_unavailable,
+            on_ready=_ready,
+        )
+        return False
+
     def _toggle_keep_player_visible(self):
         want = self._keep_player_visible_var.get()
         self._keep_player_visible = want

@@ -189,7 +189,9 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
     if not platform_utils.IS_WINDOWS:
         dialogs.show_info(
             "libmpv Not Found",
-            "In-app audio/video playback needs libmpv, which wasn't found.\n\n"
+            "libmpv wasn't found. It's used for in-app audio playback and the "
+            "visualizer's Cinema videos. Audio still plays through ffmpeg "
+            "without it, but Cinema videos need libmpv.\n\n"
             "Install it with your package manager, then try again:\n"
             "  • Debian/Ubuntu:  sudo apt install libmpv2\n"
             "  • Fedora:         sudo dnf install mpv-libs\n"
@@ -204,7 +206,9 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
     if not dialogs.ask_yes_no(
         "libmpv Not Found",
         "libmpv-2.dll wasn't found in the app-data folder, on your PATH, or "
-        "next to the app, so in-app audio/video playback is unavailable.\n\n"
+        "next to the app. It's used for in-app audio playback and the "
+        "visualizer's Cinema videos. Audio still plays through ffmpeg without "
+        "it, but Cinema videos need libmpv.\n\n"
         f"Download the latest mpv-dev ({arch}) build from "
         "github.com/shinchiro/mpv-winbuild-cmake and install libmpv-2.dll to "
         "the app-data folder now?",
@@ -268,8 +272,9 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
                 else:
                     dialogs.show_info(
                         "libmpv Installed",
-                        "libmpv-2.dll was installed and loaded — in-app "
-                        "audio/video playback is now available.",
+                        "libmpv-2.dll was installed and loaded — in-app audio "
+                        "playback and the visualizer's Cinema videos are now "
+                        "available.",
                     )
             else:
                 # Present on disk but still won't load (e.g. arch mismatch or

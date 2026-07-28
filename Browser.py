@@ -152,6 +152,8 @@ class SongBrowser(
         self._show_media_player_pref: bool = bool(_cfg.get("show_media_player", True))
         self._volume_level: int = app_config.get_volume()
         self._ffmpeg_available: bool = find_ffmpeg() is not None
+        from libraries.mpv_backend import load_mpv
+        self._mpv_available: bool = load_mpv() is not None
         self._keep_player_visible: bool = self._show_media_player_pref
         self._shuffle_queue: bool = False
         self._last_shuffle_index: int | None = None
