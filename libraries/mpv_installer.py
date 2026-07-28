@@ -206,9 +206,9 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
     if not dialogs.ask_yes_no(
         "libmpv Not Found",
         "libmpv-2.dll wasn't found in the app-data folder, on your PATH, or "
-        "next to the app. It's used for in-app audio playback and the "
-        "visualizer's Cinema videos. Audio still plays through ffmpeg without "
-        "it, but Cinema videos need libmpv.\n\n"
+        "next to the app. It's used for the "
+        "visualizer's Cinema videos. Music playback works "
+        "through ffmpeg without it.\n\n"
         f"Download the latest mpv-dev ({arch}) build from "
         "github.com/shinchiro/mpv-winbuild-cmake and install libmpv-2.dll to "
         "the app-data folder now?",
