@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from libraries import platform_utils
 
@@ -25,11 +26,29 @@ _ffplay_cache: str | None = None
 _probe_fallback_notifier = None  # type: ignore[var-annotated]
 _probe_tools_notified = False
 
+_reader_options: list | None = None
+_reader_unavailable: str | None = None
+
+
+class ProbeFailure(NamedTuple):
+    """Why a duration probe came back empty, for the UI to act on.
+
+    ``reader_available`` is the important one: when it's False the pure-Python
+    reader itself is missing, so *every* probe in the app will fail no matter
+    what external tools are installed. That's a broken install, not a missing
+    ffmpeg, and offering an ffmpeg reinstall for it just sends the user in
+    circles.
+    """
+
+    reader_available: bool
+    ffmpeg_found: bool
+    ffprobe_found: bool
+
 
 def set_probe_fallback_notifier(cb) -> None:
     """Register the callback described above (or None to clear it).
 
-    ``cb`` is called as ``cb(ffmpeg_found: bool)``."""
+    ``cb`` is called as ``cb(failure: ProbeFailure)``."""
     global _probe_fallback_notifier
     _probe_fallback_notifier = cb
 
@@ -91,6 +110,64 @@ def find_ffplay() -> str | None:
     return _ffplay_cache
 
 
+def _reader_formats() -> list | None:
+    """The mutagen FileType classes we sniff with, or None if unimportable.
+
+    Passing an explicit ``options`` list to ``mutagen.File`` matters more than it
+    looks: called with ``options=None`` it imports *26* format modules inside the
+    function body, so in a frozen build a single un-bundled format module makes
+    every duration read raise ImportError — for every song, regardless of format.
+    Naming only the four formats this app documents (Ogg Vorbis for .ogg/.egg,
+    MP3, WAV, M4A) keeps that surface to exactly the modules listed as
+    hiddenimports in Browser.spec / Browser.linux.spec, and skips 22 needless
+    imports besides.
+    """
+    global _reader_options, _reader_unavailable
+    if _reader_options is not None or _reader_unavailable is not None:
+        return _reader_options
+    try:
+        from mutagen.mp3 import MP3
+        from mutagen.mp4 import MP4
+        from mutagen.oggvorbis import OggVorbis
+        from mutagen.wave import WAVE
+    except ImportError as e:
+        _reader_unavailable = str(e)
+        return None
+    # Ogg first: it's what Beat Saber ships, so the usual case scores on the
+    # first candidate.
+    _reader_options = [OggVorbis, MP3, WAVE, MP4]
+    return _reader_options
+
+
+def reader_available() -> bool:
+    """Whether the built-in (pure-Python) duration reader can be used at all."""
+    return _reader_formats() is not None
+
+
+def _reader_duration(path: Path) -> tuple[float | None, bool]:
+    """Read the duration with mutagen.
+
+    Returns ``(duration, reader_available)``. The second value separates "this
+    file couldn't be parsed" from "the reader isn't installed" — conflating them
+    is what used to make a missing mutagen look like a broken ffmpeg.
+    """
+    options = _reader_formats()
+    if options is None:
+        return None, False
+    try:
+        from mutagen import File as MutagenFile
+        mf = MutagenFile(str(path), options=options)
+        if mf is not None and mf.info is not None:
+            length = getattr(mf.info, "length", None)
+            if length:
+                return float(length), True
+    except ImportError:
+        return None, False  # partially-bundled mutagen — same class of problem
+    except Exception:
+        pass  # unparseable file; the external fallbacks may still manage it
+    return None, True
+
+
 def get_audio_duration(path: Path) -> float | None:
     """Return audio duration in seconds, read directly from the file header.
 
@@ -101,58 +178,61 @@ def get_audio_duration(path: Path) -> float | None:
 
     Falls back to ffprobe when mutagen can't parse the file, then to libmpv
     (already bundled for playback) when ffprobe doesn't yield a value — mpv is
-    last because spinning up an instance is the heaviest of the three. If both
-    ffprobe and libmpv are missing, a one-per-run UI hook is fired to offer the
-    right install prompt (see ``set_probe_fallback_notifier``).
+    last because spinning up an instance is the heaviest of the three. If every
+    probe comes up empty, a one-per-run UI hook is fired with a ``ProbeFailure``
+    describing why (see ``set_probe_fallback_notifier``).
     """
-    try:
-        from mutagen import File as MutagenFile
-        mf = MutagenFile(str(path))
-        if mf is not None and mf.info is not None:
-            length = getattr(mf.info, "length", None)
-            if length:
-                return float(length)
-    except Exception:
-        pass
-    # mutagen couldn't get it — try ffprobe, then libmpv. Each returns None when
-    # its tool is missing or can't parse the file.
+    dur, have_reader = _reader_duration(path)
+    if dur is not None:
+        return dur
+    # The reader couldn't get it — try ffprobe, then libmpv. Each returns None
+    # when its tool is missing or can't parse the file.
     dur = _ffprobe_duration(path)
     if dur is not None:
         return dur
     dur = _mpv_duration(path)
     if dur is not None:
         return dur
-    # Every probe failed. If that's because both fallback tools are absent,
-    # surface the appropriate install prompt.
-    _notify_missing_probe_tools()
+    _notify_missing_probe_tools(have_reader)
     return None
 
 
-def _notify_missing_probe_tools() -> None:
-    """Fire the probe-fallback notifier once when both ffprobe and libmpv are
-    missing, so the UI can offer an install. No-op if either tool is present
-    (the fallback chain isn't tool-starved) or no notifier is registered.
+def _notify_missing_probe_tools(have_reader: bool = True) -> None:
+    """Fire the probe-fallback notifier once, so the UI can offer a real fix.
 
-    The callback gets ``ffmpeg_found`` so the UI distinguishes an incomplete
-    ffmpeg build (present but no ffprobe → offer a reinstall) from ffmpeg being
-    absent entirely (offer a normal install)."""
+    Two distinct situations reach here, and the callback is told which:
+
+    * ``reader_available=False`` — mutagen is missing or partly bundled. Nothing
+      about ffmpeg will fix this, so the UI must not offer an ffmpeg reinstall.
+    * ``reader_available=True`` — the reader just couldn't parse this file and
+      both external fallbacks are absent, which is the case an ffprobe (i.e.
+      ffmpeg) install genuinely helps with.
+
+    No-op when a fallback tool is present (the chain isn't starved) or no
+    notifier is registered.
+    """
     global _probe_tools_notified
     if _probe_tools_notified:
         return
-    if find_ffprobe() is not None:
-        return  # ffprobe present — the chain isn't starved of tools.
-    try:
-        from libraries import mpv_backend
-        if mpv_backend.load_mpv() is not None:
-            return  # libmpv is a viable alternative — no prompt needed.
-    except Exception:
-        pass  # treat an unloadable mpv as missing
+    if have_reader:
+        if find_ffprobe() is not None:
+            return  # ffprobe present — the chain isn't starved of tools.
+        try:
+            from libraries import mpv_backend
+            if mpv_backend.load_mpv() is not None:
+                return  # libmpv is a viable alternative — no prompt needed.
+        except Exception:
+            pass  # treat an unloadable mpv as missing
     cb = _probe_fallback_notifier
     if cb is None:
         return
     _probe_tools_notified = True
     try:
-        cb(find_ffmpeg() is not None)
+        cb(ProbeFailure(
+            reader_available=have_reader,
+            ffmpeg_found=find_ffmpeg() is not None,
+            ffprobe_found=find_ffprobe() is not None,
+        ))
     except Exception:
         pass
 

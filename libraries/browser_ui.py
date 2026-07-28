@@ -278,6 +278,28 @@ class BrowserUIMixin:
         if default_btn is not None:
             default_btn.focus_set()
 
+    def _tools_reader_warning(self):
+        """Report that the built-in duration reader (mutagen) is unavailable.
+
+        Distinct from the ⚠ ffmpeg dialog on purpose. This means mutagen is
+        missing or only partly bundled, so *every* duration read fails whatever
+        external tools are installed — offering an ffmpeg reinstall here would
+        just send the user round in circles, which is exactly what used to
+        happen. There's no in-app fix, so this is informational: it names the
+        dependency and the two ways to restore it.
+        """
+        from libraries import dialogs
+
+        dialogs.show_warning(
+            "Duration Reader Unavailable",
+            "The built-in audio metadata reader (mutagen) couldn't be loaded, "
+            "so track durations can't be read. Playback itself is unaffected.\n\n"
+            "This means the install is incomplete rather than misconfigured. "
+            "Running from source? Install the dependencies with "
+            "'pip install -r requirements.txt'. Using a packaged build? "
+            "Reinstalling the app should restore it.",
+        )
+
     def _tools_install_ffmpeg(self):
         """Prompt to auto-download ffmpeg, refreshing the check mark when done."""
         from libraries import song_operations, ffmpeg_installer
