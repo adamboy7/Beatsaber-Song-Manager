@@ -172,39 +172,49 @@ def binaries_in_use(dest_dir: Path) -> list[str]:
     return [base for base in _WANTED if in_use(dest_dir / base)]
 
 
-def _is_leftover(name: str) -> bool:
-    """True for our own ``<exe>.part`` / ``<exe>.old-<n>`` scratch files.
+def _leftover_base(name: str) -> str | None:
+    """The executable a ``<exe>.part`` / ``<exe>.old-<n>`` file belongs to.
 
-    Deliberately anchored to the three executable names: ``dest_dir`` is the
-    shared app-data folder, which also holds the config, the song-hash cache and
-    libmpv, and none of those should ever be in scope for deletion.
+    Returns None for anything else. Deliberately anchored to the three
+    executable names: ``dest_dir`` is the shared app-data folder, which also
+    holds the config, the song-hash cache and libmpv, and none of those should
+    ever be in scope for deletion.
     """
     for base in _WANTED:
         if not name.startswith(base):
             continue
         rest = name[len(base):]
         if rest == _PART_SUFFIX or rest.startswith(_SUPERSEDED_PREFIX):
-            return True
-    return False
+            return base
+    return None
 
 
-def _clear_superseded(dest_dir: Path) -> None:
-    """Delete leftovers from an earlier install whose targets were in use.
+def reap_superseded(dest_dir: Path) -> list[str]:
+    """Delete leftover scratch files, returning the executables still locked.
 
-    They stay behind because Windows won't unlink a running executable. By the
-    time we're called again those processes are almost always gone, so this is
-    the natural place to reap them; failures are ignored and retried next run.
+    A superseded copy can only be unlinked once the process holding it exits, so
+    this runs at three points: before an install (clearing older runs), right
+    after one (catching a player that stopped while the download ran), and at
+    startup (so nothing lingers between sessions). Whatever can't be deleted yet
+    is left for the next pass.
     """
+    still_held: set[str] = set()
     try:
         entries = list(dest_dir.iterdir())
     except OSError:
-        return
+        return []
     for entry in entries:
-        if _is_leftover(entry.name):
-            try:
-                entry.unlink()
-            except OSError:
-                pass  # still locked, or gone already — try again next install
+        base = _leftover_base(entry.name)
+        if base is None:
+            continue
+        try:
+            entry.unlink()
+        except OSError:
+            # Still open by a running process. Only the superseded binaries are
+            # worth reporting; a stuck .part file is just debris.
+            if _SUPERSEDED_PREFIX in entry.name:
+                still_held.add(base)
+    return sorted(still_held)
 
 
 def _swap_into_place(staged: dict[str, Path], dest_dir: Path) -> list[str]:
@@ -306,7 +316,7 @@ def _extract_exes(archive: Path, dest_dir: Path) -> ExtractResult:
                 out.write(chunk)
         staged[base] = part
 
-    _clear_superseded(dest_dir)
+    reap_superseded(dest_dir)
     try:
         if archive.name.endswith((".tar.xz", ".tar.gz", ".tar.bz2")):
             with tarfile.open(archive) as tf:
@@ -436,7 +446,8 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
             unavailable()
             return
 
-        deferred = result.get("deferred") or []
+        still_held = reap_superseded(dest_dir)
+        deferred = [b for b in (result.get("deferred") or []) if b in still_held]
         report("ffmpeg installed.")
         if on_ready is not None:
             on_ready()

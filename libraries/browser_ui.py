@@ -278,33 +278,69 @@ class BrowserUIMixin:
         if default_btn is not None:
             default_btn.focus_set()
 
-    def _tools_reader_warning(self):
+    def _tools_reader_warning(self, failure=None):
         """Report that the built-in duration reader (mutagen) is unavailable.
 
-        Distinct from the ⚠ ffmpeg dialog on purpose. This means mutagen is
-        missing or only partly bundled, so *every* duration read fails whatever
-        external tools are installed — offering an ffmpeg reinstall here would
-        just send the user round in circles, which is exactly what used to
-        happen. There's no in-app fix, so this is informational: it names the
-        dependency and the two ways to restore it.
+        Distinct from the ⚠ ffmpeg dialog on purpose: mutagen is missing or only
+        partly bundled, so the *cause* is an incomplete app install and the
+        message has to say so — silently offering an ffmpeg reinstall is what
+        used to send users round in circles reinstalling the wrong thing.
+
+        ffprobe is still a real way out, though. It reads durations for every
+        format the built-in reader would have handled, so with ffprobe installed
+        the feature works again even while mutagen stays broken. So when ffprobe
+        is absent this offers to fetch it, while keeping the root cause and its
+        proper fix in the text. When ffprobe is already present it can only be
+        informational — the fallback exists and just couldn't parse this file, so
+        there's nothing left to install.
         """
         from libraries import dialogs
 
-        dialogs.show_warning(
-            "Duration Reader Unavailable",
-            "The built-in audio metadata reader (mutagen) couldn't be loaded, "
-            "so track durations can't be read. Playback itself is unaffected.\n\n"
-            "This means the install is incomplete rather than misconfigured. "
-            "Running from source? Install the dependencies with "
+        cause = (
+            "The built-in audio metadata reader (mutagen) couldn't be loaded, so "
+            "track durations can't be read. Playback itself is unaffected.\n\n"
+            "The install is incomplete rather than misconfigured. Running from "
+            "source? Install the dependencies with "
             "'pip install -r requirements.txt'. Using a packaged build? "
-            "Reinstalling the app should restore it.",
+            "Reinstalling the app should restore it."
         )
+
+        if failure is not None and not failure.ffprobe_would_help:
+            dialogs.show_warning("Duration Reader Unavailable", cause)
+            return
+
+        ffmpeg_found = getattr(failure, "ffmpeg_found", False)
+        action = "Reinstall ffmpeg" if ffmpeg_found else "Install ffmpeg"
+        offer = (
+            "\n\nIn the meantime ffprobe can stand in for it — it reads the same "
+            "formats, so durations will work again without the built-in reader."
+        )
+        if ffmpeg_found:
+            offer += (
+                " The ffmpeg here is missing ffprobe, so reinstalling it would "
+                "supply one."
+            )
+
+        choice = dialogs.ask_custom(
+            "Duration Reader Unavailable",
+            cause + offer,
+            buttons=[(action, "install"), ("Not Now", "")],
+            parent=self,
+            severity="warning",
+        )
+        if choice == "install":
+            self._tools_install_ffmpeg()
 
     def _tools_install_ffmpeg(self):
         """Prompt to auto-download ffmpeg, refreshing the check mark when done."""
         from libraries import song_operations, ffmpeg_installer
         ffmpeg_installer._offered = False
-        song_operations.prompt_ffmpeg_download(self, on_ready=self._refresh_tools_menu)
+
+        def _ready():
+            self._refresh_tools_menu()
+            self._reprobe_durations()
+
+        song_operations.prompt_ffmpeg_download(self, on_ready=_ready)
 
     def _tools_install_mpv(self):
         """Prompt to auto-download libmpv, refreshing the check mark when done."""
@@ -315,11 +351,16 @@ class BrowserUIMixin:
         dispatch_fn = getattr(dispatcher, "dispatch", None) or (lambda fn: self.after(0, fn))
         status_bar = getattr(self, "status_bar", None)
         status_cb = (lambda text: status_bar.config(text=text)) if status_bar is not None else None
+
+        def _ready():
+            self._refresh_tools_menu()
+            self._reprobe_durations()
+
         mpv_installer.offer_download_once(
             install_dir(),
             dispatch_fn,
             status_cb=status_cb,
-            on_ready=self._refresh_tools_menu,
+            on_ready=_ready,
         )
 
     def _open_mod_assistant(self):

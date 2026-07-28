@@ -170,20 +170,32 @@ class SongBrowser(
         self._media_player = MediaPlayer(self._dispatcher.dispatch, lambda text: self.status_bar.config(text=text))
         self._media_player.set_volume(self._volume_level)
         # When a duration probe exhausts every fallback, offer the fix that
-        # actually addresses the cause (once per run): a missing built-in reader
-        # is a broken app install and no amount of ffmpeg fixes it, so only the
-        # other two cases lead to the ffmpeg prompts. Probes can run on
-        # background threads, so marshal to the main thread.
+        # addresses the cause (once per run). A missing built-in reader gets its
+        # own dialog because the cause is an incomplete app install, but that
+        # dialog still offers ffmpeg — an ffprobe recovers durations even while
+        # mutagen stays broken. Probes can run on background threads, so marshal
+        # to the main thread.
         from libraries import audio_utils
 
+        # An ffmpeg binary that was running when it got replaced leaves a
+        # superseded copy behind (Windows won't unlink a live executable). By now
+        # that process is gone, so this is the reliable place to reap it — the
+        # installer's own passes can only catch what's already been released.
+        try:
+            from libraries import ffmpeg_installer
+            ffmpeg_installer.reap_superseded(app_config.app_data_dir())
+        except Exception:
+            pass  # cleanup is never worth failing startup over
+
         def _on_probe_tools_missing(failure: audio_utils.ProbeFailure) -> None:
-            if not failure.reader_available:
-                fix = self._tools_reader_warning
-            elif failure.ffmpeg_found:
-                fix = self._tools_ffmpeg_warning
-            else:
-                fix = self._tools_install_ffmpeg
-            self._dispatcher.dispatch(fix)
+            fixes = {
+                "reader": lambda: self._tools_reader_warning(failure),
+                "ffmpeg-repair": self._tools_ffmpeg_warning,
+                "ffmpeg-install": self._tools_install_ffmpeg,
+            }
+            fix = fixes.get(failure.remedy)
+            if fix is not None:
+                self._dispatcher.dispatch(fix)
 
         audio_utils.set_probe_fallback_notifier(_on_probe_tools_missing)
         self._media_player.start_media_keys(self._dispatcher.dispatch, self._stop_playback, self._queue_next, self._queue_prev)

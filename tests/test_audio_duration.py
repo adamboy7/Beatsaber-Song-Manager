@@ -289,6 +289,47 @@ class TestPromptSuppression:
         assert prompts[0].reader_available is False
 
 
+class TestRemedyRouting:
+    """Which prompt a failure asks for, and whether it offers ffmpeg.
+
+    Kept as pure logic on ProbeFailure so the decision is testable without Tk.
+    """
+
+    def failure(self, reader=True, ffmpeg=False, ffprobe=False):
+        return au.ProbeFailure(
+            reader_available=reader, ffmpeg_found=ffmpeg, ffprobe_found=ffprobe
+        )
+
+    def test_broken_reader_gets_its_own_diagnosis(self):
+        assert self.failure(reader=False).remedy == "reader"
+        assert self.failure(reader=False, ffmpeg=True).remedy == "reader"
+
+    def test_incomplete_ffmpeg_gets_the_repair_prompt(self):
+        assert self.failure(ffmpeg=True).remedy == "ffmpeg-repair"
+
+    def test_absent_ffmpeg_gets_the_install_prompt(self):
+        assert self.failure(ffmpeg=False).remedy == "ffmpeg-install"
+
+    def test_ffprobe_recovers_durations_even_with_a_broken_reader(self):
+        """ffprobe reads the same formats, so it stands in for mutagen entirely
+        — a partial install is still recoverable by installing ffmpeg."""
+        assert self.failure(reader=False, ffmpeg=False).ffprobe_would_help is True
+        assert self.failure(reader=False, ffmpeg=True).ffprobe_would_help is True
+
+    def test_present_ffprobe_leaves_nothing_to_offer(self):
+        """It's already in the chain and merely couldn't parse this file."""
+        assert self.failure(reader=False, ffprobe=True).ffprobe_would_help is False
+        assert self.failure(reader=True, ffprobe=True).ffprobe_would_help is False
+
+    def test_reader_remedy_still_offers_ffmpeg_when_ffprobe_is_missing(self):
+        """The two halves together: name the real cause, but still offer the
+        thing that gets the feature working."""
+        f = self.failure(reader=False, ffmpeg=False, ffprobe=False)
+
+        assert f.remedy == "reader"
+        assert f.ffprobe_would_help is True
+
+
 class TestFallbackOrdering:
     def test_ffprobe_used_when_the_reader_cannot_parse(self, tmp_path, monkeypatch):
         monkeypatch.setattr(au, "_ffprobe_duration", lambda p: 12.5)

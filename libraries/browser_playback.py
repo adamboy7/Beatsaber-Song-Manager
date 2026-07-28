@@ -110,6 +110,7 @@ class BrowserPlaybackMixin:
 
         def _ready():
             self._ffmpeg_available = True
+            self._reprobe_durations()
             if on_ready is not None:
                 on_ready()
 
@@ -117,6 +118,42 @@ class BrowserPlaybackMixin:
             self, on_ready=_ready, on_unavailable=on_unavailable
         )
         return False
+
+    def _reprobe_durations(self) -> None:
+        """Re-read durations after a probe tool becomes available.
+
+        Wired into the ffmpeg/libmpv installers' ``on_ready``. Without it a
+        freshly-installed ffprobe isn't consulted for anything already on screen:
+        the playing song keeps the length it was given at ``play()`` time (i.e.
+        none) until the next track starts, and queue rows whose probe already
+        failed never retry.
+
+        The probe runs on a worker thread — ffprobe carries a 5s timeout and this
+        is called straight from a UI callback.
+        """
+        import threading
+
+        def worker():
+            try:
+                self._media_player.refresh_duration()
+            except Exception:
+                pass  # a failed re-probe just leaves the old value in place
+            try:
+                self._dispatcher.dispatch(self._after_duration_reprobe)
+            except Exception:
+                pass  # UI already torn down
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_duration_reprobe(self) -> None:
+        """Let the UI pick up re-probed durations (main thread)."""
+        win = self._queue_window
+        if win is not None and win.winfo_exists():
+            try:
+                win.invalidate_durations()
+                win.refresh()
+            except Exception:
+                pass
 
     def _ensure_mpv(self, on_ready=None, on_unavailable=None) -> bool:
         """Return True if libmpv is available right now.
@@ -143,6 +180,7 @@ class BrowserPlaybackMixin:
 
         def _ready():
             self._mpv_available = True
+            self._reprobe_durations()
             if on_ready is not None:
                 on_ready()
 

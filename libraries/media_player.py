@@ -383,6 +383,29 @@ class MediaPlayer:
                 return float(dur)
         return self.song_duration
 
+    def refresh_duration(self) -> float | None:
+        """Re-probe the current song's length, adopting it if one comes back.
+
+        For when a probe tool appears mid-playback — installing ffmpeg to get an
+        ffprobe, say. ``_tick_player`` reads ``duration_seconds()`` every 500ms,
+        so updating ``song_duration`` is enough for the progress bar to fill in
+        on its own; without this the bar stays blank until the next song starts.
+
+        Blocking (a probe can take seconds), so call it off the UI thread. The
+        session check keeps a slow probe from stamping its result onto whatever
+        song started in the meantime.
+        """
+        song = self.playing_song
+        if song is None or not song.audio_path:
+            return None
+        session = self.session_id
+        dur = get_audio_duration(song.audio_path)
+        if not dur:
+            return None
+        if self.session_id == session and self.playing_song is song:
+            self.song_duration = dur
+        return dur
+
     def _stop_mpv(self) -> None:
         player = self._player
         if player is not None:

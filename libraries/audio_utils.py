@@ -31,18 +31,41 @@ _reader_unavailable: str | None = None
 
 
 class ProbeFailure(NamedTuple):
-    """Why a duration probe came back empty, for the UI to act on.
+    """Why a duration probe came back empty, and what would fix it.
 
-    ``reader_available`` is the important one: when it's False the pure-Python
-    reader itself is missing, so *every* probe in the app will fail no matter
-    what external tools are installed. That's a broken install, not a missing
-    ffmpeg, and offering an ffmpeg reinstall for it just sends the user in
-    circles.
+    ``reader_available`` is the one that changes the diagnosis: when it's False
+    the pure-Python reader itself is missing, so *every* probe in the app fails
+    before it reaches a fallback. That's an incomplete install rather than a
+    missing ffmpeg, and it needs saying — but see ``ffprobe_would_help``, since
+    ffprobe still recovers the feature either way.
     """
 
     reader_available: bool
     ffmpeg_found: bool
     ffprobe_found: bool
+
+    @property
+    def remedy(self) -> str:
+        """Which prompt this failure calls for.
+
+        ``"reader"`` — the built-in reader is missing; report that as the cause.
+        ``"ffmpeg-repair"`` — an ffmpeg is installed but has no ffprobe.
+        ``"ffmpeg-install"`` — no ffmpeg at all.
+        """
+        if not self.reader_available:
+            return "reader"
+        return "ffmpeg-repair" if self.ffmpeg_found else "ffmpeg-install"
+
+    @property
+    def ffprobe_would_help(self) -> bool:
+        """Whether installing ffmpeg (for its ffprobe) would restore durations.
+
+        True whenever ffprobe is absent — including when the built-in reader is
+        broken, because ffprobe covers the same formats and so stands in for it
+        completely. False once ffprobe is present: it's already in the chain and
+        merely couldn't parse this particular file, so there's nothing to add.
+        """
+        return not self.ffprobe_found
 
 
 def set_probe_fallback_notifier(cb) -> None:

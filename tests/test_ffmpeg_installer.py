@@ -224,7 +224,7 @@ class TestSupersededCleanup:
     def test_cleanup_ignores_real_binaries(self, tmp_path, dest):
         (dest / FFMPEG).write_bytes(b"keep me")
 
-        fi._clear_superseded(dest)
+        fi.reap_superseded(dest)
 
         assert read(dest / FFMPEG) == b"keep me"
 
@@ -241,14 +241,14 @@ class TestSupersededCleanup:
         for name, data in neighbours.items():
             (dest / name).write_bytes(data)
 
-        fi._clear_superseded(dest)
+        fi.reap_superseded(dest)
 
         for name, data in neighbours.items():
             assert (dest / name).exists(), f"{name} was deleted"
             assert read(dest / name) == data
 
     def test_cleanup_tolerates_a_missing_directory(self, tmp_path):
-        fi._clear_superseded(tmp_path / "nope")  # must not raise
+        fi.reap_superseded(tmp_path / "nope")  # must not raise
 
     def test_locked_leftover_is_left_for_a_later_run(self, tmp_path, dest, monkeypatch):
         stale = dest / f"{FFPLAY}{fi._SUPERSEDED_PREFIX}1"
@@ -258,9 +258,45 @@ class TestSupersededCleanup:
             raise OSError("locked")
 
         monkeypatch.setattr(Path, "unlink", refuse)
-        fi._clear_superseded(dest)  # must not raise
+        still_held = fi.reap_superseded(dest)  # must not raise
 
         assert stale.exists()
+        assert still_held == [FFPLAY]
+
+    def test_reap_reports_nothing_when_everything_is_released(self, tmp_path, dest):
+        for name in (f"{FFPLAY}{fi._SUPERSEDED_PREFIX}1",
+                     f"{FFMPEG}{fi._SUPERSEDED_PREFIX}2"):
+            (dest / name).write_bytes(b"old")
+
+        assert fi.reap_superseded(dest) == []
+        assert not list(dest.iterdir())
+
+    def test_stuck_part_file_is_not_reported_as_held(self, tmp_path, dest, monkeypatch):
+        """A .part file is debris, not a superseded binary — nothing to tell the
+        user about."""
+        (dest / f"{FFMPEG}{fi._PART_SUFFIX}").write_bytes(b"half")
+
+        def refuse(self, missing_ok=False):
+            raise OSError("locked")
+
+        monkeypatch.setattr(Path, "unlink", refuse)
+        assert fi.reap_superseded(dest) == []
+
+    def test_reap_after_a_successful_install_clears_released_copies(
+        self, tmp_path, dest, lock
+    ):
+        """The post-install pass: the player that held ffplay during the swap has
+        since exited, so its superseded copy should not survive."""
+        (dest / FFPLAY).write_bytes(b"old-ffplay")
+        lock(FFPLAY)
+        res = fi._extract_exes(full_archive(tmp_path), dest)
+        assert res.deferred == [FFPLAY]
+
+        # Playback stopped — the lock is gone by the time the install finishes.
+        still_held = fi.reap_superseded(dest)
+
+        assert still_held == []
+        assert not [p for p in dest.iterdir() if fi._SUPERSEDED_PREFIX in p.name]
 
 
 class TestInUseProbe:

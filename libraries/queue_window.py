@@ -826,6 +826,17 @@ class QueueWindow(tk.Toplevel):
         self._thumbnails.clear()
         self._durations.clear()
 
+    def invalidate_durations(self) -> None:
+        """Drop just the duration cache so every row re-probes on next render.
+
+        ``_subtitle`` keys off "is this folder in the cache at all" and stores
+        None to mark a lookup in flight, so a row whose probe came back empty
+        never retries. That's what leaves rows blank for the rest of the session
+        after a probe tool is installed — clearing the cache is what lets them
+        pick up the newly-available duration.
+        """
+        self._durations.clear()
+
     # ── Drag-to-Reorder ──────────────────────────────────────────────────────
 
     def _on_press(self, event: tk.Event, idx: int):
