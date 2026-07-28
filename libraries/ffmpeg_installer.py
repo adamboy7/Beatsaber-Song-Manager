@@ -221,7 +221,8 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
         "ffmpeg Not Found",
         "ffmpeg wasn't found in the app-data folder, on your PATH, or next to "
         "the app. It's used for the visualizer's sound bars and audio "
-        "conversion. Music playback and Cinema video work without it.\n\n"
+        "conversion. Music playback and Cinema videos work through libmpv "
+        "without it.\n\n"
         f"Download the latest static ffmpeg ({arch}) build from "
         "github.com/BtbN/FFmpeg-Builds and install it to the app-data folder now?",
     ):
