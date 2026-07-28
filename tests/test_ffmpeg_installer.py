@@ -79,8 +79,8 @@ class TestExtractionBasics:
 
         res = fi._extract_exes(archive, dest)
 
-        assert sorted(res.written) == sorted(EXES)
-        assert res.deferred == []
+        assert sorted(res.installed) == sorted(EXES)
+        assert res.skipped == []
         assert read(dest / FFPROBE) == b"new-ffprobe"
 
     def test_ignores_non_bin_entries(self, tmp_path, dest):
@@ -95,8 +95,18 @@ class TestExtractionBasics:
 
         res = fi._extract_exes(archive, dest)
 
-        assert res.written == [FFMPEG]
+        assert res.installed == [FFMPEG]
         assert read(dest / FFMPEG) == b"tar-ffmpeg"
+
+    def test_found_covers_installed_and_skipped(self, tmp_path, dest, lock):
+        """``found`` is what the archive contained, however each one was handled
+        — the caller's "did we get an ffmpeg?" check depends on it."""
+        (dest / FFPLAY).write_bytes(b"old-ffplay")
+        lock(FFPLAY)
+
+        res = fi._extract_exes(full_archive(tmp_path), dest)
+
+        assert sorted(res.found) == sorted(EXES)
 
     def test_bad_archive_raises_and_leaves_nothing_behind(self, tmp_path, dest):
         bad = tmp_path / "broken.zip"
@@ -113,10 +123,10 @@ class TestExtractionBasics:
         assert [p.name for p in dest.iterdir() if p.name.endswith(".part")] == []
 
 
-class TestSwapOverRunningBinaries:
+class TestRunningBinariesAreSkipped:
     def test_repairs_ffprobe_while_ffplay_is_running(self, tmp_path, dest, lock):
-        """The reported bug: a song is playing, so ffplay is live and ffprobe is
-        the thing we're trying to restore."""
+        """The reported bug: a song is playing, so ffplay is live (it's the
+        playback backend without libmpv) and ffprobe is what we're restoring."""
         (dest / FFMPEG).write_bytes(b"old-ffmpeg")
         (dest / FFPLAY).write_bytes(b"old-ffplay")
         lock(FFPLAY)
@@ -124,39 +134,55 @@ class TestSwapOverRunningBinaries:
         res = fi._extract_exes(full_archive(tmp_path), dest)
 
         assert read(dest / FFPROBE) == b"new-ffprobe"  # the actual repair
-        assert read(dest / FFPLAY) == b"new-ffplay"    # swapped in behind the lock
-        assert res.deferred == [FFPLAY]
+        assert read(dest / FFMPEG) == b"new-ffmpeg"    # not in use, replaced
+        assert read(dest / FFPLAY) == b"old-ffplay"    # in use, left alone
+        assert res.skipped == [FFPLAY]
+        assert res.installed == [FFMPEG, FFPROBE]
 
-    def test_running_process_keeps_its_copy(self, tmp_path, dest, lock):
+    def test_a_successful_install_leaves_no_residue(self, tmp_path, dest, lock):
+        """The whole point: no .old file for the running binary, because it was
+        never moved in the first place."""
         (dest / FFPLAY).write_bytes(b"old-ffplay")
         lock(FFPLAY)
 
         fi._extract_exes(full_archive(tmp_path), dest)
 
-        superseded = [p for p in dest.iterdir() if fi._SUPERSEDED_PREFIX in p.name]
-        assert len(superseded) == 1
-        assert read(superseded[0]) == b"old-ffplay"
+        leftovers = [p.name for p in dest.iterdir() if fi._leftover_base(p.name)]
+        assert leftovers == []
+        assert sorted(p.name for p in dest.iterdir()) == sorted(EXES)
 
-    def test_all_three_locked_still_installs(self, tmp_path, dest, lock):
+    def test_all_three_locked_changes_nothing(self, tmp_path, dest, lock):
         for name in EXES:
             (dest / name).write_bytes(b"old")
         lock(*EXES)
 
         res = fi._extract_exes(full_archive(tmp_path), dest)
 
-        assert sorted(res.deferred) == sorted(EXES)
-        assert read(dest / FFMPEG) == b"new-ffmpeg"
-        assert read(dest / FFPROBE) == b"new-ffprobe"
+        assert sorted(res.skipped) == sorted(EXES)
+        assert res.installed == []
+        for name in EXES:
+            assert read(dest / name) == b"old"
+        assert [p.name for p in dest.iterdir() if fi._leftover_base(p.name)] == []
 
-    def test_nothing_locked_reports_no_deferral(self, tmp_path, dest, lock):
+    def test_nothing_locked_replaces_everything(self, tmp_path, dest, lock):
         for name in EXES:
             (dest / name).write_bytes(b"old")
         lock()
 
         res = fi._extract_exes(full_archive(tmp_path), dest)
 
-        assert res.deferred == []
+        assert res.skipped == []
+        assert read(dest / FFMPEG) == b"new-ffmpeg"
         assert not [p for p in dest.iterdir() if fi._SUPERSEDED_PREFIX in p.name]
+
+    def test_absent_binary_is_not_treated_as_in_use(self, tmp_path, dest, lock):
+        """A first-time install has no existing files to be locked."""
+        lock(*EXES)  # in_use() still returns False for a path that doesn't exist
+
+        res = fi._extract_exes(full_archive(tmp_path), dest)
+
+        assert res.skipped == []
+        assert sorted(res.installed) == sorted(EXES)
 
 
 class TestSwapFailureIsAtomic:
@@ -188,10 +214,31 @@ class TestSwapFailureIsAtomic:
         for name, data in originals.items():
             assert read(dest / name) == data, f"{name} was not rolled back"
 
-    def test_rollback_when_target_was_locked(self, tmp_path, dest, lock, monkeypatch):
+    def test_rollback_spares_the_skipped_binary(self, tmp_path, dest, lock, monkeypatch):
+        """With one binary running and the swap of another failing, the running
+        one is untouched and the rest roll back — no mixed set either way."""
         for name in EXES:
             (dest / name).write_bytes(f"old-{name}".encode())
-        lock(*EXES)
+        lock(FFPLAY)
+
+        real_replace = os.replace
+
+        def flaky(src, dst):
+            if str(src).endswith(fi._PART_SUFFIX):
+                raise OSError("nope")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(fi.os, "replace", flaky)
+
+        with pytest.raises(fi.FfmpegInstallError, match="could not install"):
+            fi._extract_exes(full_archive(tmp_path), dest)
+
+        for name in EXES:
+            assert read(dest / name) == f"old-{name}".encode()
+
+    def test_failed_install_leaves_no_scratch_files(self, tmp_path, dest, monkeypatch):
+        for name in EXES:
+            (dest / name).write_bytes(b"old")
 
         real_replace = os.replace
 
@@ -205,8 +252,8 @@ class TestSwapFailureIsAtomic:
         with pytest.raises(fi.FfmpegInstallError):
             fi._extract_exes(full_archive(tmp_path), dest)
 
-        for name in EXES:
-            assert read(dest / name) == f"old-{name}".encode()
+        fi.reap_superseded(dest)
+        assert sorted(p.name for p in dest.iterdir()) == sorted(EXES)
 
 
 class TestSupersededCleanup:
@@ -258,45 +305,20 @@ class TestSupersededCleanup:
             raise OSError("locked")
 
         monkeypatch.setattr(Path, "unlink", refuse)
-        still_held = fi.reap_superseded(dest)  # must not raise
+        fi.reap_superseded(dest)  # must not raise
 
         assert stale.exists()
-        assert still_held == [FFPLAY]
 
-    def test_reap_reports_nothing_when_everything_is_released(self, tmp_path, dest):
+    def test_old_files_from_a_previous_version_are_cleaned_up(self, tmp_path, dest):
+        """An earlier build renamed running binaries aside instead of skipping
+        them, so upgrading users may still have these."""
         for name in (f"{FFPLAY}{fi._SUPERSEDED_PREFIX}1",
                      f"{FFMPEG}{fi._SUPERSEDED_PREFIX}2"):
             (dest / name).write_bytes(b"old")
 
-        assert fi.reap_superseded(dest) == []
-        assert not list(dest.iterdir())
+        fi.reap_superseded(dest)
 
-    def test_stuck_part_file_is_not_reported_as_held(self, tmp_path, dest, monkeypatch):
-        """A .part file is debris, not a superseded binary — nothing to tell the
-        user about."""
-        (dest / f"{FFMPEG}{fi._PART_SUFFIX}").write_bytes(b"half")
-
-        def refuse(self, missing_ok=False):
-            raise OSError("locked")
-
-        monkeypatch.setattr(Path, "unlink", refuse)
-        assert fi.reap_superseded(dest) == []
-
-    def test_reap_after_a_successful_install_clears_released_copies(
-        self, tmp_path, dest, lock
-    ):
-        """The post-install pass: the player that held ffplay during the swap has
-        since exited, so its superseded copy should not survive."""
-        (dest / FFPLAY).write_bytes(b"old-ffplay")
-        lock(FFPLAY)
-        res = fi._extract_exes(full_archive(tmp_path), dest)
-        assert res.deferred == [FFPLAY]
-
-        # Playback stopped — the lock is gone by the time the install finishes.
-        still_held = fi.reap_superseded(dest)
-
-        assert still_held == []
-        assert not [p for p in dest.iterdir() if fi._SUPERSEDED_PREFIX in p.name]
+        assert list(dest.iterdir()) == []
 
 
 class TestInUseProbe:

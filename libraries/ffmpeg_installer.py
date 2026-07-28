@@ -136,14 +136,19 @@ def _download(url: str, dest: Path, progress_cb=None) -> None:
 class ExtractResult(NamedTuple):
     """Outcome of installing the executables from an archive.
 
-    ``written`` lists the executable names now in place. ``deferred`` lists the
-    ones whose previous copy was still running at swap time: the new binary is
-    installed and will be used by the next invocation, but any process already
-    running keeps the superseded copy open until it exits.
+    ``installed`` lists the executables just written. ``skipped`` lists the
+    ones that were running at swap time and so were left exactly as they were:
+    a running binary is by definition already present and working, and skipping
+    it is what keeps the install from having to leave a superseded copy on disk.
     """
 
-    written: list[str]
-    deferred: list[str]
+    installed: list[str]
+    skipped: list[str]
+
+    @property
+    def found(self) -> list[str]:
+        """Every wanted executable the archive turned out to contain."""
+        return self.installed + self.skipped
 
 
 def in_use(path: Path) -> bool:
@@ -166,8 +171,8 @@ def in_use(path: Path) -> bool:
 def binaries_in_use(dest_dir: Path) -> list[str]:
     """Which of the target executables in ``dest_dir`` are currently running.
 
-    Callers can use this to warn up front; the install itself no longer needs
-    them idle (see ``_swap_into_place``).
+    Callers can use this to warn up front; the install itself doesn't need them
+    idle — it leaves them alone instead (see ``_swap_into_place``).
     """
     return [base for base in _WANTED if in_use(dest_dir / base)]
 
@@ -189,58 +194,54 @@ def _leftover_base(name: str) -> str | None:
     return None
 
 
-def reap_superseded(dest_dir: Path) -> list[str]:
-    """Delete leftover scratch files, returning the executables still locked.
+def reap_superseded(dest_dir: Path) -> None:
+    """Delete leftover scratch files from an interrupted or older install.
 
-    A superseded copy can only be unlinked once the process holding it exits, so
-    this runs at three points: before an install (clearing older runs), right
-    after one (catching a player that stopped while the download ran), and at
-    startup (so nothing lingers between sessions). Whatever can't be deleted yet
-    is left for the next pass.
+    Nothing here should normally exist: ``.part`` files are consumed by a
+    successful install, and ``.old-*`` files aren't created at all any more (an
+    earlier version renamed running binaries aside instead of skipping them, so
+    this also cleans up after upgrading from it). Runs before each install and at
+    startup; anything that can't be deleted yet is left for the next pass.
     """
-    still_held: set[str] = set()
     try:
         entries = list(dest_dir.iterdir())
     except OSError:
-        return []
+        return
     for entry in entries:
-        base = _leftover_base(entry.name)
-        if base is None:
+        if _leftover_base(entry.name) is None:
             continue
         try:
             entry.unlink()
         except OSError:
-            # Still open by a running process. Only the superseded binaries are
-            # worth reporting; a stuck .part file is just debris.
-            if _SUPERSEDED_PREFIX in entry.name:
-                still_held.add(base)
-    return sorted(still_held)
+            pass  # still locked, or gone already — try again next time
 
 
 def _swap_into_place(staged: dict[str, Path], dest_dir: Path) -> list[str]:
-    """Move freshly-extracted binaries over their live counterparts.
+    """Move freshly-extracted binaries into place, leaving running ones alone.
 
     ``os.replace`` is atomic per file but fails on Windows when the target is a
     running executable, which is what used to break this installer: a playing
-    song means ffplay (and, with the visualizer open, ffmpeg) is live, so
-    reinstalling to recover a missing ffprobe died partway through — after
-    clobbering some binaries and before writing the one being repaired.
+    song means ffplay is live (it's the playback backend without libmpv, and the
+    visualizer runs ffmpeg too), so reinstalling to recover a missing ffprobe
+    died partway through — after clobbering some binaries and before writing the
+    one being repaired.
 
-    Windows does allow *renaming* a running executable, so this runs in three
-    phases. Every existing binary is moved aside first, then the new ones are
-    dropped in, then the aside copies are deleted. A process still holding one
-    keeps the renamed copy open and plays on undisturbed; that leftover survives
-    phase three and is reaped by ``_clear_superseded`` on the next install.
+    A running binary is skipped rather than replaced. It's already present and
+    working by definition, so replacing it isn't what the install is for, and
+    skipping avoids the only reason to leave anything behind on disk: Windows
+    permits renaming a live executable but not deleting it, so moving one aside
+    would strand a copy until some later run could reap it.
 
-    Moving *every* original aside (not just the locked ones) is what makes the
-    set recoverable: any failure rolls the whole group back, so a half-updated
-    mix of old and new binaries is never left on disk.
+    Files that aren't in use are still staged through an aside copy so the group
+    is recoverable: any failure rolls all of them back rather than leaving a
+    half-updated mix of old and new. Those aside copies are always deletable —
+    nothing holds them — so a successful install leaves no residue.
 
-    Returns the names whose previous copy was still in use.
+    Returns the names that were skipped because they were running.
     """
-    moved: list[tuple[str, Path, Path]] = []  # (base, target, aside)
+    moved: list[tuple[Path, Path]] = []  # (target, aside)
     placed: list[Path] = []
-    deferred: list[str] = []
+    skipped: list[str] = []
 
     def rollback() -> None:
         for target in placed:
@@ -248,28 +249,35 @@ def _swap_into_place(staged: dict[str, Path], dest_dir: Path) -> list[str]:
                 target.unlink(missing_ok=True)
             except OSError:
                 pass
-        for _base, target, aside in reversed(moved):
+        for target, aside in reversed(moved):
             try:
                 os.replace(aside, target)
             except OSError:
-                pass  # best effort; _clear_superseded picks up the remains
+                pass  # best effort; reap_superseded picks up the remains
+
+    replaceable = {}
+    for base, part in staged.items():
+        if in_use(dest_dir / base):
+            skipped.append(base)
+            try:
+                part.unlink(missing_ok=True)  # not going anywhere; don't keep it
+            except OSError:
+                pass
+        else:
+            replaceable[base] = part
 
     try:
-        # Phase 1 — move the current binaries out of the way, noting which ones
-        # a running process still has open.
-        for base in staged:
+        # Phase 1 — move the current binaries out of the way.
+        for base in replaceable:
             target = dest_dir / base
             if not target.exists():
                 continue
-            was_live = in_use(target)
             aside = dest_dir / f"{base}{_SUPERSEDED_PREFIX}{time.time_ns()}"
             os.replace(target, aside)
-            moved.append((base, target, aside))
-            if was_live:
-                deferred.append(base)
+            moved.append((target, aside))
 
         # Phase 2 — put the new ones in place.
-        for base, part in staged.items():
+        for base, part in replaceable.items():
             target = dest_dir / base
             os.replace(part, target)
             placed.append(target)
@@ -277,17 +285,15 @@ def _swap_into_place(staged: dict[str, Path], dest_dir: Path) -> list[str]:
         rollback()
         raise FfmpegInstallError(f"could not install binaries: {e}")
 
-    # Phase 3 — drop the superseded copies nothing is using. The in-use ones
-    # can't be unlinked on Windows and are left for _clear_superseded.
-    for base, _target, aside in moved:
-        if base in deferred:
-            continue
+    # Phase 3 — drop the aside copies. None of these were in use, so each unlink
+    # succeeds and the folder is left clean.
+    for _target, aside in moved:
         try:
             aside.unlink()
         except OSError:
             pass
 
-    return deferred
+    return skipped
 
 
 def _extract_exes(archive: Path, dest_dir: Path) -> ExtractResult:
@@ -352,8 +358,10 @@ def _extract_exes(archive: Path, dest_dir: Path) -> ExtractResult:
             except OSError:
                 pass
 
-    deferred = _swap_into_place(staged, dest_dir)
-    return ExtractResult(list(staged), deferred)
+    skipped = _swap_into_place(staged, dest_dir)
+    return ExtractResult(
+        installed=[b for b in staged if b not in skipped], skipped=skipped
+    )
 
 
 def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
@@ -428,10 +436,13 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
             except OSError:
                 pass
             ffmpeg_bin = platform_utils.exe_name("ffmpeg")
-            if ffmpeg_bin not in extracted.written:
+            # ``found``, not ``installed`` — an ffmpeg that was running got
+            # skipped rather than replaced, which is a complete install, not a
+            # defective archive.
+            if ffmpeg_bin not in extracted.found:
                 raise FfmpegInstallError(f"archive did not contain {ffmpeg_bin}")
-            result["written"] = extracted.written
-            result["deferred"] = extracted.deferred
+            result["installed"] = extracted.installed
+            result["skipped"] = extracted.skipped
         except FfmpegInstallError as e:
             result["error"] = str(e)
         try:
@@ -446,18 +457,19 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
             unavailable()
             return
 
-        still_held = reap_superseded(dest_dir)
-        deferred = [b for b in (result.get("deferred") or []) if b in still_held]
+        skipped = result.get("skipped") or []
         report("ffmpeg installed.")
         if on_ready is not None:
             on_ready()
-        elif deferred:
+        elif skipped:
+            # Worth a sentence rather than a warning: the skipped binary was
+            # running, so it already works and nothing is broken by leaving it.
             dialogs.show_info(
                 "ffmpeg Installed",
-                "ffmpeg was installed. "
-                f"{', '.join(sorted(deferred))} was in use by playback, so the "
-                "running copy stays active until playback stops — anything "
-                "started after that uses the new build.",
+                "ffmpeg was installed — the visualizer's sound bars and audio "
+                "conversion are now available.\n\n"
+                f"{', '.join(sorted(skipped))} was in use and left as it was. "
+                "Stop playback and reinstall if you want that replaced too.",
             )
         else:
             dialogs.show_info(

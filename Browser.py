@@ -177,10 +177,9 @@ class SongBrowser(
         # to the main thread.
         from libraries import audio_utils
 
-        # An ffmpeg binary that was running when it got replaced leaves a
-        # superseded copy behind (Windows won't unlink a live executable). By now
-        # that process is gone, so this is the reliable place to reap it — the
-        # installer's own passes can only catch what's already been released.
+        # Clear any ffmpeg install debris: scratch files from an install that was
+        # interrupted, and the superseded copies an older build used to leave
+        # behind when it replaced a running binary instead of skipping it.
         try:
             from libraries import ffmpeg_installer
             ffmpeg_installer.reap_superseded(app_config.app_data_dir())
