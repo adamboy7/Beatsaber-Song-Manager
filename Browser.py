@@ -582,7 +582,10 @@ def main():
             hashes = load_song_hashes(custom_levels)
             for song in library:
                 song.song_hash = hashes.get(song.folder.name, "")
-            existing_hashes = {(e.get("hash") or "").upper() for e in playlist_songs}
+            existing_hashes = {
+                (e.get("hash") or "").upper()
+                for e in playlist_songs if isinstance(e, dict)
+            }
             remaining_candidates = [
                 s for s in library
                 if s.song_hash and s.song_hash.upper() not in existing_hashes

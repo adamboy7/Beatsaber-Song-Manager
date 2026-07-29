@@ -391,7 +391,11 @@ class BrowserPaginationMixin:
     def _on_search(self, *_):
         if self._search_after_id:
             self.after_cancel(self._search_after_id)
-        self._search_after_id = self.after(350, self._do_search)
+        self._search_after_id = self.after(350, self._run_debounced_search)
+
+    def _run_debounced_search(self):
+        self._search_after_id = None
+        self._do_search()
 
     def _do_search(self, *_):
         query = self.search_var.get().strip()
@@ -465,6 +469,10 @@ class BrowserPaginationMixin:
         self._update_search_icon_color()
 
     def _on_search_enter(self, *_):
+        if self._search_after_id:
+            self.after_cancel(self._search_after_id)
+            self._search_after_id = None
+            self._do_search()
         if self._pending_playlist_url:
             self._install_playlist_from_url(self._pending_playlist_url)
         elif self._pending_install_id:

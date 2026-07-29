@@ -19,8 +19,14 @@ def read_playlist(path) -> dict:
         return json.load(f)
 
 
-def entry_key(entry: dict) -> str:
-    """The BeatSaver key/id for a playlist entry, or '' if it has neither."""
+def entry_key(entry) -> str:
+    """The BeatSaver key/id for a playlist entry, or '' if it has neither.
+
+    Tolerates malformed entries — hand-edited playlists can carry strings or
+    nulls in the ``songs`` array; anything that isn't a dict is keyless.
+    """
+    if not isinstance(entry, dict):
+        return ""
     return entry.get("key") or entry.get("id") or ""
 
 
@@ -40,9 +46,13 @@ def fetchable_entries(entries: list[dict]) -> list[dict]:
 
     Playlists exported by some tools carry only hashes; those are still
     fetchable via BeatSaver's ``/maps/hash`` endpoint, so they must not be
-    filtered out the way ``installable_entries`` does.
+    filtered out the way ``installable_entries`` does. Non-dict entries
+    (malformed hand-edits) are never fetchable.
     """
-    return [e for e in entries if e.get("hash") or entry_key(e)]
+    return [
+        e for e in entries
+        if isinstance(e, dict) and (e.get("hash") or entry_key(e))
+    ]
 
 
 def match_library(entries, songs) -> tuple[list["SongInfo"], list[dict]]:
@@ -50,11 +60,15 @@ def match_library(entries, songs) -> tuple[list["SongInfo"], list[dict]]:
 
     Returns ``(found, missing)``: ``found`` is the matched SongInfo objects (in
     playlist order); ``missing`` is the entry dicts with no installed match.
+    Non-dict entries (malformed hand-edits) are dropped from both lists —
+    there's nothing to match against and nothing downstream could fetch.
     """
     hash_to_song = {s.song_hash.upper(): s for s in songs if s.song_hash}
     found: list["SongInfo"] = []
     missing: list[dict] = []
     for entry in entries:
+        if not isinstance(entry, dict):
+            continue
         song = hash_to_song.get((entry.get("hash") or "").upper())
         if song is not None:
             found.append(song)

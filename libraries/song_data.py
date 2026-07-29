@@ -376,27 +376,32 @@ def compute_song_hash(song_folder: Path, info_file: Path | None = None) -> str:
     return sha.hexdigest().upper()
 
 
-def _folder_mtime(folder: Path) -> float:
-    """Return the latest mtime among files directly in the song folder.
+def _folder_fingerprint(folder: Path) -> str:
+    """Fingerprint of the files directly in the song folder, for the hash cache.
 
-    Covers Info.dat as well as the difficulty/lightshow .dat files it
-    references, so editing a difficulty file (without touching Info.dat)
-    still invalidates the hash cache.
+    A digest over every file's (name, mtime_ns, size), sorted. The previous
+    key — the *max* mtime across the folder — went stale on deletions and
+    renames: removing or renaming a referenced difficulty file changes no
+    surviving file's mtime, so the cache kept serving a hash for a folder
+    ``compute_song_hash`` would now reject. Including names and sizes makes
+    additions, deletions, renames and edits all invalidate. Returns "" when
+    the folder can't be listed (callers treat that as uncacheable).
     """
-    latest = 0.0
+    entries: list[str] = []
     try:
         for child in folder.iterdir():
-            if not child.is_file():
-                continue
             try:
-                mtime = child.stat().st_mtime
+                if not child.is_file():
+                    continue
+                stat = child.stat()
             except OSError:
                 continue
-            if mtime > latest:
-                latest = mtime
+            entries.append(f"{child.name}\n{stat.st_mtime_ns}\n{stat.st_size}")
     except OSError:
-        return 0.0
-    return latest
+        return ""
+    entries.sort()
+    digest = hashlib.sha1("\0".join(entries).encode("utf-8", "surrogatepass"))
+    return digest.hexdigest()
 
 
 def load_song_hashes(custom_levels: Path) -> dict[str, str]:
@@ -408,8 +413,9 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
 
     The fallback computation is cached in the app-data folder's
     ``.bsm_hash_cache.json`` (see app_config.hash_cache_path) keyed by folder
-    name + Info.dat mtime so subsequent launches with the same library skip the
-    expensive SHA1 work for unchanged folders.
+    name + a fingerprint of the folder's files (see ``_folder_fingerprint``)
+    so subsequent launches with the same library skip the expensive SHA1 work
+    for unchanged folders.
     """
     hash_file = custom_levels.parent.parent / "UserData" / "SongCore" / "SongHashData.dat"
     result: dict[str, str] = {}
@@ -451,11 +457,12 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
                 for bak_name in ("Info.dat.bak", "info.dat.bak", "INFO.DAT.bak")
             )
             if has_edit_bak:
-                mtime = _folder_mtime(entry)
+                fp = _folder_fingerprint(entry)
                 cached = cache.get(entry.name)
                 if (
                     isinstance(cached, dict)
-                    and cached.get("mtime") == mtime
+                    and fp
+                    and cached.get("fp") == fp
                     and isinstance(cached.get("hash"), str)
                     and cached["hash"]
                 ):
@@ -465,16 +472,17 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
                 recomputed = compute_song_hash(entry)
                 if recomputed:
                     result[entry.name] = recomputed
-                    new_cache[entry.name] = {"mtime": mtime, "hash": recomputed}
+                    new_cache[entry.name] = {"fp": fp, "hash": recomputed}
                     dirty = True
                 continue
             if entry.name in result:
                 continue
-            mtime = _folder_mtime(entry)
+            fp = _folder_fingerprint(entry)
             cached = cache.get(entry.name)
             if (
                 isinstance(cached, dict)
-                and cached.get("mtime") == mtime
+                and fp
+                and cached.get("fp") == fp
                 and isinstance(cached.get("hash"), str)
                 and cached["hash"]
             ):
@@ -484,7 +492,7 @@ def load_song_hashes(custom_levels: Path) -> dict[str, str]:
             computed = compute_song_hash(entry)
             if computed:
                 result[entry.name] = computed
-                new_cache[entry.name] = {"mtime": mtime, "hash": computed}
+                new_cache[entry.name] = {"fp": fp, "hash": computed}
                 dirty = True
     except Exception:
         pass

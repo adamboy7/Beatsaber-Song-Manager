@@ -79,7 +79,7 @@ class PlaylistInstaller:
 
             entries = data.get("songs", []) or []
 
-        songs = list(entries)
+        songs = [s for s in entries if isinstance(s, dict)]
         if installed_hashes:
             known = {h.upper() for h in installed_hashes if h}
             songs = [
