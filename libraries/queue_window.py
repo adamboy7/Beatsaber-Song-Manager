@@ -51,6 +51,7 @@ class QueueWindow(tk.Toplevel):
         self._durations: dict[str, float | None] = {}
         self._row_frames: list[tk.Frame] = []
         self._tick_id: str | None = None
+        self._wheel_accum: float = 0.0   # fractional wheel ticks (high-res wheels/touchpads)
         self._last_queue_len: int = -1
         self._last_queue_index: int = -2
         self._last_stopped: bool = False
@@ -1148,4 +1149,8 @@ class QueueWindow(tk.Toplevel):
             self._recolor_row(row, idx, _CUT_BG if is_cut else ITEM_BG)
 
     def _on_mousewheel(self, event: tk.Event):
-        self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self._wheel_accum += event.delta
+        steps = int(self._wheel_accum / 120)
+        if steps:
+            self._wheel_accum -= steps * 120
+            self._canvas.yview_scroll(-steps, "units")

@@ -1,6 +1,7 @@
 import os
 import signal
 import subprocess
+import threading
 import time
 import ctypes
 import ctypes.wintypes
@@ -406,6 +407,21 @@ class MediaPlayer:
             self.song_duration = dur
         return dur
 
+    def _probe_duration_async(self) -> None:
+        """Probe the current song's duration on a worker thread.
+
+        The probe chain can block for seconds on a file the built-in reader
+        can't parse (ffprobe and the libmpv fallback each carry a ~5s timeout),
+        so it must never run on the UI thread — ``play()`` used to call it
+        synchronously, freezing the whole app on one bad file.
+        ``refresh_duration`` already carries the session guard that stops a
+        slow probe from stamping its result onto whatever song started in the
+        meantime; ``_tick_player`` reads ``duration_seconds()`` every 500ms,
+        so the progress bar fills in as soon as the result lands. On the mpv
+        backend the demuxer's own ``duration`` property usually wins anyway.
+        """
+        threading.Thread(target=self.refresh_duration, daemon=True).start()
+
     def _stop_mpv(self) -> None:
         player = self._player
         if player is not None:
@@ -549,8 +565,9 @@ class MediaPlayer:
         self._play_start = time.time()
         self._pause_start = None
         self._paused_total = 0.0
-        self.song_duration = get_audio_duration(song.audio_path)
         self.session_id += 1
+        self.song_duration = None
+        self._probe_duration_async()
 
     # ── ffplay fallback backend ──────────────────────────────────────────────
 
@@ -593,7 +610,7 @@ class MediaPlayer:
         self._backend = "ffplay"
         self._finished = False
         self._audio_paused = False
-        self.song_duration = get_audio_duration(song.audio_path)
+        self.song_duration = None
         self._play_start = time.time()
         self._pause_start = None
         self._paused_total = 0.0
@@ -603,6 +620,7 @@ class MediaPlayer:
             return
         self.playing_song = song
         self.session_id += 1
+        self._probe_duration_async()
 
     def _toggle_pause_ffplay(self) -> None:
         """Pause/resume the ffplay backend by suspending its process.
