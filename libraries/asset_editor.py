@@ -30,8 +30,16 @@ def restore_files(song: SongInfo) -> list[str]:
     return errors
 
 
-def replace_art(cover_path: Path, new_path: str) -> None:
-    """Backup the current cover image and replace it with new_path, resized to match the original."""
+def replace_art(cover_path: Path, new_path: str, on_locked=None) -> None:
+    """Backup the current cover image and replace it with new_path, resized to match the original.
+
+    ``on_locked`` is a last-resort hook for the case where the swap fails
+    because something else holds the cover file open — on Windows that denies
+    the replace outright (WinError 5). libmpv is the usual culprit: it adopts a
+    song folder's ``cover.jpg`` as an external cover-art track for the audio it
+    is playing. The callback should free those handles (stop playback); the
+    swap is then retried once. Without it the error propagates as before.
+    """
     with Image.open(cover_path) as orig:
         orig_size = orig.size
         orig_format = orig.format or cover_path.suffix.lstrip(".").upper()
@@ -50,7 +58,13 @@ def replace_art(cover_path: Path, new_path: str) -> None:
         bak = cover_path.parent / (cover_path.name + ".bak")
         if not bak.exists():
             shutil.copy2(cover_path, bak)
-        os.replace(tmp_str, cover_path)
+        try:
+            os.replace(tmp_str, cover_path)
+        except PermissionError:
+            if on_locked is None:
+                raise
+            on_locked()
+            os.replace(tmp_str, cover_path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

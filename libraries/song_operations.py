@@ -3,6 +3,7 @@ import shutil
 import tkinter as tk
 import tkinter.filedialog as fd
 from pathlib import Path
+from typing import NamedTuple
 from libraries import dialogs
 
 from libraries.song_data import SongInfo, compute_song_hash
@@ -71,23 +72,67 @@ def restore_song_files(
     return len(baks), errors
 
 
-def replace_song_art(parent: tk.Misc, song: SongInfo) -> bool:
-    """Open file dialog and replace cover art. Returns True if replaced."""
+class ArtReplaceResult(NamedTuple):
+    """Outcome of a cover-art replacement.
+
+    ``was_active``/``was_paused`` are set only when playback had to be stopped
+    to free a lock on the cover file, so the caller can put it back. They can
+    be True even when ``replaced`` is False — the retry may still have failed,
+    and playback shouldn't be left stopped either way.
+    """
+
+    replaced: bool
+    was_active: bool = False
+    was_paused: bool = False
+
+
+def replace_song_art(
+    parent: tk.Misc, song: SongInfo, media_player=None,
+) -> ArtReplaceResult:
+    """Open file dialog and replace cover art.
+
+    Unlike audio, the art swap is attempted *without* interrupting playback:
+    normally nothing holds the cover file. If the swap is denied because
+    something does (libmpv adopts a song folder's ``cover.jpg`` as external
+    cover art for the track it's playing, which locks it on Windows), playback
+    is stopped to release it and the swap retried once — so the common case
+    stays seamless and the locked case still succeeds.
+
+    Returns synchronously rather than via a callback: there's no deferred
+    ffmpeg-download path here the way ``replace_song_audio`` has, and a return
+    value lets the caller invalidate its caches *before* resuming playback.
+    """
     if not song.cover_path:
         dialogs.show_warning("Replace Art", "This song has no cover image to replace.")
-        return False
+        return ArtReplaceResult(False)
     new_path_str = fd.askopenfilename(
         title="Select New Cover Image",
         filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"), ("All files", "*.*")],
     )
     if not new_path_str:
-        return False
+        return ArtReplaceResult(False)
+
+    freed = {"was_active": False, "was_paused": False}
+
+    def _free_handles() -> None:
+        is_loaded = media_player is not None and song is media_player.playing_song
+        freed["was_active"] = is_loaded and media_player.is_active
+        freed["was_paused"] = freed["was_active"] and media_player.is_paused
+        if is_loaded:
+            media_player.stop_and_wait()
+        release = getattr(parent, "_release_song_audio", None)
+        if release is not None:
+            try:
+                release(song)
+            except Exception:
+                pass  # best-effort; the retry may still succeed
+
     try:
-        replace_art(song.cover_path, new_path_str)
-        return True
+        replace_art(song.cover_path, new_path_str, on_locked=_free_handles)
     except Exception as exc:
         dialogs.show_error("Replace Art Failed", str(exc))
-        return False
+        return ArtReplaceResult(False, freed["was_active"], freed["was_paused"])
+    return ArtReplaceResult(True, freed["was_active"], freed["was_paused"])
 
 
 def prompt_ffmpeg_download(parent: tk.Misc, on_ready=None, on_unavailable=None) -> None:

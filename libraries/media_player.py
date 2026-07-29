@@ -284,6 +284,13 @@ class MediaPlayer:
             )
         except Exception:
             return None
+        for name, value in (("cover-art-auto", "no"), ("audio-display", "no")):
+            for prop in (name, f"options/{name}"):
+                try:
+                    player[prop] = value
+                    break
+                except Exception:
+                    continue
         try:
             player.observe_property("eof-reached", self._on_eof_reached)
         except Exception:

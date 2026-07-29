@@ -97,9 +97,14 @@ class BrowserActionsMixin:
             self.status_bar.config(text=f"Restored {count} file(s) for: {song.display_name}")
 
     def _replace_art(self, song: SongInfo):
-        if replace_song_art(self, song):
+        result = replace_song_art(self, song, self._media_player)
+        if result.replaced:
             self._notify_song_assets_changed(song, art=True)
             self._render_list()
+        if result.was_active:
+            self._play_audio(song)
+            if result.was_paused:
+                self._media_player.toggle_pause()
 
     def _replace_audio(self, song: SongInfo):
         def _on_replaced(was_active: bool, was_paused: bool) -> None:
