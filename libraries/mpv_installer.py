@@ -35,7 +35,7 @@ from libraries import dialogs
 from libraries import platform_utils
 
 RELEASES_API = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
-USER_AGENT = "BeatSaberSongManager/1.0 (github.com/adamboy8888/Beatsaber-Song-Manager)"
+USER_AGENT = "BeatSaberSongManager/1.0 (github.com/adamboy7/Beatsaber-Song-Manager)"
 
 _META_TIMEOUT = 30
 _ARCHIVE_TIMEOUT = 300

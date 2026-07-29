@@ -24,7 +24,7 @@ API_PREFIX = "https://api.beatsaver.com"
 # BeatSaver asks API consumers to send a descriptive User-Agent identifying the
 # application and version so they can contact maintainers about misbehaving
 # clients. Bump the version here when releasing.
-USER_AGENT = "BeatSaberSongManager/1.0 (github.com/adamboy8888/Beatsaber-Song-Manager)"
+USER_AGENT = "BeatSaberSongManager/1.0 (github.com/adamboy7/Beatsaber-Song-Manager)"
 
 # Characters Windows and Beat Saber disallow in folder names. Stripping the
 # same set keeps folder names consistent with what users already have on disk.

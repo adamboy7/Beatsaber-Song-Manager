@@ -36,7 +36,7 @@ from libraries import dialogs
 from libraries import platform_utils
 
 RELEASES_API = "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/latest"
-USER_AGENT = "BeatSaberSongManager/1.0 (github.com/adamboy8888/Beatsaber-Song-Manager)"
+USER_AGENT = "BeatSaberSongManager/1.0 (github.com/adamboy7/Beatsaber-Song-Manager)"
 
 # The executables we pull out of the archive's bin/ directory (extension-less
 # on Linux/macOS, .exe on Windows).
