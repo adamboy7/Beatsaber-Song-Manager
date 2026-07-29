@@ -28,6 +28,8 @@ from libraries.window_helpers import bind_mousewheel
 
 THUMBNAIL_CACHE_LIMIT = 300
 
+SOURCE_REPO_URL = "https://github.com/adamboy7/Beatsaber-Song-Manager"
+
 
 class BrowserUIMixin:
     """Menu/window construction, thumbnail caching, list rendering,
@@ -120,6 +122,8 @@ class BrowserUIMixin:
         view_menu.add_command(label="Queue", command=self._open_queue_window)
         view_menu.add_command(label="Playlist Art", command=self._open_playlist_art_window)
         view_menu.add_command(label="Visualizer", command=self._open_visualizer_window)
+        view_menu.add_separator()
+        view_menu.add_command(label="View Source", command=self._open_source_repo)
         menubar.add_cascade(label="View", menu=view_menu)
 
         options_menu = tk.Menu(menubar, tearoff=0)
@@ -363,6 +367,10 @@ class BrowserUIMixin:
             status_cb=status_cb,
             on_ready=_ready,
         )
+
+    def _open_source_repo(self):
+        """Open this app's source repository in the default web browser."""
+        webbrowser.open(SOURCE_REPO_URL)
 
     def _open_mod_assistant(self):
         """Launch a detected Mod Assistant, else open its repo in a browser.
