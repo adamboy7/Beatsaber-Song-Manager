@@ -269,10 +269,12 @@ def _run_dialog(
             btn_frame, label, (lambda v=value: _choose(v)), primary=is_primary
         )
         b.pack(side="left", padx=4)
+        b.bind("<Return>", lambda _e, v=value: (_choose(v), "break")[1])
         if value == default_value and default_btn is None:
             default_btn = b
 
-    # Keyboard: Enter activates the default button, Escape returns default_value.
+    # Keyboard: Enter activates the focused button (falling back to the
+    # default when focus is elsewhere); Escape returns default_value.
     dlg.bind("<Return>", lambda _e: _choose(default_value))
     dlg.bind("<Escape>", lambda _e: _choose(default_value))
     dlg.protocol("WM_DELETE_WINDOW", lambda: _choose(default_value))

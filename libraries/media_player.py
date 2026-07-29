@@ -178,6 +178,9 @@ class MediaPlayer:
         self._backend: str | None = None
         self._ffplay_proc: subprocess.Popen | None = None
         self._ffplay_suspended: bool = False
+        # Set when a paused ffplay was torn down by a volume change: the
+        # elapsed position to relaunch from on resume (see set_volume).
+        self._ffplay_pending_seek: float | None = None
         self._job = None  # kill-on-close Job for the ffplay subprocess
         self._audio_paused: bool = False
         self._stopped: bool = False
@@ -437,6 +440,7 @@ class MediaPlayer:
         actually reap it. Only touches the process — timing state is managed
         by the caller.
         """
+        self._ffplay_pending_seek = None
         proc = self._ffplay_proc
         self._ffplay_proc = None
         if proc is None:
@@ -515,12 +519,12 @@ class MediaPlayer:
         if self._backend == "ffplay":
             if self._ffplay_proc is not None and self.is_active:
                 elapsed = self.elapsed_seconds() or 0.0
-                was_paused = self._audio_paused
-                self._stop_ffplay()
-                if self._launch_ffplay(self.playing_song, elapsed) and was_paused:
-                    # Stay frozen if we were paused before the volume change.
-                    _suspend_process(self._ffplay_proc.pid)
-                    self._ffplay_suspended = True
+                if self._audio_paused:
+                    self._stop_ffplay()
+                    self._ffplay_pending_seek = elapsed
+                else:
+                    self._stop_ffplay()
+                    self._launch_ffplay(self.playing_song, elapsed)
             return
         player = self._player
         if player is not None:
@@ -630,15 +634,26 @@ class MediaPlayer:
         (``_pause_start`` / ``_paused_total``) that ``elapsed_seconds`` already
         applies when there's no mpv time-pos.
         """
+        if self.playing_song is None or self._finished:
+            self._audio_paused = False
+            return
         proc = self._ffplay_proc
-        if proc is None or self.playing_song is None or self._finished:
+        if proc is None and self._ffplay_pending_seek is None:
             self._audio_paused = False
             return
         try:
             if self._audio_paused:
-                _resume_process(proc.pid)
+                if proc is None:
+                    seek = self._ffplay_pending_seek or 0.0
+                    self._ffplay_pending_seek = None
+                    if not self._launch_ffplay(self.playing_song, seek):
+                        self._audio_paused = False
+                        self._finished = True
+                        return
+                else:
+                    _resume_process(proc.pid)
+                    self._ffplay_suspended = False
                 self._audio_paused = False
-                self._ffplay_suspended = False
                 if self._pause_start is not None:
                     self._paused_total += time.time() - self._pause_start
                     self._pause_start = None

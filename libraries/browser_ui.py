@@ -741,11 +741,13 @@ class BrowserUIMixin:
         self._vol_canvas_set(event)
 
     def _nudge_volume(self, delta: int) -> None:
-        level = max(0, min(100, self._volume_var.get() + delta))
-        if level == self._volume_var.get():
+        old = self._volume_var.get()
+        level = max(0, min(100, old + delta))
+        if level == old:
             return "break"
         self._volume_var.set(level)
         if level == 0 and not self._vol_muted:
+            self._vol_pre_mute = old
             self._vol_muted = True
             self._vol_icon_label.config(text="🔇")
         elif level > 0 and self._vol_muted:
