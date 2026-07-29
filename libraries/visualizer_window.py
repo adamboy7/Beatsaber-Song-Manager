@@ -171,10 +171,9 @@ class VisualizerWindow(tk.Toplevel):
         self._tick_id: str | None = None
         self._last_canvas_size: tuple[int, int] = (0, 0)
 
-        # Cover-art background state.
+        self._bg_song_key: str | None = None
         self._bg_image_src: Image.Image | None = None
         self._bg_image: Image.Image | None = None
-        self._bg_song_id: int | None = None
         self._enforcing_aspect: bool = False
         self._was_zoomed: bool = False
         self._pre_zoom_size: int = _DEFAULT_W
@@ -488,7 +487,7 @@ class VisualizerWindow(tk.Toplevel):
             self._set_status("No song playing.")
             self._bg_image_src = None
             self._bg_image = None
-            self._bg_song_id = None
+            self._bg_song_key = None
             return
 
         name = song.display_name or song.song_name or "Unknown"
@@ -975,13 +974,15 @@ class VisualizerWindow(tk.Toplevel):
             self._bg_image_src = None
             self._bg_image = None
             self._bg_image_bright = None
+            self._bg_song_key = None
             return
-        if self._bg_song_id != id(song):
+        key = str(song.folder)
+        if self._bg_song_key != key:
             try:
                 self._bg_image_src = Image.open(song.cover_path).convert("RGB")
             except Exception:
                 self._bg_image_src = None
-            self._bg_song_id = id(song)
+            self._bg_song_key = key
         self._resize_cover_art(w, h)
 
     def _resize_cover_art(self, w: int, h: int):

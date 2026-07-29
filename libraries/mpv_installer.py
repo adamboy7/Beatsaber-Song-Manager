@@ -46,6 +46,13 @@ _CHUNK = 1 << 16  # 64 KiB
 # fall back quietly rather than re-nag with the same dialog.
 _offered = False
 
+_in_flight = False
+
+
+def is_downloading() -> bool:
+    """Whether a download/extract started by this module is still running."""
+    return _in_flight
+
 
 class MpvInstallError(Exception):
     """Raised for any recoverable failure fetching the mpv-dev archive."""
@@ -164,7 +171,7 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
     can retry whatever playback prompted the offer. If it's omitted, a plain
     "installed and ready" info dialog is shown instead.
     """
-    global _offered
+    global _offered, _in_flight
 
     def unavailable() -> None:
         if on_unavailable is not None:
@@ -178,6 +185,10 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
         except Exception:
             pass  # UI already torn down (e.g. app closing)
 
+    if _in_flight:
+        report("libmpv download already in progress…")
+        unavailable()
+        return
     if _offered:
         unavailable()
         return
@@ -246,6 +257,9 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
             result["extracted"] = extracted
         except MpvInstallError as e:
             result["error"] = str(e)
+        finally:
+            global _in_flight
+            _in_flight = False
         try:
             dispatch_fn(_finish)
         except Exception:
@@ -300,4 +314,5 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
             )
             unavailable()
 
+    _in_flight = True
     threading.Thread(target=worker, daemon=True).start()

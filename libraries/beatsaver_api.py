@@ -140,6 +140,14 @@ def folder_name(map_json: dict) -> str:
 # ── Download + extract ──────────────────────────────────────────────────────
 
 def _download_bytes(url: str) -> bytes:
+    """Fetch ``url``, retrying only failures that a retry can actually fix.
+
+    429 waits for the advertised reset window; transport errors (connection
+    reset, DNS, timeout) and 5xx server errors get a short backoff. A 4xx
+    other than 429 — a deleted map's 404, most commonly — is permanent, so
+    retrying it just burns three requests and two seconds before reporting
+    the same failure; those fail immediately.
+    """
     last_err: Exception | None = None
     for _ in range(_MAX_RETRIES):
         try:
@@ -150,7 +158,9 @@ def _download_bytes(url: str) -> bytes:
                 last_err = BeatSaverError("rate limited: gave up on download")
                 _ratelimit_wait(e.headers)
                 continue
-            last_err = e
+            if e.code < 500:
+                raise BeatSaverError(f"HTTP {e.code} downloading map")
+            last_err = e  # 5xx: transient server-side, worth another go
         except (urllib.error.URLError, TimeoutError) as e:
             last_err = e
         time.sleep(1)

@@ -54,6 +54,13 @@ _SUPERSEDED_PREFIX = ".old-"
 # quietly rather than re-nag with the same dialog.
 _offered = False
 
+_in_flight = False
+
+
+def is_downloading() -> bool:
+    """Whether a download/extract started by this module is still running."""
+    return _in_flight
+
 
 class FfmpegInstallError(Exception):
     """Raised for any recoverable failure fetching the ffmpeg archive."""
@@ -381,7 +388,7 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
     binaries are in place (audio_utils.find_ffmpeg re-probes on every miss, so
     they're picked up live, no restart); if omitted, an info dialog is shown.
     """
-    global _offered
+    global _offered, _in_flight
 
     def unavailable() -> None:
         if on_unavailable is not None:
@@ -395,6 +402,10 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
         except Exception:
             pass  # UI already torn down (e.g. app closing)
 
+    if _in_flight:
+        report("ffmpeg download already in progress…")
+        unavailable()
+        return
     if _offered:
         unavailable()
         return
@@ -445,6 +456,9 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
             result["skipped"] = extracted.skipped
         except FfmpegInstallError as e:
             result["error"] = str(e)
+        finally:
+            global _in_flight
+            _in_flight = False
         try:
             dispatch_fn(_finish)
         except Exception:
@@ -478,4 +492,5 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
                 "conversion are now available.",
             )
 
+    _in_flight = True
     threading.Thread(target=worker, daemon=True).start()
