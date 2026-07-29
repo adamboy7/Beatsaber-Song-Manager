@@ -827,6 +827,15 @@ class QueueWindow(tk.Toplevel):
         self._thumbnails.clear()
         self._durations.clear()
 
+    def invalidate_thumbnails(self) -> None:
+        """Drop just the thumbnail cache — call after cover art changed on disk.
+
+        Keyed by folder path, so an in-place art replacement doesn't change the
+        key and the stale image would otherwise persist. Durations are left
+        alone; re-probing every queued song for an art edit is pure waste.
+        """
+        self._thumbnails.clear()
+
     def invalidate_durations(self) -> None:
         """Drop just the duration cache so every row re-probes on next render.
 

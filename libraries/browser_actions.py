@@ -77,25 +77,40 @@ class BrowserActionsMixin:
     # ── File operations ───────────────────────────────────────────────────────
 
     def _restore_files(self, song: SongInfo):
-        count, errors = restore_song_files(song)
+        def _on_restored(reload_playback: bool, was_paused: bool) -> None:
+            self._notify_song_assets_changed(song, art=True, audio=True)
+            if reload_playback:
+                self._play_audio(song)
+                if was_paused:
+                    self._media_player.toggle_pause()
+
+        count, errors = restore_song_files(
+            song, self._media_player, parent=self, on_restored=_on_restored,
+        )
         if count == 0:
             return
+        # Render either way — a partial restore still changed files on disk.
+        self._render_list()
         if errors:
             dialogs.show_error("Restore Failed", "\n".join(errors))
         else:
-            song._parse()
-            self._thumbnails.clear()
-            self._render_list()
             self.status_bar.config(text=f"Restored {count} file(s) for: {song.display_name}")
 
     def _replace_art(self, song: SongInfo):
         if replace_song_art(self, song):
-            self._thumbnails.clear()
+            self._notify_song_assets_changed(song, art=True)
             self._render_list()
 
     def _replace_audio(self, song: SongInfo):
-        if replace_song_audio(self, song, self._media_player):
+        def _on_replaced(was_active: bool, was_paused: bool) -> None:
+            self._notify_song_assets_changed(song, audio=True)
+            if was_active:
+                self._play_audio(song)
+                if was_paused:
+                    self._media_player.toggle_pause()
             self.status_bar.config(text=f"Audio replaced for: {song.display_name}")
+
+        replace_song_audio(self, song, self._media_player, on_replaced=_on_replaced)
 
     def _copy(self, text: str):
         self.clipboard_clear()

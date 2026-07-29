@@ -501,6 +501,49 @@ class VisualizerWindow(tk.Toplevel):
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
         self._start_stream(song, elapsed)
 
+    # ── Asset-change hooks (called by the browser after an in-place edit) ─────
+
+    def invalidate_cover_art(self, song: "SongInfo | None" = None) -> None:
+        """Re-read the cover art after it changed on disk.
+
+        Replacing a song's art (or restoring it from a ``.bak``) rewrites the
+        same path, so neither the folder-path cache key nor ``cover_path``
+        changes — without this the old image stays on screen for the rest of
+        the song. Pass ``song`` to no-op unless that's what's being shown.
+        """
+        current = self._current_song
+        if current is None:
+            return
+        if song is not None and str(song.folder) != str(current.folder):
+            return
+        self._bg_song_key = None
+        self._bg_image_src = None
+        self._bg_image = None
+        self._bg_image_bright = None
+        w, h = self._canvas_size()
+        self._load_cover_art(current, w, h)
+        # When the art *is* what's on screen (paused, or the ffmpeg-less
+        # degraded mode) nothing else will repaint it — do it now. Otherwise
+        # the next spectrum frame composites over the refreshed background.
+        if self._showing_degraded_art or self._y_scale_target == 0.0:
+            self._show_bright_art()
+
+    def release_audio(self, song: "SongInfo | None" = None) -> None:
+        """Stop streaming so ``song``'s files can be replaced on disk.
+
+        The spectrum stream keeps the audio file open in an ffmpeg process; on
+        Windows that blocks the atomic replace ``replace_audio`` does. Called
+        before the swap, alongside the media player's own ``stop_and_wait``.
+        The stream restarts on its own when playback resumes (``_tick`` sees
+        the new session id).
+        """
+        current = self._current_song
+        if current is None:
+            return
+        if song is not None and str(song.folder) != str(current.folder):
+            return
+        self._stop_stream()
+
     def _restart_stream_at_elapsed(self):
         song = self._current_song
         if song is None or not song.audio_path:

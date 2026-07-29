@@ -13,15 +13,61 @@ from libraries.player_data import song_level_ids, load_player_stats
 from libraries.favorites import backup_player_data, confirm_player_data_write, _atomic_write_player_data
 
 
-def restore_song_files(song: SongInfo) -> tuple[int, list[str]]:
-    """Restore backup files in the song folder. Returns (bak_count, errors)."""
+def restore_song_files(
+    song: SongInfo, media_player=None, parent: tk.Misc | None = None,
+    on_restored=None,
+) -> tuple[int, list[str]]:
+    """Restore backup files in the song folder. Returns (bak_count, errors).
+
+    A restore rewrites files in place, so it hits the same open-handle problem
+    as ``replace_song_audio``: if a ``.bak`` overwrites the audio file the
+    media player has loaded, the move fails on Windows while libmpv (and the
+    visualizer's ffmpeg) hold it. Playback is stopped and handles released
+    first — but only when the audio is actually one of the files being
+    restored, so an art- or metadata-only restore doesn't interrupt anything.
+
+    The song is re-parsed here, before ``on_restored`` fires, because a
+    restored ``Info.dat`` can point at a *different* audio filename than the
+    one currently playing; the caller's resume has to see the updated
+    ``audio_path``.
+
+    ``on_restored(reload_playback, was_paused)`` reports whether the song that
+    was playing needs restarting — either its audio file was overwritten or
+    the restored Info.dat re-pointed it. Fires even when some restores failed,
+    so a stopped player never gets stranded.
+    """
     baks = bak_files(song)
     if not baks:
         return 0, []
+
+    old_audio = song.audio_path
+    overwrites_audio = old_audio is not None and any(
+        bak.with_suffix("") == old_audio for bak in baks
+    )
+    is_loaded = media_player is not None and song is media_player.playing_song
+    was_active = is_loaded and media_player.is_active
+    was_paused = was_active and media_player.is_paused
+
+    if overwrites_audio and is_loaded:
+        media_player.stop_and_wait()
+        release = getattr(parent, "_release_song_audio", None) if parent else None
+        if release is not None:
+            try:
+                release(song)
+            except Exception:
+                pass  # best-effort; the restore may still succeed
+
     errors = restore_files(song)
+    # Re-read Info.dat: display name, cover and audio references may all have
+    # been rolled back along with it.
+    song._parse()
     recomputed = compute_song_hash(song.folder)
     if recomputed:
         song.song_hash = recomputed
+
+    if on_restored is not None:
+        audio_changed = overwrites_audio or song.audio_path != old_audio
+        on_restored(was_active and audio_changed, was_paused)
     return len(baks), errors
 
 
@@ -73,14 +119,27 @@ def prompt_ffmpeg_download(parent: tk.Misc, on_ready=None, on_unavailable=None) 
     )
 
 
-def replace_song_audio(parent: tk.Misc, song: SongInfo, media_player=None) -> bool:
+def replace_song_audio(
+    parent: tk.Misc, song: SongInfo, media_player=None, on_replaced=None,
+) -> bool:
     """Open file dialog and replace audio file. Returns True if replaced.
 
-    If ``media_player`` is playing this very song, its libmpv instance holds
-    an open handle on the audio file — on Windows the in-place overwrite would
+    If ``media_player`` has this very song loaded, its libmpv instance holds an
+    open handle on the audio file — on Windows the in-place overwrite would
     fail with a sharing violation. Stop playback (and wait for the handle to
-    release) before writing. Done only after the user actually picks a file so
-    cancelling the picker leaves playback untouched.
+    release) before writing. Other components can hold the file open too (the
+    visualizer's ffmpeg spectrum process), so ``parent`` is asked to release
+    those via its ``_release_song_audio`` hook when it has one. All of this
+    happens only after the user actually picks a file, so cancelling the picker
+    leaves playback untouched.
+
+    ``on_replaced(was_active, was_paused)`` fires after a successful write and
+    reports whether playback was interrupted to do it — ``was_active`` is True
+    only when this song was the loaded, non-stopped one, letting the caller
+    resume it (and re-pause if ``was_paused``). Editing any other song leaves
+    playback alone, so both flags come back False. The callback is what makes
+    the deferred path work: when ffmpeg has to be downloaded first, the write
+    happens long after this function has returned False.
     """
     if not song.audio_path:
         dialogs.show_warning("Replace Audio", "This song has no audio file to replace.")
@@ -100,23 +159,31 @@ def replace_song_audio(parent: tk.Misc, song: SongInfo, media_player=None) -> bo
         return False
 
     def _convert(ffmpeg_path: str | None) -> bool:
-        if media_player is not None and song is media_player.playing_song:
+        # Sampled here rather than at pick time: on the deferred path the user
+        # may have started a different song while ffmpeg downloaded.
+        is_loaded = media_player is not None and song is media_player.playing_song
+        was_active = is_loaded and media_player.is_active
+        was_paused = was_active and media_player.is_paused
+        if is_loaded:
             media_player.stop_and_wait()
+        release = getattr(parent, "_release_song_audio", None)
+        if release is not None:
+            try:
+                release(song)
+            except Exception:
+                pass  # best-effort; the write may still succeed
         try:
             replace_audio(song.audio_path, new_path_str, ffmpeg_path or "")
-            return True
         except Exception as exc:
             dialogs.show_error("Replace Audio Failed", str(exc))
             return False
+        if on_replaced is not None:
+            on_replaced(was_active, was_paused)
+        return True
 
     ffmpeg_path = find_ffmpeg()
     if not ffmpeg_path and Path(new_path_str).suffix.lower() not in (".egg", ".ogg"):
-        def _on_ready() -> None:
-            if _convert(find_ffmpeg()):
-                status_bar = getattr(parent, "status_bar", None)
-                if status_bar is not None:
-                    status_bar.config(text=f"Audio replaced for: {song.display_name}")
-        prompt_ffmpeg_download(parent, on_ready=_on_ready)
+        prompt_ffmpeg_download(parent, on_ready=lambda: _convert(find_ffmpeg()))
         return False
 
     return _convert(ffmpeg_path)

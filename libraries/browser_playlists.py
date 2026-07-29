@@ -640,6 +640,56 @@ class BrowserPlaylistsMixin:
             except Exception:
                 pass
 
+    def _release_song_audio(self, song: SongInfo) -> None:
+        """Ask sub-windows to let go of ``song``'s audio file before it's
+        replaced on disk.
+
+        The media player releases its own handle (``stop_and_wait``), but the
+        visualizer's spectrum stream keeps the file open in a separate ffmpeg
+        process — on Windows that's enough to make the atomic replace fail.
+        Called via a duck-typed hook from ``song_operations.replace_song_audio``.
+        """
+        win = self._visualizer_window
+        if win is None:
+            return
+        try:
+            if win.winfo_exists():
+                win.release_audio(song)
+        except Exception:
+            pass
+
+    def _notify_song_assets_changed(
+        self, song: SongInfo, art: bool = False, audio: bool = False,
+    ) -> None:
+        """Drop caches keyed off ``song``'s files after an in-place edit.
+
+        Cover art and audio are rewritten at their existing paths, so every
+        cache keyed by folder path (main-list thumbnails, the queue window's
+        thumbnails and durations, the visualizer's background) still looks
+        valid and would serve the superseded asset.
+        """
+        if art:
+            self._thumbnails.pop(str(song.folder), None)
+        queue_win = self._queue_window
+        if queue_win is not None:
+            try:
+                if queue_win.winfo_exists():
+                    if art:
+                        queue_win.invalidate_thumbnails()
+                    if audio:
+                        queue_win.invalidate_durations()
+                    queue_win.refresh()
+            except Exception:
+                pass
+        if art:
+            vis = self._visualizer_window
+            if vis is not None:
+                try:
+                    if vis.winfo_exists():
+                        vis.invalidate_cover_art(song)
+                except Exception:
+                    pass
+
     def _open_playlist_art_window(self):
         if self._playlist_art_window and self._playlist_art_window.winfo_exists():
             self._playlist_art_window.deiconify()
