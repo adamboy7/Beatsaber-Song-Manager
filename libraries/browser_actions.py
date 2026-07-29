@@ -534,16 +534,16 @@ class BrowserActionsMixin:
                              state="normal" if self.player_dat_path else "disabled")
         menu.add_separator()
         if shift_held:
-            menu.add_command(label="Replace Art",
+            menu.add_command(label="Replace Art…",
                              command=lambda: self._replace_art(song),
                              state="normal" if song.cover_path else "disabled")
-            menu.add_command(label="Replace Audio",
+            menu.add_command(label="Replace Audio…",
                              command=lambda: self._replace_audio(song),
                              state="normal" if song.audio_path else "disabled")
             if baks:
                 menu.add_command(label=f"Restore Files ({len(baks)})",
                                  command=lambda: self._restore_files(song))
-            menu.add_command(label="Edit Info", foreground="#ff4444",
+            menu.add_command(label="Edit Info…", foreground="#ff4444",
                              activeforeground="#ff4444",
                              command=lambda: self._edit_song_info(song))
             menu.add_command(label="Custom Tags…",
@@ -610,7 +610,7 @@ class BrowserActionsMixin:
                          command=lambda: self._remove_from_favorites_multi(songs),
                          state=fav_state)
         menu.add_separator()
-        menu.add_command(label="Share Playlist",
+        menu.add_command(label="Share Playlist…",
                          command=lambda: self._share_playlist(songs),
                          state="normal")
         menu.add_separator()

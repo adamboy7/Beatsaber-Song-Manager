@@ -21,6 +21,7 @@ import random
 import re
 import threading
 import tkinter as tk
+from typing import NamedTuple
 
 from libraries import dialogs
 from libraries.constants import (
@@ -41,14 +42,60 @@ _DIFF_NAME_TO_INT = {
 
 _BPM_OP_RE = re.compile(r'^(<=|>=|<|>|==|=)?(\d+(?:\.\d+)?)$')
 
-_KNOWN_TAGS = {
-    "artist", "mapper", "title", "unplayed", "favorite", "fullcombo", "fc",
-    "bpm", "difficulty", "custom", "chroma", "noodle", "cinema", "extensions",
-}
-_YN_TAGS    = {
-    "unplayed", "favorite", "fullcombo", "fc", "chroma", "noodle", "cinema",
-    "extensions",
-}
+class TagSpec(NamedTuple):
+    """One search tag, described once for every consumer.
+
+    The validator, the UI pickers and the help text all read this table, so a
+    tag can't be supported-but-undocumented (or listed-but-unsupported) again.
+    ``value_hint`` is a sample value shown to the user; ``yes_no`` marks the
+    tags whose only valid values are ``y``/``n``, which the picker pre-fills.
+    """
+
+    name: str
+    value_hint: str
+    description: str
+    yes_no: bool = False
+
+    @property
+    def label(self) -> str:
+        """Dropdown text: '{bpm}:<=140 — tempo, operators allowed'.
+
+        Kept short on purpose: the picker sizes itself to the longest label,
+        and the dialog to the picker.
+        """
+        return f"{{{self.name}}}:{self.value_hint} — {self.description}"
+
+    @property
+    def insert_text(self) -> str:
+        """What typing this tag should put in the box.
+
+        Yes/no tags get their value filled in (there are only two, and 'y' is
+        almost always the one wanted); everything else stops after the colon
+        so the user types the value.
+        """
+        return f"{{{self.name}}}:y" if self.yes_no else f"{{{self.name}}}:"
+
+
+TAG_SPECS: tuple[TagSpec, ...] = (
+    TagSpec("title", "name", "title contains"),
+    TagSpec("artist", "name", "artist; commas match any"),
+    TagSpec("mapper", "name", "mapper; commas match any"),
+    TagSpec("bpm", "<=140", "tempo, operators allowed"),
+    TagSpec("difficulty", "expertplus", "has this difficulty"),
+    TagSpec("custom", "tag", "has this custom tag"),
+    TagSpec("favorite", "y", "favorited in game", yes_no=True),
+    TagSpec("unplayed", "y", "never played", yes_no=True),
+    TagSpec("fullcombo", "y", "full combo'd, any difficulty", yes_no=True),
+    TagSpec("fc", "y", "alias of {fullcombo}", yes_no=True),
+    TagSpec("chroma", "y", "needs Chroma", yes_no=True),
+    TagSpec("noodle", "y", "needs Noodle Extensions", yes_no=True),
+    TagSpec("extensions", "y", "needs Mapping Extensions", yes_no=True),
+    TagSpec("cinema", "y", "has a Cinema video", yes_no=True),
+)
+
+# Derived so validation and the UI can never drift apart.
+_KNOWN_TAGS = {spec.name for spec in TAG_SPECS}
+_YN_TAGS = {spec.name for spec in TAG_SPECS if spec.yes_no}
 
 
 def _has_invalid_tags(tags: list[tuple[str, str]]) -> bool:

@@ -11,8 +11,11 @@ import json
 import pytest
 
 from libraries.browser_pagination import (
+    TAG_SPECS,
     _has_invalid_tags,
+    _KNOWN_TAGS,
     _parse_tags,
+    _YN_TAGS,
     filter_songs,
 )
 from libraries.player_data import DiffStat
@@ -65,6 +68,49 @@ class TestValidation:
     def test_valid(self, query):
         tags, _ = _parse_tags(query)
         assert not _has_invalid_tags(tags)
+
+
+class TestTagSpecs:
+    """TAG_SPECS is the single source of truth for the tag list.
+
+    The UI tag picker renders from it and validation derives from it, so these
+    guard the property that made the old hardcoded hint drift out of date.
+    """
+
+    def test_validation_sets_derive_from_the_table(self):
+        assert _KNOWN_TAGS == {s.name for s in TAG_SPECS}
+        assert _YN_TAGS == {s.name for s in TAG_SPECS if s.yes_no}
+
+    def test_no_duplicate_or_empty_entries(self):
+        names = [s.name for s in TAG_SPECS]
+        assert len(names) == len(set(names))
+        assert all(s.name and s.value_hint and s.description for s in TAG_SPECS)
+
+    def test_labels_are_unique(self):
+        # The picker resolves a selection back to its spec by label.
+        labels = [s.label for s in TAG_SPECS]
+        assert len(labels) == len(set(labels))
+
+    @pytest.mark.parametrize("spec", TAG_SPECS, ids=lambda s: s.name)
+    def test_documented_example_is_a_valid_query(self, spec):
+        """Every value_hint shown to the user must actually parse and validate."""
+        tags, _ = _parse_tags(f"{{{spec.name}}}:{spec.value_hint}")
+        assert tags, f"{spec.name} hint did not parse as a tag"
+        assert not _has_invalid_tags(tags)
+
+    @pytest.mark.parametrize("spec", TAG_SPECS, ids=lambda s: s.name)
+    def test_inserted_text_is_valid_or_inert(self, spec):
+        """What the picker inserts must never read as an *invalid* tag.
+
+        Yes/no tags arrive complete ("{favorite}:y"). The rest stop at the
+        colon, which deliberately doesn't match the tag regex yet — so the
+        search icon can't flash red while the user is still typing the value.
+        """
+        tags, _ = _parse_tags(spec.insert_text)
+        if spec.yes_no:
+            assert tags and not _has_invalid_tags(tags)
+        else:
+            assert not tags
 
 
 # ── filter_songs against a real mini-library ─────────────────────────────────
