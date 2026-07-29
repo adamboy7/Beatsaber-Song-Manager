@@ -230,6 +230,20 @@ class MediaPlayer:
         self._looping = bool(value)
 
     @property
+    def has_live_volume(self) -> bool:
+        """Whether ``set_volume`` applies instantly, without a process relaunch.
+
+        True on the mpv backend (volume is a live property) and whenever no
+        ffplay process is running (the stored level is simply picked up by the
+        next launch). False only for an active ffplay session, whose sole
+        volume control is a relaunch at the current position — callers should
+        debounce that case instead of relaunching on every slider pixel.
+        """
+        if self._backend != "ffplay":
+            return True
+        return self._ffplay_proc is None or not self.is_active
+
+    @property
     def is_finished(self) -> bool:
         """The current song's playback ended (EOF or unplayable file)."""
         if self._finished:
@@ -511,8 +525,10 @@ class MediaPlayer:
         On the mpv backend this applies live — no relaunch, works while paused.
         ffplay has no live volume control, so the fallback relaunches the
         subprocess at the current position with the new ``-volume``. The caller
-        (the volume slider) debounces by 250ms, so a drag triggers at most one
-        relaunch after it settles.
+        (the volume slider) checks ``has_live_volume``: when it's True the
+        level is applied on every slider event for real-time feedback, and
+        only the active-ffplay case is debounced (250ms) so a drag triggers at
+        most one relaunch after it settles.
         """
         level = max(0, min(100, level))
         self._volume = level
