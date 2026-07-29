@@ -127,3 +127,19 @@ def set_volume(level: int) -> bool:
     cfg = load_config()
     cfg["volume"] = max(0, min(100, int(level)))
     return save_config(cfg)
+
+
+def get_split_preview() -> bool:
+    """Whether the Cinema offset editor previews in split stereo.
+
+    Someone who syncs by ear does it that way every time, so the checkbox is
+    remembered rather than reset per song. Off by default: the first thing a
+    new user wants is to watch the video, not to hear two of them.
+    """
+    return load_config().get("cinema_split_preview") is True
+
+
+def set_split_preview(enabled: bool) -> bool:
+    cfg = load_config()
+    cfg["cinema_split_preview"] = bool(enabled)
+    return save_config(cfg)

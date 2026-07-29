@@ -499,6 +499,34 @@ class BrowserActionsMixin:
                 f"yt-dlp exited with code {rc}.\n\n{output}"[:2000],
             )
 
+    # ── Cinema video offset ───────────────────────────────────────────────────
+
+    def _open_cinema_offset_editor(self, song: SongInfo) -> None:
+        """Open the waveform editor for this song's Cinema video offset.
+
+        Imported lazily: the editor pulls in the waveform renderer and libmpv
+        bindings, none of which are needed unless someone actually edits an
+        offset.
+        """
+        from libraries.cinema_offset_window import open_offset_editor
+        open_offset_editor(self, song)
+
+    def _notify_cinema_offset_changed(self, song: SongInfo) -> None:
+        """Re-sync anything showing ``song``'s video after its offset moved.
+
+        ``SongInfo.cinema_video_offset_ms`` is updated in place by the editor,
+        so the visualizer only needs to restart its stream to pick the new
+        value up through ``_video_pos``.
+        """
+        vis = self._visualizer_window
+        if vis is None:
+            return
+        try:
+            if vis.winfo_exists():
+                vis.cinema_offset_changed(song)
+        except Exception:
+            pass
+
     # ── Context menus ─────────────────────────────────────────────────────────
 
     def _open_folder(self, path: Path) -> None:
@@ -569,6 +597,10 @@ class BrowserActionsMixin:
             menu.add_command(label="Download Video",
                              command=lambda: self._download_cinema_video(song),
                              state="disabled" if downloading else "normal")
+        elif shift_held and song.has_playable_cinema_video:
+            menu.add_separator()
+            menu.add_command(label="Cinema Offset…",
+                             command=lambda: self._open_cinema_offset_editor(song))
         menu.add_separator()
         menu.add_command(label="Open Folder",
                          command=lambda: self._open_folder(song.folder))

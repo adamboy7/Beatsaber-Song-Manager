@@ -222,6 +222,7 @@ class SongBrowser(
         self._playlist_art_locked: bool = False
         self._playlist_art_first_song_key: str | None = None
         self._playlist_art_window: PlaylistArtWindow | None = None
+        self._cinema_offset_window = None
         self._pending_playlist_entries: list[dict] | None = None
         self._pending_playlist_queue: list[dict] = []
         self._startup_playlist: Path | None = startup_playlist
@@ -264,6 +265,14 @@ class SongBrowser(
             except Exception:
                 pass
             self._visualizer_window = None
+        if self._cinema_offset_window is not None:
+            try:
+                if self._cinema_offset_window.winfo_exists():
+                    self._cinema_offset_window._stop_preview()
+                    self._cinema_offset_window.destroy()
+            except Exception:
+                pass
+            self._cinema_offset_window = None
         self._playlist_installer.cancel()
         self._media_player.stop_listener()
         self._media_player.stop()

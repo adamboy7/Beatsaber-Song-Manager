@@ -1109,7 +1109,27 @@ class VisualizerWindow(tk.Toplevel):
                          command=self._browser._open_queue_window)
         menu.add_command(label="View Song", command=lambda: self._view_song(song))
         menu.add_command(label="Save Image…", command=lambda: self._save_cover_art(song))
+        if song.has_playable_cinema_video:
+            menu.add_separator()
+            menu.add_command(label="Cinema Offset…",
+                             command=lambda: self._edit_cinema_offset(song))
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _edit_cinema_offset(self, song: "SongInfo"):
+        self._browser._open_cinema_offset_editor(song)
+
+    def cinema_offset_changed(self, song: "SongInfo") -> None:
+        """Restart the video at the song's current position after an offset edit.
+
+        ``_video_pos`` reads ``cinema_video_offset_ms`` off the SongInfo every
+        tick, but the running mpv instance was seeked once at stream start — so
+        a new offset only takes effect on a restart.
+        """
+        current = self._current_song
+        if current is None or str(current.folder) != str(song.folder):
+            return
+        self._video_ended = False
+        self._restart_stream_at_elapsed()
 
     def _save_cover_art(self, song: "SongInfo"):
         import re

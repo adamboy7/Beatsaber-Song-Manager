@@ -12,3 +12,6 @@ ffprobe.exe
 *.psd
 bug.md
 libmpv-2.dll
+REBUILD.md
+.github/workflows/test.yml
+Todo.md
