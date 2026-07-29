@@ -244,7 +244,10 @@ class BrowserPlaybackMixin:
             self._shuffle_icon_label.config(text="")
 
     def _on_space(self, *_):
-        if self.focus_get() is self.search_entry:
+        focused = self.focus_get()
+        if focused is self.search_entry or isinstance(
+            focused, (tk.Entry, tk.Spinbox, tk.Text, tk.Button, tk.Checkbutton, tk.Radiobutton)
+        ):
             return
         self._media_player.toggle_pause()
 
@@ -417,6 +420,7 @@ class BrowserPlaybackMixin:
             self._player_progress["value"] = 100.0
         else:
             self._player_time_label.config(text="--:--")
+            self._player_progress["value"] = 0
 
     def _show_player_bar(self, song: SongInfo):
         self._stop_idle_animation()

@@ -429,16 +429,11 @@ class BrowserUIMixin:
             if _mgr is not None:
                 _mgr.custom_levels = new_path
 
-        # Refresh the on-screen path and the File-menu folder shortcuts.
+        # Refresh the on-screen path. The File menu needs no explicit rebuild:
+        # its postcommand (_refresh_file_menu) rebuilds it from scratch on
+        # every open, so the folder shortcuts pick up the new path on their own.
         try:
             self.path_label.config(text=f"📂  {new_path}")
-        except Exception:
-            pass
-        try:
-            # File menu layout: Open Playlist… (0), separator (1), then the
-            # folder shortcuts — rebuild those in place.
-            self._file_menu.delete(2, "end")
-            self._add_folder_menu_items()
         except Exception:
             pass
 
