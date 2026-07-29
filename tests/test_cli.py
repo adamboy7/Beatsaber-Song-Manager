@@ -160,6 +160,65 @@ class TestRandomAdd:
         assert "--randomAdd" in err
 
 
+class TestPlaylistFlag:
+    """--playlist names the playlist explicitly, so the argv pre-pass never has
+    to guess which bare token is a path."""
+
+    def test_flag_form_matches_positional_form(self, cli):
+        out_file = cli.tmp / "flag.bplist"
+        code, out, _ = cli.run("--randomAdd", "3", "--playlist", out_file)
+        assert code == 0
+        assert "Created" in out
+        assert len(_songs_in(out_file)) == 3
+
+    def test_equals_spelling_accepted(self, cli):
+        out_file = cli.tmp / "eq.bplist"
+        code, _, _ = cli.run("--randomAdd", "2", f"--playlist={out_file}")
+        assert code == 0
+        assert len(_songs_in(out_file)) == 2
+
+    def test_json_suffixed_filter_stays_a_filter(self, cli):
+        """The whole point: a plain-text filter ending in .json is no longer
+        hoisted into the playlist slot."""
+        out_file = cli.tmp / "target.bplist"
+        code, out, _ = cli.run(
+            "--playlist", out_file, "--randomAdd", "2", "nomatch.json",
+        )
+        assert code == 0
+        # Filter matched nothing, so it fell back to unfiltered picks — and
+        # crucially wrote to out_file, not to a file named "nomatch.json".
+        assert "matched no songs" in out.lower()
+        assert not (cli.tmp / "nomatch.json").exists()
+        assert len(_songs_in(out_file)) == 2
+
+    def test_positional_still_hoisted_without_the_flag(self, cli):
+        """The convenience form keeps working — the pre-pass only steps aside
+        when --playlist is present."""
+        out_file = cli.tmp / "positional.bplist"
+        code, _, _ = cli.run("--randomAdd", "2", out_file)
+        assert code == 0
+        assert len(_songs_in(out_file)) == 2
+
+    def test_flag_wins_over_positional_and_warns(self, cli):
+        chosen = cli.tmp / "chosen.bplist"
+        ignored = cli.tmp / "ignored.bplist"
+        code, _, err = cli.run(ignored, "--playlist", chosen, "--randomAdd", "2")
+        assert code == 0
+        assert "precedence" in err
+        assert len(_songs_in(chosen)) == 2
+        assert not ignored.exists()
+
+    def test_works_with_shuffle_and_install_validation(self, cli):
+        out_file = cli.tmp / "shuf.bplist"
+        out_file.write_text(json.dumps({
+            "playlistTitle": "T",
+            "songs": [{"hash": f"H{i}"} for i in range(5)],
+        }))
+        code, out, _ = cli.run("--playlist", out_file, "--shuffle")
+        assert code == 0
+        assert "shuffled 5" in out.lower()
+
+
 class TestShuffle:
     def test_shuffles_existing_playlist_in_place(self, cli):
         out_file = cli.tmp / "shuf.bplist"

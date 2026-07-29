@@ -54,6 +54,9 @@ from libraries.browser_pagination import BrowserPaginationMixin, filter_songs, p
 
 PAGE_SIZE = 50
 
+_TAG_TOKEN_RE = re.compile(r'^\{\w+\}:')
+_PLAYLIST_FLAG_RE = re.compile(r'^--playl(i(s(t)?)?)?(=|$)')
+
 
 def resource_path(name: str) -> Path:
     """Resolve a bundled data file both in dev and inside a PyInstaller build.
@@ -358,20 +361,19 @@ def main():
         normalized.append(a)
     sys.argv = normalized
 
-    # Move any playlist path to the front so --randomAdd's greedy nargs='+' can't consume it.
-    _tag_token_re = re.compile(r'^\{\w+\}:')
-    _playlist_toks: list[str] = []
-    _other_toks: list[str] = []
-    for _tok in sys.argv[1:]:
-        if (
-            not _tok.startswith('-')
-            and Path(_tok).suffix.lower() in {'.bplist', '.json'}
-            and not _tag_token_re.match(_tok)
-        ):
-            _playlist_toks.append(_tok)
-        else:
-            _other_toks.append(_tok)
-    sys.argv = [sys.argv[0]] + _playlist_toks + _other_toks
+    if not any(_PLAYLIST_FLAG_RE.match(a) for a in sys.argv[1:]):
+        _playlist_toks: list[str] = []
+        _other_toks: list[str] = []
+        for _tok in sys.argv[1:]:
+            if (
+                not _tok.startswith('-')
+                and Path(_tok).suffix.lower() in {'.bplist', '.json'}
+                and not _TAG_TOKEN_RE.match(_tok)
+            ):
+                _playlist_toks.append(_tok)
+            else:
+                _other_toks.append(_tok)
+        sys.argv = [sys.argv[0]] + _playlist_toks + _other_toks
 
     parser = argparse.ArgumentParser(
         description="Beat Saber Song Manager",
@@ -403,11 +405,45 @@ def main():
             "\n"
             "  Browser.py --randomAdd 20 \"{favorite}:y\" [--shuffle]\n"
             "      Open the browser with 20 random favorites as the initial queue.\n"
-            "      No file is written; --shuffle (optional) shuffles the queue."
+            "      No file is written; --shuffle (optional) shuffles the queue.\n"
+            "\n"
+            "Naming the playlist explicitly:\n"
+            "  The playlist may also be given as --playlist PATH, which is never\n"
+            "  ambiguous.  A bare .json/.bplist token is otherwise assumed to be\n"
+            "  the playlist, so a plain-text --randomAdd filter ending that way is\n"
+            "  mistaken for one:\n"
+            "\n"
+            "  Browser.py --randomAdd 5 foo.json\n"
+            "      Writes a playlist 'foo.json' of 5 unfiltered picks, headless.\n"
+            "\n"
+            "  Browser.py --randomAdd 5 --playlist foo.json\n"
+            "      Same thing, stated explicitly.\n"
+            "\n"
+            "  Browser.py --playlist out.bplist --randomAdd 5 foo.json\n"
+            "      Appends 5 picks matching the text 'foo.json' to out.bplist.\n"
+            "  ({tag}: filters such as \"{title}:foo.json\" are always safe.)"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("playlist", nargs="?", help="Playlist file (.bplist / .json)")
+    parser.add_argument(
+        "playlist", nargs="?",
+        help=(
+            "Playlist file (.bplist / .json). Convenience form; prefer "
+            "--playlist when combining with --randomAdd."
+        ),
+    )
+    parser.add_argument(
+        "--playlist",
+        dest="playlist_flag",
+        metavar="PATH",
+        help=(
+            "Playlist file, stated explicitly. Identical to the positional "
+            "form but never ambiguous: a --randomAdd filter that happens to "
+            "end in .json/.bplist (e.g. --randomAdd 5 foo.json) would "
+            "otherwise be mistaken for a playlist path. Takes precedence if "
+            "both are given."
+        ),
+    )
     parser.add_argument(
         "--install",
         action="store_true",
@@ -484,7 +520,14 @@ def main():
     #   playlist_path — the same Path, but only when it points at an existing
     #                   .bplist/.json file (used by headless --install and the
     #                   GUI "load playlist into queue" startup hook)
-    playlist_arg: Path | None = Path(args.playlist) if args.playlist else None
+    _playlist_raw = args.playlist_flag or args.playlist
+    if args.playlist_flag and args.playlist:
+        print(
+            f"Note: --playlist '{args.playlist_flag}' takes precedence; "
+            f"ignoring positional '{args.playlist}'.",
+            file=sys.stderr,
+        )
+    playlist_arg: Path | None = Path(_playlist_raw) if _playlist_raw else None
     playlist_has_valid_suffix = (
         playlist_arg is not None
         and playlist_arg.suffix.lower() in {".bplist", ".json"}

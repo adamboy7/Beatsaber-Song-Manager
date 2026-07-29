@@ -347,24 +347,43 @@ The player responds to system media keys while the app is running, regardless of
 `Browser.py` accepts optional arguments for headless playlist operations and startup behavior.
 
 ```
-python Browser.py [playlist] [--install] [--shuffle] [--randomAdd N [filter...]] ...
+python Browser.py [playlist] [--playlist PATH] [--install] [--shuffle] [--randomAdd N [filter...]] ...
 ```
 
 | Argument | Description |
 |---|---|
 | `playlist` | Path to a `.bplist` or `.json` playlist file. May not exist yet when combined with `--randomAdd` (the file is created). |
-| `--install` | **Headless.** Download every missing song in the playlist directly from BeatSaver, then exit. Requires an existing `playlist` file and a resolvable `CustomLevels` folder. Takes precedence over `--shuffle` and `--randomAdd`, both of which are ignored. Exit code 0 on success, 1 on failure. |
-| `--shuffle` | Shuffle song order. **Headless** when combined with a `playlist` arg: shuffles the playlist's songs (after any `--randomAdd` picks are appended) and writes the playlist back to disk. **GUI** when used with `--randomAdd` alone (no `playlist` arg): shuffles the startup queue. Requires either a `playlist` file or `--randomAdd`. |
-| `--randomAdd N [filter...]` | Add N random songs from your library, optionally narrowed by search tags. **Headless** when combined with a `playlist` arg: appends picks to an existing playlist or writes a new playlist, then exits. **GUI** without a `playlist` arg: the picks become the startup queue (nothing is written to disk). Can be used multiple times to build composite picks. |
+| `--playlist PATH` | The same playlist file, named explicitly. Identical in every other way — see [Naming the playlist](#naming-the-playlist) for when you need it. Wins over the positional form if both are given. |
+| `--install` | **Headless.** Download every missing song in the playlist directly from BeatSaver, then exit. Requires an existing playlist file and a resolvable `CustomLevels` folder. Takes precedence over `--shuffle` and `--randomAdd`, both of which are ignored. Exit code 0 on success, 1 on failure. |
+| `--shuffle` | Shuffle song order. **Headless** when combined with a playlist: shuffles the playlist's songs (after any `--randomAdd` picks are appended) and writes the playlist back to disk. **GUI** when used with `--randomAdd` alone (no playlist): shuffles the startup queue. Requires either a playlist file or `--randomAdd`. |
+| `--randomAdd N [filter...]` | Add N random songs from your library, optionally narrowed by search tags. **Headless** when combined with a playlist: appends picks to an existing playlist or writes a new playlist, then exits. **GUI** without a playlist: the picks become the startup queue (nothing is written to disk). Can be used multiple times to build composite picks. |
 
 `--randomAdd` avoids duplicates when adding to an existing playlist (matched by song hash). When multiple `--randomAdd` groups are used, each group's picks are excluded from subsequent groups so there is no overlap.
+
+### Naming the playlist
+
+`--randomAdd` takes an open-ended list of filters, so when a bare playlist path follows it the two are hard to tell apart. A path is identified by its `.bplist`/`.json` extension and pulled out of the filter list, which is what makes this work:
+
+```
+python Browser.py --randomAdd 3 out.bplist
+```
+
+The catch is that filters can be plain text, and plain text ending in `.json` looks exactly like a path. `--randomAdd 5 foo.json` is read as "write a playlist named `foo.json` with 5 unfiltered picks" rather than "5 songs matching the text `foo.json`" — a silent switch into headless mode. `--playlist` removes the guesswork:
+
+```
+python Browser.py --playlist out.bplist --randomAdd 5 foo.json
+```
+
+Tagged filters like `"{title}:foo.json"` are always recognised as filters, so this only affects untagged plain-text searches. Use `--playlist` in scripts regardless — it says what it means.
 
 ### Headless vs. GUI
 
 Every command is one of two modes, decided up front:
 
-- **Headless** — runs to completion and exits. Use for scripted playlist edits. Triggers: `--install`, or any `playlist` arg combined with `--shuffle` and/or `--randomAdd`.
-- **GUI** — launches the browser window. Triggers: a `playlist` arg by itself (loads it into the queue), `--randomAdd` without a `playlist` arg (picks become the queue), or no arguments at all.
+- **Headless** — runs to completion and exits. Use for scripted playlist edits. Triggers: `--install`, or any playlist argument combined with `--shuffle` and/or `--randomAdd`.
+- **GUI** — launches the browser window. Triggers: a playlist argument by itself (loads it into the queue), `--randomAdd` without a playlist (picks become the queue), or no arguments at all.
+
+Either spelling of the playlist — positional or `--playlist` — decides the mode identically.
 
 ### Pick Priority
 
@@ -405,6 +424,11 @@ Creates _objectively_ the best playlist: a queue with 5 Miku songs, 5 Teto songs
 python Browser.py --randomAdd 10 "{unplayed}:n" "{fc}:n" practice.bplist
 ```
 Create (or append to) `practice.bplist` with 10 songs you've played at least once but haven't full combo'd yet, and exit.
+
+```
+python Browser.py --playlist practice.bplist --randomAdd 10 "{unplayed}:n" "{fc}:n"
+```
+The same command with the playlist named explicitly — the form to prefer in scripts.
 
 ## Licensing
 
