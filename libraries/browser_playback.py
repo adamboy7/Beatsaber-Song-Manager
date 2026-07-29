@@ -320,9 +320,10 @@ class BrowserPlaybackMixin:
     # ── Play / queue ──────────────────────────────────────────────────────────
 
     def _play_audio(self, song: SongInfo, warn_unavailable: bool = True):
-        if song is not self._media_player.playing_song:
-            self._media_player.is_looping = False
-        self._media_player.play(song, warn_unavailable=warn_unavailable)
+        mp = self._media_player
+        if mp.is_active and song is not mp.playing_song:
+            mp.is_looping = False
+        mp.play(song, warn_unavailable=warn_unavailable)
         self._show_player_bar(song)
         self._start_player_tick()
 
