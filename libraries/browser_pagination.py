@@ -29,6 +29,7 @@ from libraries.constants import (
 )
 from libraries.player_data import get_song_stats, song_level_ids
 from libraries.song_data import SongInfo, load_songs, load_song_hashes
+from libraries.window_helpers import bind_mousewheel
 
 
 _TAG_RE = re.compile(r'\{(\w+)\}:("[^"]*"|\S+)', re.IGNORECASE)
@@ -435,7 +436,6 @@ class BrowserPaginationMixin:
 
         self._pending_playlist_url = None
         self._pending_install_id = None
-        self._install_manager.cancel()
         raw_query = self.search_var.get().strip()
         parsed = _parse_tags(raw_query)
         tags, _ = parsed
@@ -550,13 +550,13 @@ class BrowserPaginationMixin:
 
         sep = tk.Frame(self.list_frame, bg=SEPARATOR_COLOR, height=1)
         sep.pack(fill="x")
-        sep.bind("<MouseWheel>", self._on_mousewheel)
+        bind_mousewheel(sep, self._on_mousewheel)
 
         for w in [row, icon_lbl, text_frame, title_lbl, sub_lbl]:
             w.bind("<Button-1>",   lambda _, sid=song_id: self._trigger_install(sid))
             w.bind("<Enter>",      lambda _, r=row: self._recolor_row(r, SELECTED_BG))
             w.bind("<Leave>",      lambda _, r=row: self._recolor_row(r, HOVER_BG))
-            w.bind("<MouseWheel>", self._on_mousewheel)
+            bind_mousewheel(w, self._on_mousewheel)
 
     # ── Scroll helpers ────────────────────────────────────────────────────────
 

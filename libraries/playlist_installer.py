@@ -38,11 +38,6 @@ class PlaylistInstaller:
         self._complete_cb = complete_cb
         self._gen = 0
 
-    @staticmethod
-    def has_handler() -> bool:
-        """Playlist installs are always available (no external prerequisites)."""
-        return True
-
     def cancel(self) -> None:
         self._gen += 1
 

@@ -30,6 +30,7 @@ from libraries.song_operations import (
     restore_song_files, replace_song_art, replace_song_audio, clear_song_score,
     save_song_info,
 )
+from libraries.window_helpers import bind_mousewheel
 
 
 class BrowserActionsMixin:
@@ -648,14 +649,21 @@ class BrowserActionsMixin:
         inner.bind("<Configure>", _on_inner_resize)
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(inner_id, width=e.width))
 
+        def _on_tags_wheel(event):
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+
+        bind_mousewheel(canvas, _on_tags_wheel)
+        bind_mousewheel(inner, _on_tags_wheel)
+
         tag_rows: dict[str, tk.Frame] = {}
 
         def _add_tag_row(tag: str, count: int):
             row = tk.Frame(inner, bg="#1e1e1e")
             row.pack(fill="x", pady=1, padx=4)
             label_text = tag if not multi else f"{tag}  ({count}/{n})"
-            tk.Label(row, text=label_text, font=("Segoe UI", 10),
-                     bg="#1e1e1e", fg=TEXT_COLOR, anchor="w").pack(side="left", fill="x", expand=True)
+            lbl = tk.Label(row, text=label_text, font=("Segoe UI", 10),
+                           bg="#1e1e1e", fg=TEXT_COLOR, anchor="w")
+            lbl.pack(side="left", fill="x", expand=True)
             def _remove(t=tag):
                 added.discard(t)
                 removed.add(t)
@@ -663,11 +671,14 @@ class BrowserActionsMixin:
                 tag_rows.pop(t, None)
                 canvas.update_idletasks()
                 canvas.configure(scrollregion=canvas.bbox("all"))
-            tk.Button(row, text="×", font=("Segoe UI", 10, "bold"),
-                      bg="#1e1e1e", fg="#ff5555",
-                      activebackground="#2a0033", activeforeground="#ff5555",
-                      relief="flat", bd=0, padx=6,
-                      command=_remove).pack(side="right")
+            btn = tk.Button(row, text="×", font=("Segoe UI", 10, "bold"),
+                            bg="#1e1e1e", fg="#ff5555",
+                            activebackground="#2a0033", activeforeground="#ff5555",
+                            relief="flat", bd=0, padx=6,
+                            command=_remove)
+            btn.pack(side="right")
+            for w in (row, lbl, btn):
+                bind_mousewheel(w, _on_tags_wheel)
             tag_rows[tag] = row
 
         for tag in sorted(all_tags):

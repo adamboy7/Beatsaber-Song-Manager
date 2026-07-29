@@ -27,7 +27,7 @@ from libraries.constants import (
     SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR, SCROLLBAR_BG,
 )
 from libraries.song_data import SongInfo
-from libraries.window_helpers import show_queue_empty_warning, view_song
+from libraries.window_helpers import bind_mousewheel, show_queue_empty_warning, view_song
 
 if TYPE_CHECKING:
     from Browser import SongBrowser
@@ -146,8 +146,8 @@ class QueueWindow(tk.Toplevel):
             scrollregion=self._canvas.bbox("all")))
         self._canvas.bind("<Configure>", lambda e: self._canvas.itemconfig(
             self._canvas_win, width=e.width))
-        self._canvas.bind("<MouseWheel>", self._on_mousewheel)
-        self._list_frame.bind("<MouseWheel>", self._on_mousewheel)
+        bind_mousewheel(self._canvas, self._on_mousewheel)
+        bind_mousewheel(self._list_frame, self._on_mousewheel)
 
         self.bind("<Delete>", self._delete_selected)
         self.bind("<BackSpace>", self._delete_selected)
@@ -435,7 +435,7 @@ class QueueWindow(tk.Toplevel):
             w.bind("<Button-3>",        lambda e, i=idx, s=song: self._on_right_click(e, i, s))
             w.bind("<Enter>",           lambda e, r=row, i=idx: self._on_enter(r, i))
             w.bind("<Leave>",           lambda e, r=row, i=idx: self._on_leave(r, i))
-            w.bind("<MouseWheel>",      self._on_mousewheel)
+            bind_mousewheel(w, self._on_mousewheel)
 
     # ── Context Menu ─────────────────────────────────────────────────────────
 

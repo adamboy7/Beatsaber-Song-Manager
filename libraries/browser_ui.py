@@ -24,6 +24,7 @@ from libraries.constants import (
 )
 from libraries.song_data import SongInfo
 from libraries.player_data import get_song_stats, format_diff_stats
+from libraries.window_helpers import bind_mousewheel
 
 THUMBNAIL_CACHE_LIMIT = 300
 
@@ -511,11 +512,11 @@ class BrowserUIMixin:
 
         self.list_frame.bind("<Configure>", self._on_frame_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
-        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        bind_mousewheel(self.canvas, self._on_mousewheel)
         # The 1px pady gaps between rows expose list_frame itself; without its
         # own wheel binding those gaps are scroll dead zones that make fast
         # scrolling stall when the cursor lands on one.
-        self.list_frame.bind("<MouseWheel>", self._on_mousewheel)
+        bind_mousewheel(self.list_frame, self._on_mousewheel)
         self.bind("<F5>", self._refresh)
         self.bind("<space>", self._on_space)
         self.bind("<Escape>", self._deselect_all)
@@ -915,13 +916,13 @@ class BrowserUIMixin:
 
         sep = tk.Frame(self.list_frame, bg=SEPARATOR_COLOR, height=1)
         sep.pack(fill="x")
-        sep.bind("<MouseWheel>", self._on_mousewheel)
+        bind_mousewheel(sep, self._on_mousewheel)
 
         for w in [row, icon_lbl, text_frame, title_lbl, sub_lbl]:
             w.bind("<Button-1>",   lambda _, u=url: self._install_playlist_from_url(u))
             w.bind("<Enter>",      lambda _, r=row: self._recolor_row(r, SELECTED_BG))
             w.bind("<Leave>",      lambda _, r=row: self._recolor_row(r, HOVER_BG))
-            w.bind("<MouseWheel>", self._on_mousewheel)
+            bind_mousewheel(w, self._on_mousewheel)
 
     def _build_row(self, idx: int, song: SongInfo):
         # Row container
@@ -1029,7 +1030,7 @@ class BrowserUIMixin:
         # otherwise, since Tk doesn't propagate wheel events to parents)
         sep = tk.Frame(self.list_frame, bg=SEPARATOR_COLOR, height=1)
         sep.pack(fill="x")
-        sep.bind("<MouseWheel>", self._on_mousewheel)
+        bind_mousewheel(sep, self._on_mousewheel)
 
         # Bind click / hover to all widgets in the row
         widgets = [row, thumb_lbl, text_frame, title_lbl]
@@ -1044,7 +1045,7 @@ class BrowserUIMixin:
             w.bind("<Button-3>",        lambda e, i=idx, s=song: self._on_right_click(e, i, s))
             w.bind("<Enter>",           lambda e, r=row, s=sep: self._hover(r, s, True))
             w.bind("<Leave>",           lambda e, r=row, s=sep: self._hover(r, s, False))
-            w.bind("<MouseWheel>",      self._on_mousewheel)
+            bind_mousewheel(w, self._on_mousewheel)
             if w in browser_targets:
                 w.bind("<Control-Button-1>",
                        lambda _, s=song: webbrowser.open(f"https://beatsaver.com/maps/{s.song_id}") if s.song_id else None)

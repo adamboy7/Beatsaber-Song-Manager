@@ -20,6 +20,7 @@ import base64
 import io
 import json
 import random
+import re
 import sys
 import threading
 import tkinter as tk
@@ -260,7 +261,6 @@ class SongBrowser(
             except Exception:
                 pass
             self._visualizer_window = None
-        self._install_manager.cancel()
         self._playlist_installer.cancel()
         self._media_player.stop_listener()
         self._media_player.stop()
@@ -359,12 +359,15 @@ def main():
     sys.argv = normalized
 
     # Move any playlist path to the front so --randomAdd's greedy nargs='+' can't consume it.
-    # Partition by index (not value) so a non-playlist token that happens to match a
-    # playlist token's string isn't accidentally pulled out with it.
+    _tag_token_re = re.compile(r'^\{\w+\}:')
     _playlist_toks: list[str] = []
     _other_toks: list[str] = []
     for _tok in sys.argv[1:]:
-        if not _tok.startswith('-') and Path(_tok).suffix.lower() in {'.bplist', '.json'}:
+        if (
+            not _tok.startswith('-')
+            and Path(_tok).suffix.lower() in {'.bplist', '.json'}
+            and not _tag_token_re.match(_tok)
+        ):
             _playlist_toks.append(_tok)
         else:
             _other_toks.append(_tok)
