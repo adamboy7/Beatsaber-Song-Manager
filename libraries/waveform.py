@@ -126,9 +126,9 @@ def render(
         # Before -i: input seeking, so ffmpeg doesn't decode from zero to
         # reach a window late in a four-minute video.
         cmd += ["-ss", f"{start_s:.3f}"]
-    cmd += ["-i", str(source)]
     if duration_s > 0:
         cmd += ["-t", f"{duration_s:.3f}"]
+    cmd += ["-i", str(source)]
     cmd += ["-filter_complex", graph, "-frames:v", "1", "-y", str(out)]
 
     creation_flag = getattr(subprocess, "CREATE_NO_WINDOW", 0)

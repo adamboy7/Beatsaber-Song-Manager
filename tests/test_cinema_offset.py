@@ -345,6 +345,49 @@ def test_render_of_a_missing_file_raises_waveform_error(tmp_path):
         waveform.render(tmp_path / "nope.mp4")
 
 
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_render_window_covers_exactly_the_requested_range(tmp_path, monkeypatch):
+    """A windowed strip must show that window, not the file's whole tail.
+
+    This is the check that catches ``-t`` drifting to the wrong side of
+    ``-i``: as an output option it does not truncate the audio feeding
+    ``showwavespic``, and the strip ends up covering ``start_s``..EOF at the
+    wrong scale — the detail strips silently disagreeing with the range the
+    overview highlights.
+    """
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    src = tmp_path / "song.wav"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi",
+         "-i", "sine=frequency=1000:duration=60",
+         "-af", "volume=enable='between(t,20,25)':volume=1.0,"
+                "volume=enable='not(between(t,20,25))':volume=0.001",
+         "-y", str(src)],
+        check=True, capture_output=True,
+    )
+
+    monkeypatch.setattr(waveform, "cache_dir", lambda: tmp_path)
+    width, start_s, span_s = 900, 18.0, 10.0
+    png = waveform.render(src, start_s=start_s, duration_s=span_s,
+                          width=width, height=96, color="#4ec9ff")
+
+    with Image.open(png) as img:
+        grey = img.convert("L")
+        w, h = grey.size
+        px = grey.load()
+        lit = [x for x in range(w)
+               if max(px[x, y] for y in range(h)) > 40]
+
+    assert w == width
+    px_per_s = width / span_s
+    # The burst runs 20–25 s, i.e. 2–7 s into an 18–28 s window.
+    assert lit, "the burst did not render at all"
+    assert lit[0] == pytest.approx((20.0 - start_s) * px_per_s, abs=6)
+    assert lit[-1] == pytest.approx((25.0 - start_s) * px_per_s, abs=6)
+
+
 def test_prune_cache_keeps_the_newest(tmp_path, monkeypatch):
     monkeypatch.setattr(waveform, "cache_dir", lambda: tmp_path)
     import os
