@@ -16,7 +16,9 @@ from libraries.browser_pagination import (
     _has_invalid_tags,
     _parse_tags,
     append_tag,
+    bind_tag_menu,
     copy_from_entry,
+    cut_from_entry,
     paste_into_entry,
     selected_text,
 )
@@ -168,6 +170,137 @@ class TestCopyFromEntry:
         dest = _FakeEntry("")
         paste_into_entry(dest, copied)
         assert dest.text == "{mapper}:psi"
+
+
+# ── Cutting ──────────────────────────────────────────────────────────────────
+
+class TestCutFromEntry:
+    def test_copies_and_removes_the_selection(self):
+        e = _FakeEntry("hello world", sel=(0, 6))
+        assert cut_from_entry(e) == "hello "
+        assert e.clipboard == "hello "
+        assert e.text == "world"
+
+    def test_no_selection_changes_nothing(self):
+        e = _FakeEntry("hello", clipboard="precious")
+        assert cut_from_entry(e) == ""
+        assert e.text == "hello"
+        assert e.clipboard == "precious"
+
+    def test_text_survives_a_clipboard_failure(self):
+        """Never delete what we couldn't copy — that would just lose it."""
+
+        class _NoClipboard(_FakeEntry):
+            def clipboard_clear(self):
+                raise tk.TclError("no clipboard")
+
+        e = _NoClipboard("hello world", sel=(0, 6))
+        assert cut_from_entry(e) == ""
+        assert e.text == "hello world"
+
+    def test_cut_then_paste_moves_the_text(self):
+        src = _FakeEntry("{bpm}:<=140 psi", sel=(0, 11))
+        moved = cut_from_entry(src)
+        assert src.text == " psi"
+        dest = _FakeEntry("")
+        paste_into_entry(dest, moved)
+        assert dest.text == "{bpm}:<=140"
+
+
+# ── Key bindings ─────────────────────────────────────────────────────────────
+
+class _BindRecorder(_FakeEntry):
+    """Records bind() calls so the wiring can be inspected and invoked."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.bindings: dict = {}
+
+    def bind(self, sequence, handler):
+        self.bindings[sequence] = handler
+
+    def select_range(self, first, last):
+        self.sel = (first, len(self.text) if last == "end" else last)
+
+    def icursor(self, index):
+        self.cursor = len(self.text) if index == "end" else index
+
+    def clipboard_get(self):
+        return self.clipboard
+
+
+class _Var:
+    def __init__(self, value=""):
+        self._v = value
+
+    def get(self):
+        return self._v
+
+    def set(self, v):
+        self._v = v
+
+
+@pytest.fixture
+def bound():
+    e = _BindRecorder("hello world")
+    bind_tag_menu(e, _Var("hello world"))
+    return e
+
+
+class TestKeyBindings:
+    @pytest.mark.parametrize("seq", [
+        "<Button-3>",
+        "<Control-x>", "<Control-X>",
+        "<Control-c>", "<Control-C>",
+        "<Control-v>", "<Control-V>",
+        "<Control-a>", "<Control-A>",
+    ])
+    def test_sequence_is_bound(self, bound, seq):
+        """Upper-case spellings included: Caps Lock sends Control-C, not -c."""
+        assert seq in bound.bindings
+
+    @pytest.mark.parametrize("seq", [
+        "<Control-x>", "<Control-X>", "<Control-c>", "<Control-C>",
+        "<Control-v>", "<Control-V>", "<Control-a>", "<Control-A>",
+    ])
+    def test_handlers_break_the_class_binding(self, bound, seq):
+        """Without "break", the event keeps travelling the bindtag chain.
+
+        Two things downstream would then also fire: Tk's own Entry class
+        bindings for <<Cut>>/<<Copy>>/<<Paste>> (so a paste lands twice), and
+        the enclosing window's shortcuts — SongBrowser binds Ctrl+A to
+        select-all-songs, which must not steal Ctrl+A from the search box.
+        """
+        bound.sel = (0, 5)
+        assert bound.bindings[seq](None) == "break"
+
+    def test_ctrl_c_copies(self, bound):
+        bound.sel = (0, 5)
+        bound.bindings["<Control-c>"](None)
+        assert bound.clipboard == "hello"
+        assert bound.text == "hello world"
+
+    def test_ctrl_x_cuts(self, bound):
+        bound.sel = (0, 6)
+        bound.bindings["<Control-x>"](None)
+        assert bound.clipboard == "hello "
+        assert bound.text == "world"
+
+    def test_ctrl_v_pastes_over_the_selection(self, bound):
+        bound.clipboard = "bye"
+        bound.sel = (0, 5)
+        bound.bindings["<Control-v>"](None)
+        assert bound.text == "bye world"
+
+    def test_ctrl_a_selects_everything(self, bound):
+        bound.bindings["<Control-a>"](None)
+        assert selected_text(bound) == "hello world"
+
+    def test_copy_with_no_selection_is_harmless(self, bound):
+        bound.clipboard = "precious"
+        bound.sel = None
+        assert bound.bindings["<Control-c>"](None) == "break"
+        assert bound.clipboard == "precious"
 
 
 # ── Pasting ──────────────────────────────────────────────────────────────────

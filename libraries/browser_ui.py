@@ -483,7 +483,7 @@ class BrowserUIMixin:
         )
         search_entry.pack(side="left", fill="x", expand=True, ipady=4)
         search_entry.bind("<Return>", self._on_search_enter)
-        search_entry.bind("<Control-a>", lambda e: (search_entry.select_range(0, "end"), "break")[1])
+        # Right-click menu plus Ctrl+X/C/V/A — shared with the Add Random box.
         bind_tag_menu(search_entry, self.search_var)
         self.search_entry = search_entry
 

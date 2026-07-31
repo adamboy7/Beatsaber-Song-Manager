@@ -144,6 +144,22 @@ def copy_from_entry(entry) -> str:
     return text
 
 
+def cut_from_entry(entry) -> str:
+    """Copy the selection to the clipboard, then delete it from ``entry``.
+
+    Returns what was cut. Deletes only if the copy succeeded, so a clipboard
+    failure can't silently eat the user's text.
+    """
+    text = copy_from_entry(entry)
+    if not text:
+        return ""
+    try:
+        entry.delete("sel.first", "sel.last")
+    except tk.TclError:
+        return ""
+    return text
+
+
 def paste_into_entry(entry, clipboard: str) -> None:
     """Insert ``clipboard`` at the cursor, replacing any selection.
 
@@ -163,10 +179,12 @@ def paste_into_entry(entry, clipboard: str) -> None:
 
 
 def bind_tag_menu(entry, var) -> None:
-    """Give ``entry`` a right-click menu: Copy, Paste, then the full tag list.
+    """Wire up ``entry``'s right-click menu and its clipboard keys.
 
-    ``var`` is the entry's textvariable; picking a tag appends it there and
-    hands typing back to the entry with the cursor after the colon.
+    The menu is Cut / Copy / Paste, then the full tag list; Ctrl+X/C/V and
+    Ctrl+A are bound to the same handlers. ``var`` is the entry's
+    textvariable; picking a tag appends it there and hands typing back to the
+    entry with the cursor after the colon.
     """
 
     def _append(spec: TagSpec) -> None:
@@ -189,8 +207,11 @@ def bind_tag_menu(entry, var) -> None:
             can_paste = bool(entry.clipboard_get())
         except tk.TclError:
             can_paste = False
+        has_sel = bool(selected_text(entry))
+        menu.add_command(label="Cut", command=lambda: cut_from_entry(entry),
+                         state="normal" if has_sel else "disabled")
         menu.add_command(label="Copy", command=lambda: copy_from_entry(entry),
-                         state="normal" if selected_text(entry) else "disabled")
+                         state="normal" if has_sel else "disabled")
         menu.add_command(label="Paste", command=_paste,
                          state="normal" if can_paste else "disabled")
         menu.add_separator()
@@ -206,7 +227,31 @@ def bind_tag_menu(entry, var) -> None:
         menu.tk_popup(event.x_root, event.y_root)
         return "break"
 
+    def _select_all(_event=None):
+        entry.select_range(0, "end")
+        entry.icursor("end")
+        return "break"
+
     entry.bind("<Button-3>", _popup)
+
+    # Every handler returns "break". Widget bindings run *before* class
+    # bindings, and Tk's Entry class already binds Control-x/c/v to its own
+    # <<Cut>>/<<Copy>>/<<Paste>>; without the break both would fire and a
+    # paste would land twice. Breaking also means the paste-over-selection
+    # behaviour above is what runs, rather than Tk's insert-alongside default.
+    #
+    # The upper-case spellings are for Caps Lock, which sends Control-C rather
+    # than Control-c and would otherwise fall straight through to the class
+    # binding — the one case where the doubling would still be visible.
+    for seq, fn in (
+        ("<Control-x>", cut_from_entry), ("<Control-X>", cut_from_entry),
+        ("<Control-c>", copy_from_entry), ("<Control-C>", copy_from_entry),
+    ):
+        entry.bind(seq, lambda _e, f=fn: (f(entry), "break")[1])
+    for seq in ("<Control-v>", "<Control-V>"):
+        entry.bind(seq, lambda _e: (_paste(), "break")[1])
+    for seq in ("<Control-a>", "<Control-A>"):
+        entry.bind(seq, _select_all)
 
 
 def _has_invalid_tags(tags: list[tuple[str, str]]) -> bool:
