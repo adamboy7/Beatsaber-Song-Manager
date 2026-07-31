@@ -17,13 +17,22 @@ import subprocess
 
 import pytest
 
-from libraries import waveform
+from libraries import audio_utils, waveform
+from libraries.audio_utils import (
+    LEADING_SILENCE_TOLERANCE_S,
+    SILENCE_MIN_S,
+    SILENCE_NOISE_DB,
+    OnsetError,
+    first_sound_offset_s,
+    parse_first_sound_s,
+)
 from libraries.cinema_offset_window import (
     _DRIFT_MAX_SPEED_TRIM,
     _EAR_BLEED,
     _fmt_time,
     clamp_view_start,
     clamp_window,
+    detected_offset_ms,
     drag_to_offset_ms,
     drift_speed_trim,
     nudge_delta_ms,
@@ -291,6 +300,224 @@ def test_trim_stays_inaudible_for_realistic_drift():
     # 30 ms of drift is a typical worst case between two players over a few
     # seconds; the correction for it should be a fraction of a percent.
     assert abs(drift_speed_trim(0.03) - 1.0) < 0.02
+
+
+# ── Silence detection: parsing ffmpeg's log ──────────────────────────────────
+#
+# `silencedetect` reports silent *runs*, not onsets, so every case below is
+# about telling a leading run apart from one in the middle of the track. Real
+# logs, captured from ffmpeg 6 — the formatting ("silence_start: 0", no decimal
+# point) is what the regexes have to survive.
+
+def _log(*lines: str) -> str:
+    return "\n".join(f"[silencedetect @ 0x7f0000000000] {ln}" for ln in lines)
+
+
+def test_leading_silence_is_the_first_sound():
+    log = _log("silence_start: 0", "silence_end: 3.20435 | silence_duration: 3.20435")
+    assert parse_first_sound_s(log) == pytest.approx(3.20435)
+
+
+def test_no_silence_at_all_means_sound_from_the_first_sample():
+    assert parse_first_sound_s("") == 0.0
+
+
+def test_a_gap_mid_track_is_not_a_lead_in():
+    """The case that makes this parser more than a regex.
+
+    A song with a silent bar at 0:04 produces a silence_start of 4.017 and
+    nothing at zero. Taking the first silence_end regardless would report a
+    four-second lead-in and compute an offset four seconds wrong.
+    """
+    log = _log("silence_start: 4.01703",
+               "silence_end: 5.01551 | silence_duration: 0.998481")
+    assert parse_first_sound_s(log) == 0.0
+
+
+def test_a_lead_in_is_still_found_when_later_gaps_follow():
+    log = _log("silence_start: 0", "silence_end: 2.5 | silence_duration: 2.5",
+               "silence_start: 30.0", "silence_end: 31.0 | silence_duration: 1.0")
+    assert parse_first_sound_s(log) == pytest.approx(2.5)
+
+
+def test_silence_starting_a_frame_late_still_counts_as_leading():
+    # A lossy decoder can place the run just after zero; the tolerance exists
+    # for exactly this, and treating it as a mid-track gap would return 0.0.
+    late = LEADING_SILENCE_TOLERANCE_S / 2
+    log = _log(f"silence_start: {late}", "silence_end: 1.5 | silence_duration: 1.45")
+    assert parse_first_sound_s(log) == pytest.approx(1.5)
+
+
+def test_unterminated_leading_silence_is_no_sound():
+    assert parse_first_sound_s(_log("silence_start: 0")) is None
+
+
+def test_negative_start_is_clamped_not_rejected():
+    log = _log("silence_start: -0.001", "silence_end: 1.0 | silence_duration: 1.0")
+    assert parse_first_sound_s(log) == pytest.approx(1.0)
+
+
+def test_surrounding_ffmpeg_noise_is_ignored():
+    log = ("Input #0, wav, from 'song.wav':\n"
+           "  Duration: 00:00:08.00, bitrate: 1411 kb/s\n"
+           + _log("silence_start: 0", "silence_end: 1.25 | silence_duration: 1.25")
+           + "\nsize=N/A time=00:00:08.00 bitrate=N/A speed= 900x\n")
+    assert parse_first_sound_s(log) == pytest.approx(1.25)
+
+
+# ── Silence detection: the offset it computes ────────────────────────────────
+
+def test_video_with_a_long_intro_needs_a_positive_offset():
+    # The video's music starts 7.5 s in, the song's immediately: the video has
+    # to be wound forward past its intro, which is Cinema's "starts earlier".
+    assert detected_offset_ms(0.0, 7.5) == 7500
+
+
+def test_song_with_a_lead_in_pulls_the_offset_negative():
+    assert detected_offset_ms(2.0, 0.0) == -2000
+
+
+def test_equal_lead_ins_cancel_out():
+    # Both files carrying the same 1.5 s of silence needs no correction at all.
+    assert detected_offset_ms(1.5, 1.5) == 0
+
+
+def test_only_the_difference_matters():
+    assert detected_offset_ms(1.2, 4.7) == detected_offset_ms(0.0, 3.5)
+
+
+def test_detected_offset_agrees_with_the_render_geometry():
+    """The detected offset must actually align the two onsets on the axis.
+
+    This is the check that catches a sign flip: the song's onset and the
+    video's onset have to land on the same pixel once the offset is applied.
+    """
+    song_onset, video_onset = 0.4, 6.9
+    offset = detected_offset_ms(song_onset, video_onset)
+    pps, view = 100.0, 0.0
+    assert video_time_to_x(video_onset, offset, view, pps) == pytest.approx(
+        song_time_to_x(song_onset, view, pps)
+    )
+
+
+def test_detection_thresholds_are_lenient_enough_for_quiet_lead_ins():
+    # A −55 dB fade-in is inaudible but far above digital silence; a threshold
+    # near zero would report no lead-in at all on such a file.
+    assert SILENCE_NOISE_DB <= -40.0
+    assert 0 < SILENCE_MIN_S <= 0.1
+
+
+# ── Silence detection: against real ffmpeg ───────────────────────────────────
+
+_HAVE_FFMPEG = shutil.which("ffmpeg") is not None
+_needs_ffmpeg = pytest.mark.skipif(not _HAVE_FFMPEG, reason="ffmpeg not installed")
+
+
+def _tone(path, *, duration=8.0, filters=""):
+    cmd = ["ffmpeg", "-v", "error", "-f", "lavfi",
+           "-i", f"sine=frequency=440:duration={duration}"]
+    if filters:
+        cmd += ["-af", filters]
+    subprocess.run(cmd + ["-y", str(path)], check=True, capture_output=True)
+    return path
+
+
+@_needs_ffmpeg
+def test_detects_a_real_lead_in(tmp_path):
+    src = _tone(tmp_path / "lead.wav", filters="volume=enable='lt(t,3.2)':volume=0")
+    assert first_sound_offset_s(src) == pytest.approx(3.2, abs=0.05)
+
+
+@_needs_ffmpeg
+def test_a_file_that_starts_loud_reports_zero(tmp_path):
+    src = _tone(tmp_path / "loud.wav")
+    assert first_sound_offset_s(src) == pytest.approx(0.0, abs=0.05)
+
+
+@_needs_ffmpeg
+def test_a_quiet_fade_in_counts_as_silence(tmp_path):
+    # ~−55 dBFS: nothing a listener would call the start of the music.
+    src = _tone(tmp_path / "faded.wav",
+                filters="volume=enable='lt(t,2)':volume=0.0018")
+    assert first_sound_offset_s(src) == pytest.approx(2.0, abs=0.05)
+
+
+@_needs_ffmpeg
+def test_a_gap_mid_file_does_not_fool_the_real_pipeline(tmp_path):
+    src = _tone(tmp_path / "gap.wav",
+                filters="volume=enable='between(t,4,5)':volume=0")
+    assert first_sound_offset_s(src) == pytest.approx(0.0, abs=0.05)
+
+
+@_needs_ffmpeg
+def test_an_entirely_silent_file_reports_no_sound(tmp_path):
+    src = tmp_path / "quiet.wav"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi",
+         "-i", "anullsrc=r=44100:cl=stereo", "-t", "3", "-y", str(src)],
+        check=True, capture_output=True,
+    )
+    # Without the duration hint ffmpeg's EOF flush looks like a 3 s onset;
+    # with it, the file is correctly reported as having no sound at all.
+    assert first_sound_offset_s(src, duration_s=3.0) is None
+
+
+@_needs_ffmpeg
+def test_detection_reads_a_videos_audio_track(tmp_path):
+    """The video half of the feature — a real container, not a .wav."""
+    src = tmp_path / "clip.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error",
+         "-f", "lavfi", "-i", "testsrc=duration=6:size=160x120:rate=15",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=6",
+         "-af", "volume=enable='lt(t,2.5)':volume=0",
+         "-c:v", "mpeg4", "-c:a", "aac", "-shortest", "-y", str(src)],
+        check=True, capture_output=True,
+    )
+    assert first_sound_offset_s(src) == pytest.approx(2.5, abs=0.1)
+
+
+@_needs_ffmpeg
+def test_a_video_with_no_audio_track_is_an_error_not_a_zero(tmp_path):
+    # Returning 0.0 here would silently compute an offset from nothing.
+    src = tmp_path / "mute.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi",
+         "-i", "testsrc=duration=2:size=160x120:rate=15",
+         "-c:v", "mpeg4", "-y", str(src)],
+        check=True, capture_output=True,
+    )
+    with pytest.raises(OnsetError):
+        first_sound_offset_s(src)
+
+
+@_needs_ffmpeg
+def test_end_to_end_offset_between_two_generated_files(tmp_path):
+    """The whole feature: two files, two probes, one offset.
+
+    The song's music starts at 1 s and the video's at 4 s, so the video needs
+    to run 3 s ahead — +3000 ms.
+    """
+    song = _tone(tmp_path / "song.wav",
+                 filters="volume=enable='lt(t,1)':volume=0")
+    video = _tone(tmp_path / "video.wav",
+                  filters="volume=enable='lt(t,4)':volume=0")
+    offset = detected_offset_ms(first_sound_offset_s(song),
+                                first_sound_offset_s(video))
+    assert offset == pytest.approx(3000, abs=100)
+
+
+def test_missing_ffmpeg_raises_onset_error(tmp_path, monkeypatch):
+    src = tmp_path / "song.egg"
+    src.write_bytes(b"\x00" * 64)
+    monkeypatch.setattr(audio_utils, "find_ffmpeg", lambda: None)
+    with pytest.raises(OnsetError):
+        first_sound_offset_s(src)
+
+
+def test_detection_of_a_missing_file_raises_onset_error(tmp_path):
+    with pytest.raises(OnsetError):
+        first_sound_offset_s(tmp_path / "nope.mp4")
 
 
 # ── Waveform cache keying ────────────────────────────────────────────────────

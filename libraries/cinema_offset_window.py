@@ -52,7 +52,12 @@ import tkinter as tk
 from PIL import Image, ImageTk
 
 from libraries import app_config, cinema_video, dialogs, waveform
-from libraries.audio_utils import find_ffmpeg, get_audio_duration
+from libraries.audio_utils import (
+    OnsetError,
+    find_ffmpeg,
+    first_sound_offset_s,
+    get_audio_duration,
+)
 from libraries.constants import ACCENT_COLOR, SUBTEXT_COLOR, TEXT_COLOR
 from libraries.mpv_backend import load_mpv
 
@@ -189,6 +194,21 @@ def video_time_to_x(video_time_s: float, offset_ms: int,
     return song_time_to_x(video_time_s - offset_ms / 1000.0, view_start_s, px_per_s)
 
 
+def detected_offset_ms(song_onset_s: float, video_onset_s: float) -> int:
+    """Offset that lines the two first-sounds up, in ms.
+
+    "Detect Silence" assumes the same music starts in both files, and asks what
+    offset makes those two moments the same instant. Substituting
+    ``song_time = song_onset`` into ``video_time = song_time + offset`` and
+    requiring ``video_time = video_onset`` gives the difference directly.
+
+    So a video with a long intro before the music (video_onset large) needs a
+    *positive* offset — Cinema's "starts video earlier" — which is exactly
+    right: the video must be wound forward past its intro to meet the song.
+    """
+    return int(round((video_onset_s - song_onset_s) * 1000.0))
+
+
 def pan_filter(left_gain: float, right_gain: float) -> str:
     """An mpv ``af`` string downmixing to stereo at the given per-ear gains.
 
@@ -274,6 +294,11 @@ class CinemaOffsetWindow(tk.Toplevel):
         self._render_offset_ms = self._offset_ms
 
         self._drag_origin: tuple[int, int] | None = None
+
+        # Silence detection: one at a time, and its result held separately so a
+        # render finishing afterwards can restore it rather than blank it.
+        self._detecting = False
+        self._detect_note = ""
 
         self._mpv_audio = None
         self._mpv_video = None
@@ -420,6 +445,10 @@ class CinemaOffsetWindow(tk.Toplevel):
         dialogs.themed_button(buttons, "Cancel", self._on_close).pack(side="right", padx=(0, 8))
         self._reset_btn = dialogs.themed_button(buttons, "Reset", self._reset)
         self._reset_btn.pack(side="left")
+        self._detect_btn = dialogs.themed_button(
+            buttons, "Detect Silence", self._detect_silence,
+        )
+        self._detect_btn.pack(side="left", padx=(8, 0))
 
     def _make_strip(self, label: str, color: str, draggable: bool = False) -> tk.Canvas:
         row = tk.Frame(self, bg=_BG)
@@ -533,6 +562,9 @@ class CinemaOffsetWindow(tk.Toplevel):
 
     def _set_offset(self, offset_ms: int) -> None:
         offset_ms = int(offset_ms)
+        # Above the early return: the note describes a specific value, so even
+        # a no-op set means it has been superseded by a deliberate action.
+        self._detect_note = ""
         if offset_ms == self._offset_ms:
             return
         self._offset_ms = offset_ms
@@ -584,6 +616,89 @@ class CinemaOffsetWindow(tk.Toplevel):
     def _reset(self) -> None:
         self._set_offset(self._reset_target_ms())
         self._update_offset_display()
+
+    # ── Silence detection ────────────────────────────────────────────────────
+
+    def _detect_silence(self) -> None:
+        """Line the two files up by where the music starts in each.
+
+        Both probes run on one worker thread — they are ffmpeg passes of a few
+        hundred milliseconds each, and running them in sequence keeps the
+        failure reporting simple. The result is applied rather than merely
+        suggested; Reset and Cancel both still undo it, and nothing reaches
+        ``cinema-video.json`` until Save.
+        """
+        if self._detecting:
+            return
+        song = self._song
+        if not song.audio_path or not song.cinema_video_path:
+            self._set_status("Nothing to detect — a file is missing.")
+            return
+
+        self._detecting = True
+        self._detect_btn.config(text="Detecting…", state="disabled")
+        self._set_status("Detecting where the music starts…")
+
+        audio_path = Path(song.audio_path)
+        video_path = Path(song.cinema_video_path)
+        # Zero means "never measured", which first_sound_offset_s reads as
+        # "no duration hint" rather than "zero-length file".
+        song_len = self._song_duration_s or None
+        video_len = self._video_duration_s or None
+        ffmpeg = find_ffmpeg()
+
+        def _work():
+            try:
+                song_onset = first_sound_offset_s(
+                    audio_path, ffmpeg=ffmpeg, duration_s=song_len,
+                )
+                video_onset = first_sound_offset_s(
+                    video_path, ffmpeg=ffmpeg, duration_s=video_len,
+                )
+            except OnsetError as exc:
+                self._dispatch(lambda e=exc: self._on_detected(None, None, str(e)))
+                return
+            self._dispatch(
+                lambda: self._on_detected(song_onset, video_onset, None)
+            )
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_detected(self, song_onset: float | None, video_onset: float | None,
+                     error: str | None) -> None:
+        if not self._alive():
+            return
+        self._detecting = False
+        try:
+            self._detect_btn.config(text="Detect Silence", state="normal")
+        except tk.TclError:
+            return
+
+        if error is not None:
+            self._set_status(f"Detection failed: {error}")
+            return
+        # A silent file isn't an ffmpeg failure, so it arrives as a None onset
+        # and needs naming — otherwise the user is told nothing at all.
+        silent = [name for name, onset in
+                  (("song", song_onset), ("video", video_onset)) if onset is None]
+        if silent:
+            self._set_status(
+                f"No sound found in the {' or '.join(silent)} — "
+                "the offset was left alone."
+            )
+            return
+
+        offset = detected_offset_ms(song_onset, video_onset)
+        self._set_offset(offset)
+        self._update_offset_display()
+        note = (f"Music starts at {song_onset:.2f} s in the song and "
+                f"{video_onset:.2f} s in the video → {offset:+d} ms.")
+        if song_onset < 0.01 and video_onset < 0.01:
+            note += " Both start immediately, so check this by ear."
+        # After _set_offset: it clears the note, and may queue a re-render whose
+        # completion would otherwise overwrite the status line.
+        self._detect_note = note
+        self._set_status(note)
 
     # ── View / zoom ──────────────────────────────────────────────────────────
 
@@ -700,7 +815,7 @@ class CinemaOffsetWindow(tk.Toplevel):
             missing.append("video")
         self._set_status(
             f"Could not render the {' and '.join(missing)} waveform."
-            if missing else ""
+            if missing else self._detect_note
         )
 
     @staticmethod

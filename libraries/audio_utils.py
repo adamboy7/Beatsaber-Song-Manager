@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -279,6 +280,142 @@ def _ffprobe_duration(path: Path) -> float | None:
     except Exception:
         pass
     return None
+
+
+# ── First-sound detection ────────────────────────────────────────────────────
+#
+# Used by the Cinema offset editor to line the video up by where the music
+# starts in each file. ffmpeg's `silencedetect` filter reports silent *runs* on
+# stderr; the one we want is a run that begins at the very start of the file,
+# whose end is therefore the first sound.
+
+# -40 dBFS rather than a stricter figure: Beat Saber's audio is very often a
+# quiet room-tone or encoder lead-in rather than digital silence, and a −55 dB
+# fade-in is inaudible but would defeat a threshold near zero.
+SILENCE_NOISE_DB = -40.0
+
+# A silent run shorter than this isn't reported at all, so it's also the
+# shortest lead-in that can be detected. Below ~50 ms the "silence" is more
+# likely a codec artefact than something a mapper put there.
+SILENCE_MIN_S = 0.05
+
+# How close to t=0 a silent run must begin to count as *leading* silence. It is
+# not always exactly 0 — a lossy decoder can report the run starting a frame
+# in — and anything later is a gap inside the track, not a lead-in.
+LEADING_SILENCE_TOLERANCE_S = 0.05
+
+_SILENCE_START_RE = re.compile(r"silence_start:\s*(-?[\d.]+)")
+_SILENCE_END_RE = re.compile(r"silence_end:\s*(-?[\d.]+)")
+
+
+class OnsetError(RuntimeError):
+    """ffmpeg was missing, failed, or the file has no audio to analyse."""
+
+
+def parse_first_sound_s(log: str) -> float | None:
+    """Time of the first sound, from a ``silencedetect`` stderr log.
+
+    Four cases, and the difference between them is the whole point:
+
+    * No silence reported at all — the file is audible from its first sample,
+      so the answer is ``0.0``.
+    * The first silent run starts *after* the tolerance — that's a gap inside
+      the track (a breakdown, a bar of rest), not a lead-in, and the file is
+      again audible from ``0.0``. Reading it as a lead-in would be badly wrong:
+      a song with a silent bar at 0:30 would report a 30-second lead-in.
+    * A run starting at ~0 with an end — that end is the first sound.
+    * A run starting at ~0 that never ends — ffmpeg flushes ``silence_end`` at
+      EOF, so a genuinely silent file does produce an end; a log truncated
+      before it does not. ``None`` either way: no sound was found.
+    """
+    start_match = _SILENCE_START_RE.search(log)
+    if start_match is None:
+        return 0.0
+    try:
+        first_start = float(start_match.group(1))
+    except ValueError:
+        return 0.0
+    if first_start > LEADING_SILENCE_TOLERANCE_S:
+        return 0.0  # a gap mid-track, not a lead-in
+    end_match = _SILENCE_END_RE.search(log, start_match.end())
+    if end_match is None:
+        return None
+    try:
+        return max(0.0, float(end_match.group(1)))
+    except ValueError:
+        return None
+
+
+def first_sound_offset_s(
+    path: Path,
+    *,
+    ffmpeg: str | None = None,
+    noise_db: float = SILENCE_NOISE_DB,
+    min_silence_s: float = SILENCE_MIN_S,
+    duration_s: float | None = None,
+    timeout: int = 120,
+) -> float | None:
+    """Seconds of silence before the first sound in ``path``.
+
+    Works on video as well as audio — ``-vn`` drops the video stream, which is
+    not a detail: it takes a four-minute 640×360 clip from ~1.0 s to ~0.15 s,
+    since only the audio ever needed decoding.
+
+    Returns ``None`` when the file is silent throughout. That case is otherwise
+    indistinguishable from a real onset: ffmpeg flushes the open silent run at
+    EOF, so an entirely silent file reports its own duration as the "first
+    sound". Passing ``duration_s`` lets that be caught; without it, a silent
+    file returns a value equal to its length.
+
+    Raises ``OnsetError`` if ffmpeg is missing, fails, or the input has no
+    audio stream at all (a silent video — ffmpeg exits non-zero because the
+    filter graph has nothing to feed it).
+    """
+    path = Path(path)
+    if not path.exists():
+        raise OnsetError(f"{path.name} does not exist")
+
+    exe = ffmpeg or find_ffmpeg()
+    if not exe:
+        raise OnsetError("ffmpeg is not available")
+
+    # `-v info`, unlike the `-v error` used everywhere else here: silencedetect
+    # reports its findings *as info-level log lines*, so quieting ffmpeg the
+    # usual way discards the entire result and every file looks like it starts
+    # with sound. `-nostats` trims the progress spam that comes with it.
+    cmd = [
+        exe, "-hide_banner", "-nostdin", "-nostats", "-v", "info",
+        "-i", str(path),
+        "-vn",
+        "-af", f"silencedetect=noise={noise_db}dB:d={min_silence_s}",
+        "-f", "null", "-",
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise OnsetError(f"silence detection timed out after {timeout}s")
+    except OSError as exc:
+        raise OnsetError(f"could not run ffmpeg: {exc}")
+
+    log = (result.stderr or b"").decode("utf-8", errors="replace")
+    if result.returncode != 0:
+        if "does not contain any stream" in log:
+            raise OnsetError(f"{path.name} has no audio track")
+        raise OnsetError(log.strip().splitlines()[-1] if log.strip()
+                         else f"ffmpeg exited {result.returncode}")
+
+    onset = parse_first_sound_s(log)
+    if onset is None:
+        return None
+    if duration_s and onset >= duration_s - 0.05:
+        return None  # silent to the end; the "onset" is just EOF
+    return onset
 
 
 def _mpv_duration(path: Path) -> float | None:
