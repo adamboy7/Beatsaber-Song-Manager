@@ -144,6 +144,26 @@ def copy_from_entry(entry) -> str:
     return text
 
 
+def insert_tag_into_entry(entry, var, spec: TagSpec) -> None:
+    """Append ``spec``'s token to ``var`` and leave ``entry`` ready to type.
+
+    Dropping the selection is the point of doing this in one place. Tk keeps a
+    selection alive across a textvariable change, and its Entry bindings then
+    disagree about what a stale one means: ``EntryInsert`` only replaces the
+    selection when the insert cursor sits inside it — which it doesn't, since
+    the tag goes to the end — while ``EntryBackspace`` deletes the selection
+    whenever one is merely *present*. Leaving it set makes typing append and
+    backspace wipe the highlight, which is exactly as confusing as it sounds.
+    """
+    var.set(append_tag(var.get(), spec))
+    try:
+        entry.select_clear()
+    except tk.TclError:
+        pass
+    entry.focus_set()
+    entry.icursor("end")
+
+
 def cut_from_entry(entry) -> str:
     """Copy the selection to the clipboard, then delete it from ``entry``.
 
@@ -157,6 +177,7 @@ def cut_from_entry(entry) -> str:
         entry.delete("sel.first", "sel.last")
     except tk.TclError:
         return ""
+    entry.focus_set()
     return text
 
 
@@ -188,9 +209,7 @@ def bind_tag_menu(entry, var) -> None:
     """
 
     def _append(spec: TagSpec) -> None:
-        var.set(append_tag(var.get(), spec))
-        entry.focus_set()
-        entry.icursor("end")
+        insert_tag_into_entry(entry, var, spec)
 
     def _paste() -> None:
         try:
