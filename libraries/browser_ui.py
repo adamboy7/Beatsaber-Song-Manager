@@ -22,6 +22,7 @@ from libraries.constants import (
     SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR, SCROLLBAR_BG,
     THUMBNAIL_SIZE,
 )
+from libraries.browser_pagination import bind_tag_menu
 from libraries.song_data import SongInfo
 from libraries.player_data import get_song_stats, format_diff_stats
 from libraries.window_helpers import bind_mousewheel
@@ -483,6 +484,7 @@ class BrowserUIMixin:
         search_entry.pack(side="left", fill="x", expand=True, ipady=4)
         search_entry.bind("<Return>", self._on_search_enter)
         search_entry.bind("<Control-a>", lambda e: (search_entry.select_range(0, "end"), "break")[1])
+        bind_tag_menu(search_entry, self.search_var)
         self.search_entry = search_entry
 
         # Path label

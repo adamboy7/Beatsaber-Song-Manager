@@ -32,6 +32,14 @@ except ImportError:
     HAS_REAL_TK = False
     from unittest.mock import MagicMock
 
+    class TclError(Exception):
+        """Stand-in for tkinter.TclError.
+
+        Needs to be a real exception class, not a MagicMock: production code
+        says ``except tk.TclError`` around clipboard and widget calls, and
+        catching a non-exception is a TypeError at runtime.
+        """
+
     def _make_stub(name: str) -> types.ModuleType:
         mod = types.ModuleType(name)
         mod.__getattr__ = lambda attr: MagicMock(name=f"{name}.{attr}")  # PEP 562
@@ -39,6 +47,7 @@ except ImportError:
 
     for _name in ("tkinter", "tkinter.filedialog", "tkinter.font", "tkinter.ttk"):
         sys.modules.setdefault(_name, _make_stub(_name))
+    sys.modules["tkinter"].TclError = TclError
 
 
 # ── Song-folder factory ──────────────────────────────────────────────────────

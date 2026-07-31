@@ -19,7 +19,9 @@ from PIL import Image, ImageTk
 from tkinterdnd2 import DND_FILES
 
 from libraries.audio_utils import get_audio_duration
-from libraries.browser_pagination import TAG_SPECS, filter_songs, pick_random_songs
+from libraries.browser_pagination import (
+    bind_tag_menu, filter_songs, pick_random_songs,
+)
 from libraries.browser_playback import _nav_button_states, _shuffle_permute
 from libraries.browser_ui import THUMBNAIL_CACHE_LIMIT
 from libraries.constants import (
@@ -36,16 +38,6 @@ if TYPE_CHECKING:
 _QUEUE_THUMB = (48, 48)
 _QUEUE_PLAYING_BG = "#1a1a3a"
 _CUT_BG = "#3a1212"
-
-_TAG_PICKER_PROMPT = "Insert a filter tag…"
-
-
-def _spec_for_label(label: str):
-    """The TagSpec whose dropdown label matches, or None for the prompt row."""
-    for spec in TAG_SPECS:
-        if spec.label == label:
-            return spec
-    return None
 
 
 class QueueWindow(tk.Toplevel):
@@ -532,39 +524,14 @@ class QueueWindow(tk.Toplevel):
             filter_frame, textvariable=filter_var, bd=0, font=("Segoe UI", 9),
         )
         filter_entry.pack(side="left", fill="x", expand=True)
-
-        picker_frame = tk.Frame(dlg, bg=BG_COLOR)
-        picker_frame.pack(fill="x", padx=12, pady=(0, 2))
-        tk.Label(picker_frame, text="", bg=BG_COLOR, width=7).pack(side="left")
-
-        tag_var = tk.StringVar(value=_TAG_PICKER_PROMPT)
-        tag_menu = dialogs.themed_combobox(
-            picker_frame, textvariable=tag_var,
-            font=("Segoe UI", 8), height=len(TAG_SPECS),
-            width=max(len(spec.label) for spec in TAG_SPECS) + 2,
-            values=[_TAG_PICKER_PROMPT] + [spec.label for spec in TAG_SPECS],
-        )
-        tag_menu.pack(side="left", fill="x", expand=True)
-
-        def _insert_tag(_event=None):
-            spec = _spec_for_label(tag_var.get())
-            tag_var.set(_TAG_PICKER_PROMPT)  # re-arm so the same tag can repeat
-            if spec is None:
-                return
-            current = filter_var.get()
-            sep = "" if (not current or current.endswith(" ")) else " "
-            filter_var.set(f"{current}{sep}{spec.insert_text}")
-            # Hand typing straight back to the entry, cursor after the colon.
-            filter_entry.focus_set()
-            filter_entry.icursor("end")
-
-        tag_menu.bind("<<ComboboxSelected>>", _insert_tag)
+        bind_tag_menu(filter_entry, filter_var)
 
         tk.Label(
             dlg,
-            text="  Plain text matches title, artist, mapper and song ID.",
+            text=("  Plain text matches title, artist, mapper and song ID."
+                  "  Right click to add tags."),
             bg=BG_COLOR, fg=SUBTEXT_COLOR, font=("Segoe UI", 7), anchor="w",
-        ).pack(fill="x", padx=12)
+        ).pack(fill="x", padx=12, pady=(0, 2))
 
         bottom_frame = tk.Frame(dlg, bg=BG_COLOR)
         bottom_frame.pack(fill="x", padx=12, pady=(4, 10))

@@ -98,6 +98,82 @@ _KNOWN_TAGS = {spec.name for spec in TAG_SPECS}
 _YN_TAGS = {spec.name for spec in TAG_SPECS if spec.yes_no}
 
 
+# ── Tag-insertion context menu ───────────────────────────────────────────────
+
+def append_tag(current: str, spec: TagSpec) -> str:
+    """``current`` with ``spec``'s token appended, space-separated.
+
+    Appends rather than inserting at the cursor: filter tags are
+    space-separated and order-independent, so the end of the query is always a
+    valid place for one, whereas the cursor may sit mid-token.
+    """
+    sep = "" if (not current or current.endswith(" ")) else " "
+    return f"{current}{sep}{spec.insert_text}"
+
+
+def paste_into_entry(entry, clipboard: str) -> None:
+    """Insert ``clipboard`` at the cursor, replacing any selection.
+
+    Tk's built-in ``<<Paste>>`` leaves the selection in place on some
+    platforms, which turns a paste-over-all into an append. Doing the delete
+    ourselves makes the behaviour the same everywhere.
+    """
+    if not clipboard:
+        return
+    try:
+        if entry.selection_present():
+            entry.delete("sel.first", "sel.last")
+        entry.insert("insert", clipboard)
+    except tk.TclError:
+        return
+    entry.focus_set()
+
+
+def bind_tag_menu(entry, var) -> None:
+    """Give ``entry`` a right-click menu: Paste, then the full tag list.
+
+    ``var`` is the entry's textvariable; picking a tag appends it there and
+    hands typing back to the entry with the cursor after the colon.
+    """
+
+    def _append(spec: TagSpec) -> None:
+        var.set(append_tag(var.get(), spec))
+        entry.focus_set()
+        entry.icursor("end")
+
+    def _paste() -> None:
+        try:
+            text = entry.clipboard_get()
+        except tk.TclError:
+            return  # empty clipboard, or it holds something that isn't text
+        paste_into_entry(entry, text)
+
+    def _popup(event):
+        menu = tk.Menu(entry, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
+                       activebackground=ACCENT_COLOR,
+                       activeforeground=TEXT_COLOR, bd=0)
+        try:
+            can_paste = bool(entry.clipboard_get())
+        except tk.TclError:
+            can_paste = False
+        menu.add_command(label="Paste", command=_paste,
+                         state="normal" if can_paste else "disabled")
+        menu.add_separator()
+
+        tag_menu = tk.Menu(menu, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
+                           activebackground=ACCENT_COLOR,
+                           activeforeground=TEXT_COLOR, bd=0)
+        for spec in TAG_SPECS:
+            tag_menu.add_command(label=spec.label,
+                                 command=lambda s=spec: _append(s))
+        menu.add_cascade(label="Add tag…", menu=tag_menu)
+        entry._tag_menus = (menu, tag_menu)  # type: ignore[attr-defined]
+        menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
+    entry.bind("<Button-3>", _popup)
+
+
 def _has_invalid_tags(tags: list[tuple[str, str]]) -> bool:
     for tag, value in tags:
         if tag not in _KNOWN_TAGS:
