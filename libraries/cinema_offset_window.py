@@ -363,12 +363,12 @@ class CinemaOffsetWindow(tk.Toplevel):
             self._nudge_button(controls, step)
 
         self._zoom_var = tk.StringVar(value=_ZOOMS[self._zoom_index][0])
-        zoom = dialogs.themed_combobox(
+        zoom = dialogs.themed_option_menu(
             controls, textvariable=self._zoom_var,
             values=[label for label, _ in _ZOOMS], width=11,
+            command=self._on_zoom_changed,
         )
         zoom.pack(side="right")
-        zoom.bind("<<ComboboxSelected>>", self._on_zoom_changed)
         tk.Label(controls, text="Zoom", bg=_BG, fg=SUBTEXT_COLOR,
                  font=("Segoe UI", 9)).pack(side="right", padx=(0, 6))
 
@@ -603,7 +603,7 @@ class CinemaOffsetWindow(tk.Toplevel):
             song_time_s, self._span_s, self._song_duration_s,
         )
 
-    def _on_zoom_changed(self, _event=None) -> None:
+    def _on_zoom_changed(self, _label=None) -> None:
         label = self._zoom_var.get()
         for i, (name, _) in enumerate(_ZOOMS):
             if name == label:

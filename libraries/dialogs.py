@@ -29,7 +29,6 @@ import tkinter as tk
 from libraries.constants import (
     ACCENT_COLOR,
     BG_COLOR,
-    SUBTEXT_COLOR,
     TEXT_COLOR,
 )
 
@@ -126,57 +125,47 @@ def themed_entry(parent: tk.Misc, **kw) -> tk.Entry:
     return tk.Entry(parent, **opts)
 
 
-_COMBO_STYLE = "Dark.TCombobox"
-_combo_style_ready = False
+def themed_option_menu(
+    parent: tk.Misc,
+    textvariable: tk.StringVar,
+    values: Sequence[str],
+    command=None,
+    **kw,
+) -> tk.Menubutton:
+    """A dark drop-down: pick one of ``values`` into ``textvariable``.
 
+    A ``Menubutton`` + ``tk.Menu`` rather than a ``ttk.Combobox``. ttk widgets
+    ignore ``bg``/``fg`` and can only be darkened through a named style plus
+    the option database — process-wide state, including a ``theme_use`` call
+    that changes ttk rendering for the whole interpreter. That is a lot of
+    global reach for a short, fixed list of choices, and ``tk.Menu`` is
+    already how every other menu in the app is themed.
 
-def themed_combobox(parent: tk.Misc, **kw):
-    """A dark, read-only ``ttk.Combobox`` matching the app theme.
-
-    ttk widgets ignore ``bg``/``fg``, so the closed box is themed through a
-    named style and the drop-down list — a plain Tk listbox owned by ttk —
-    through the option database, which has to be set before the popdown is
-    created. Both are done once per interpreter.
+    ``command`` is called with the chosen label, after the variable is set.
     """
-    from tkinter import ttk
+    opts = dict(
+        font=("Segoe UI", 9),
+        bg=ENTRY_BG, fg=TEXT_COLOR,
+        activebackground=BTN_SECONDARY_ACTIVE, activeforeground=TEXT_COLOR,
+        relief="flat", bd=0, highlightthickness=0,
+        anchor="w", padx=6, pady=3,
+        indicatoron=True, cursor="hand2",
+    )
+    opts.update(kw)
+    btn = tk.Menubutton(parent, textvariable=textvariable, **opts)
+    menu = tk.Menu(btn, tearoff=0, bg=ENTRY_BG, fg=TEXT_COLOR,
+                   activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
+                   bd=0)
 
-    global _combo_style_ready
-    style = ttk.Style()
-    if not _combo_style_ready:
-        try:
-            style.theme_use("default")  # the aqua/vista themes ignore colors
-        except tk.TclError:
-            pass
-        style.configure(
-            _COMBO_STYLE,
-            fieldbackground=ENTRY_BG, background=BTN_SECONDARY_BG,
-            foreground=TEXT_COLOR, arrowcolor=TEXT_COLOR,
-            bordercolor=ENTRY_BG, lightcolor=ENTRY_BG, darkcolor=ENTRY_BG,
-            padding=2,
-        )
-        # Readonly is the state this is always in; without the map the closed
-        # box keeps Tk's default blue selection fill over the chosen text.
-        style.map(
-            _COMBO_STYLE,
-            fieldbackground=[("readonly", ENTRY_BG)],
-            foreground=[("readonly", TEXT_COLOR), ("disabled", SUBTEXT_COLOR)],
-            selectbackground=[("readonly", ENTRY_BG)],
-            selectforeground=[("readonly", TEXT_COLOR)],
-            background=[("active", BTN_SECONDARY_ACTIVE)],
-        )
-        try:
-            root = parent._root()  # type: ignore[attr-defined]
-            root.option_add("*TCombobox*Listbox.background", ENTRY_BG)
-            root.option_add("*TCombobox*Listbox.foreground", TEXT_COLOR)
-            root.option_add("*TCombobox*Listbox.selectBackground", ACCENT_COLOR)
-            root.option_add("*TCombobox*Listbox.selectForeground", TEXT_COLOR)
-        except Exception:
-            pass  # cosmetic only; a light drop-down still works
-        _combo_style_ready = True
+    def _choose(label: str) -> None:
+        textvariable.set(label)
+        if command is not None:
+            command(label)
 
-    kw.setdefault("state", "readonly")
-    kw.setdefault("style", _COMBO_STYLE)
-    return ttk.Combobox(parent, **kw)
+    for label in values:
+        menu.add_command(label=label, command=lambda lbl=label: _choose(lbl))
+    btn.configure(menu=menu)
+    return btn
 
 
 def _apply_icon(dlg: tk.Toplevel, parent: Optional[tk.Misc], icon) -> None:
