@@ -19,6 +19,7 @@ from libraries.browser_pagination import (
     bind_tag_menu,
     copy_from_entry,
     cut_from_entry,
+    insert_tag_into_entry,
     paste_into_entry,
     selected_text,
 )
@@ -65,11 +66,37 @@ class _FakeEntry:
     def focus_set(self) -> None:
         self.focused = True
 
+    def select_clear(self) -> None:
+        self.sel = None
+
+    def icursor(self, index) -> None:
+        self.cursor = len(self.text) if index == "end" else index
+
     def clipboard_clear(self) -> None:
         self.clipboard = ""
 
     def clipboard_append(self, value: str) -> None:
         self.clipboard += value
+
+    # ── Tk's own Entry bindings, transcribed from tk8.6/entry.tcl ────────────
+    #
+    # Modelled rather than mocked, because the bug was a disagreement between
+    # these two: they treat a stale selection differently, so a test that
+    # merely asserted "selection cleared" would not show why that matters.
+
+    def type_key(self, s: str) -> None:
+        """``tk::EntryInsert`` — replaces the selection only if insert is in it."""
+        if self.sel is not None and self.sel[0] <= self.cursor <= self.sel[1]:
+            self.delete("sel.first", "sel.last")
+        self.insert("insert", s)
+
+    def backspace(self) -> None:
+        """``tk::EntryBackspace`` — deletes the selection whenever present."""
+        if self.selection_present():
+            self.delete("sel.first", "sel.last")
+        elif self.cursor > 0:
+            self.text = self.text[: self.cursor - 1] + self.text[self.cursor :]
+            self.cursor -= 1
 
 
 # ── Appending tags ───────────────────────────────────────────────────────────
@@ -172,6 +199,83 @@ class TestCopyFromEntry:
         assert dest.text == "{mapper}:psi"
 
 
+# ── Inserting a tag while text is selected ───────────────────────────────────
+
+class TestInsertTagIntoEntry:
+    """Regression: a tag picked while text was highlighted left a stale
+    selection. The cursor moved to the end, outside it, and Tk's two editing
+    bindings then disagreed — typing appended instead of replacing, while
+    backspace wiped the highlight."""
+
+    def _entry_with_selection(self):
+        e = _FakeEntry("freedom dive", sel=(0, 7))
+        return e, _Var("freedom dive")
+
+    def test_selection_is_dropped(self):
+        e, var = self._entry_with_selection()
+        insert_tag_into_entry(e, var, _spec("bpm"))
+        assert not e.selection_present()
+
+    def test_tag_is_appended_not_substituted(self):
+        e, var = self._entry_with_selection()
+        insert_tag_into_entry(e, var, _spec("bpm"))
+        assert var.get() == "freedom dive {bpm}:"
+
+    def test_cursor_lands_at_the_end_with_focus(self):
+        e, var = self._entry_with_selection()
+        e.text = var.get()
+        insert_tag_into_entry(e, var, _spec("bpm"))
+        assert e.focused
+        assert e.cursor == len(e.text)
+
+    def test_typing_afterwards_extends_the_tag(self):
+        """The reported symptom: typing used to leave the highlight intact."""
+        e, var = self._entry_with_selection()
+        insert_tag_into_entry(e, var, _spec("bpm"))
+        e.text = var.get()  # the textvariable drives the widget
+        e.cursor = len(e.text)
+        e.type_key("140")
+        assert e.text == "freedom dive {bpm}:140"
+
+    def test_backspace_afterwards_deletes_one_character(self):
+        """The other half: backspace used to delete the whole highlight."""
+        e, var = self._entry_with_selection()
+        insert_tag_into_entry(e, var, _spec("bpm"))
+        e.text = var.get()
+        e.cursor = len(e.text)
+        e.backspace()
+        assert e.text == "freedom dive {bpm}"
+
+    def test_the_old_behaviour_is_what_the_model_reproduces(self):
+        """Guards the model itself: skip the clear and both symptoms return."""
+        e = _FakeEntry("freedom dive", sel=(0, 7))
+        e.text = "freedom dive {bpm}:"   # appended, selection deliberately kept
+        e.cursor = len(e.text)
+        e.type_key("140")
+        assert e.text == "freedom dive {bpm}:140"  # selection not replaced
+        e2 = _FakeEntry("freedom dive {bpm}:", sel=(0, 7))
+        e2.cursor = len(e2.text)
+        e2.backspace()
+        assert e2.text == " dive {bpm}:"           # "freedom" wiped instead
+
+    def test_works_with_no_selection(self):
+        e = _FakeEntry("freedom dive")
+        var = _Var("freedom dive")
+        insert_tag_into_entry(e, var, _spec("bpm"))
+        assert var.get() == "freedom dive {bpm}:"
+        assert not e.selection_present()
+
+    def test_survives_a_widget_that_cannot_clear(self):
+        class _Stubborn(_FakeEntry):
+            def select_clear(self):
+                raise tk.TclError("invalid command name")
+
+        e = _Stubborn("abc", sel=(0, 3))
+        var = _Var("abc")
+        insert_tag_into_entry(e, var, _spec("bpm"))
+        assert var.get() == "abc {bpm}:"  # still appends
+
+
 # ── Cutting ──────────────────────────────────────────────────────────────────
 
 class TestCutFromEntry:
@@ -221,9 +325,6 @@ class _BindRecorder(_FakeEntry):
 
     def select_range(self, first, last):
         self.sel = (first, len(self.text) if last == "end" else last)
-
-    def icursor(self, index):
-        self.cursor = len(self.text) if index == "end" else index
 
     def clipboard_get(self):
         return self.clipboard
