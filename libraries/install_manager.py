@@ -37,7 +37,7 @@ class InstallManager:
         try:
             bs.install_song(song_id, self.custom_levels)
         except Exception as e:  # noqa: BLE001 - report any failure to the UI
-            self._dispatch(lambda: self._on_error(song_id, e))
+            self._dispatch(lambda exc=e: self._on_error(song_id, exc))
             return
         self._dispatch(lambda: self._on_complete(song_id))
 
