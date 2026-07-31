@@ -16,7 +16,9 @@ from libraries.browser_pagination import (
     _has_invalid_tags,
     _parse_tags,
     append_tag,
+    copy_from_entry,
     paste_into_entry,
+    selected_text,
 )
 
 
@@ -25,13 +27,22 @@ def _spec(name: str):
 
 
 class _FakeEntry:
-    """Stand-in for a tk.Entry, tracking selection, cursor and focus."""
+    """Stand-in for a tk.Entry, tracking selection, cursor, focus, clipboard."""
 
-    def __init__(self, text: str = "", sel: tuple[int, int] | None = None):
+    def __init__(self, text: str = "", sel: tuple[int, int] | None = None,
+                 clipboard: str = ""):
         self.text = text
         self.sel = sel
         self.cursor = len(text)
         self.focused = False
+        self.clipboard = clipboard
+
+    def get(self) -> str:
+        return self.text
+
+    def index(self, spec: str) -> int:
+        assert self.sel is not None
+        return self.sel[0] if spec == "sel.first" else self.sel[1]
 
     def selection_present(self) -> bool:
         return self.sel is not None
@@ -51,6 +62,12 @@ class _FakeEntry:
 
     def focus_set(self) -> None:
         self.focused = True
+
+    def clipboard_clear(self) -> None:
+        self.clipboard = ""
+
+    def clipboard_append(self, value: str) -> None:
+        self.clipboard += value
 
 
 # ── Appending tags ───────────────────────────────────────────────────────────
@@ -92,6 +109,65 @@ class TestAppendTag:
         assert tags == [("mapper", "psi"), ("unplayed", "y")]
         assert not _has_invalid_tags(tags)
         assert plain == ""
+
+
+# ── Copying ──────────────────────────────────────────────────────────────────
+
+class TestSelectedText:
+    def test_partial_selection(self):
+        assert selected_text(_FakeEntry("hello world", sel=(6, 11))) == "world"
+
+    def test_whole_selection(self):
+        assert selected_text(_FakeEntry("hello", sel=(0, 5))) == "hello"
+
+    def test_nothing_selected(self):
+        assert selected_text(_FakeEntry("hello")) == ""
+
+    def test_widget_errors_read_as_no_selection(self):
+        class _Dead(_FakeEntry):
+            def selection_present(self):
+                raise tk.TclError("invalid command name")
+
+        assert selected_text(_Dead("hello", sel=(0, 5))) == ""
+
+
+class TestCopyFromEntry:
+    def test_copies_the_selection(self):
+        e = _FakeEntry("hello world", sel=(6, 11))
+        assert copy_from_entry(e) == "world"
+        assert e.clipboard == "world"
+
+    def test_copies_a_full_selection(self):
+        e = _FakeEntry("{bpm}:<=140", sel=(0, 11))
+        copy_from_entry(e)
+        assert e.clipboard == "{bpm}:<=140"
+
+    def test_no_selection_leaves_the_clipboard_alone(self):
+        """Copying nothing must not clobber what the user already had."""
+        e = _FakeEntry("hello", clipboard="something precious")
+        assert copy_from_entry(e) == ""
+        assert e.clipboard == "something precious"
+
+    def test_replaces_rather_than_appends(self):
+        e = _FakeEntry("abc", sel=(0, 3), clipboard="stale")
+        copy_from_entry(e)
+        assert e.clipboard == "abc"
+
+    def test_widget_errors_are_swallowed(self):
+        class _Dead(_FakeEntry):
+            def clipboard_clear(self):
+                raise tk.TclError("invalid command name")
+
+        e = _Dead("abc", sel=(0, 3))
+        assert copy_from_entry(e) == ""
+
+    def test_copy_then_paste_round_trips(self):
+        """The two halves of the menu should compose."""
+        src = _FakeEntry("{mapper}:psi", sel=(0, 12))
+        copied = copy_from_entry(src)
+        dest = _FakeEntry("")
+        paste_into_entry(dest, copied)
+        assert dest.text == "{mapper}:psi"
 
 
 # ── Pasting ──────────────────────────────────────────────────────────────────

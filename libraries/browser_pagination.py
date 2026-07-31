@@ -111,6 +111,39 @@ def append_tag(current: str, spec: TagSpec) -> str:
     return f"{current}{sep}{spec.insert_text}"
 
 
+def selected_text(entry) -> str:
+    """``entry``'s selected text, or ``""`` if nothing is selected.
+
+    Read through ``sel.first``/``sel.last`` rather than ``selection_get()``,
+    which reads the X PRIMARY selection and so can return another widget's
+    text — or raise — when this entry isn't the selection owner.
+    """
+    try:
+        if not entry.selection_present():
+            return ""
+        return entry.get()[entry.index("sel.first"):entry.index("sel.last")]
+    except tk.TclError:
+        return ""
+
+
+def copy_from_entry(entry) -> str:
+    """Put ``entry``'s selection on the clipboard. Returns what was copied.
+
+    A no-op when nothing is selected: the menu disables Copy in that case, but
+    a keyboard binding could still reach here with an empty selection, and
+    clobbering the clipboard with "" would lose whatever the user had.
+    """
+    text = selected_text(entry)
+    if not text:
+        return ""
+    try:
+        entry.clipboard_clear()
+        entry.clipboard_append(text)
+    except tk.TclError:
+        return ""
+    return text
+
+
 def paste_into_entry(entry, clipboard: str) -> None:
     """Insert ``clipboard`` at the cursor, replacing any selection.
 
@@ -130,7 +163,7 @@ def paste_into_entry(entry, clipboard: str) -> None:
 
 
 def bind_tag_menu(entry, var) -> None:
-    """Give ``entry`` a right-click menu: Paste, then the full tag list.
+    """Give ``entry`` a right-click menu: Copy, Paste, then the full tag list.
 
     ``var`` is the entry's textvariable; picking a tag appends it there and
     hands typing back to the entry with the cursor after the colon.
@@ -156,6 +189,8 @@ def bind_tag_menu(entry, var) -> None:
             can_paste = bool(entry.clipboard_get())
         except tk.TclError:
             can_paste = False
+        menu.add_command(label="Copy", command=lambda: copy_from_entry(entry),
+                         state="normal" if selected_text(entry) else "disabled")
         menu.add_command(label="Paste", command=_paste,
                          state="normal" if can_paste else "disabled")
         menu.add_separator()

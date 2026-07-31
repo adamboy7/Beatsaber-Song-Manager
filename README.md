@@ -141,7 +141,7 @@ Shift+right-click unlocks asset editing. All operations that modify a file creat
 
 All tags use `{tag}:value` syntax and are case-insensitive. Multiple tags can be combined in one query (space-separated). Plain text without a tag searches title, artist, mapper, and BeatSaver ID simultaneously.
 
-**Right-click the search bar** for **Paste**, and for **Add tag…** — a list of every tag below. Picking one appends it to the query and puts the cursor after the colon, ready for the value. Yes/no tags arrive prefilled with `y`.
+**Right-click the search bar** for **Copy** (greyed out unless text is selected), **Paste**, and **Add tag…** — a list of every tag below. Picking a tag appends it to the query and puts the cursor after the colon, ready for the value. Yes/no tags arrive prefilled with `y`.
 
 | Tag | Values | Description |
 |---|---|---|
