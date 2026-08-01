@@ -143,3 +143,21 @@ def set_split_preview(enabled: bool) -> bool:
     cfg = load_config()
     cfg["cinema_split_preview"] = bool(enabled)
     return save_config(cfg)
+
+PREVIEW_ENGINES = ("single", "two-instance")
+DEFAULT_PREVIEW_ENGINE = "single"
+
+
+def get_preview_engine() -> str:
+    """Which Cinema preview engine to prefer; always one of PREVIEW_ENGINES."""
+    value = load_config().get("cinema_preview_engine")
+    return value if value in PREVIEW_ENGINES else DEFAULT_PREVIEW_ENGINE
+
+
+def set_preview_engine(engine: str) -> bool:
+    """Record the preferred preview engine, ignoring unknown names."""
+    if engine not in PREVIEW_ENGINES:
+        return False
+    cfg = load_config()
+    cfg["cinema_preview_engine"] = engine
+    return save_config(cfg)

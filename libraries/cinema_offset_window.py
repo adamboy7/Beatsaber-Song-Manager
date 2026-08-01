@@ -24,13 +24,16 @@ are Cinema's own, so muscle memory carries over from the in-game menu.
 
 Preview
 -------
-Two libmpv instances — the song's audio and the (normally muted) video. The
-"Split stereo" checkbox is the mod's own sync technique, quoting its README:
-"Sound from the video will play in your left ear, the map in your right ear.
-If the sound from the left ear is behind, use the '+' buttons." With it on,
-each player is downmixed into one ear and drift is corrected by trimming
-playback speed rather than seeking, since a seek is an audible click in one
-ear and the drift is exactly what you're listening for.
+Delegated to ``cinema_preview``, which offers two engines: one libmpv instance
+playing a single audio track that the module mixes itself — the song shifted by
+the offset, and in split stereo the video's audio panned into the other ear —
+or the older pair of separate players held together by a drift watchdog.
+``start_preview`` picks between them and falls back on its own, so nothing here
+needs to know which one it got.
+
+The "Split stereo" checkbox is the mod's own sync technique, quoting its
+README: "Sound from the video will play in your left ear, the map in your
+right ear. If the sound from the left ear is behind, use the '+' buttons."
 
 Rendering
 ---------
@@ -58,8 +61,19 @@ from libraries.audio_utils import (
     first_sound_offset_s,
     get_audio_duration,
 )
+from libraries.cinema_preview import PreviewError, start_preview
 from libraries.constants import ACCENT_COLOR, SUBTEXT_COLOR, TEXT_COLOR
 from libraries.mpv_backend import load_mpv
+
+from libraries.cinema_preview import (  # noqa: F401  (re-export)
+    DRIFT_MAX_SPEED_TRIM as _DRIFT_MAX_SPEED_TRIM,
+    DRIFT_SEEK_THRESHOLD_S as _DRIFT_SEEK_THRESHOLD_S,
+    DRIFT_TOLERANCE_S as _DRIFT_TOLERANCE_S,
+    DRIFT_TOLERANCE_SPLIT_S as _DRIFT_TOLERANCE_SPLIT_S,
+    EAR_BLEED as _EAR_BLEED,
+    drift_speed_trim,
+    pan_filter,
+)
 
 if TYPE_CHECKING:
     from Browser import SongBrowser
@@ -97,27 +111,6 @@ _ZOOMS: tuple[tuple[str, float | None], ...] = (
     ("2 s", 2.0),
 )
 _DEFAULT_ZOOM = 3  # 10 s — tight enough that a 20 ms nudge is ~2 px
-
-# Resync the preview video when it drifts further than this from where the
-# current offset says it should be. Split-stereo listening is far less
-# forgiving than watching, so it gets the tighter figure.
-_DRIFT_TOLERANCE_S = 0.12
-_DRIFT_TOLERANCE_SPLIT_S = 0.02
-
-# Above this much error, a seek is the only way back; below it, drift is
-# corrected by easing the video's playback speed, which is inaudible where a
-# seek would be an obvious click in one ear.
-_DRIFT_SEEK_THRESHOLD_S = 0.30
-_DRIFT_EASE_SECONDS = 2.0      # pull the error out over roughly this long
-_DRIFT_MAX_SPEED_TRIM = 0.03   # ±3%; mpv pitch-corrects, so this is unheard
-
-# Cinema pans the video hard left and the map to 0.9 rather than 1.0. Its
-# PlaybackController.cs explains why: "only pan mostly right, because for some
-# reason the video player audio doesn't pan hard left either. Also, it sounds
-# a bit more comfortable." ffmpeg's pan filter separates exactly, so only the
-# second half of that reasoning applies to us — the comfort bleed is
-# reproduced deliberately rather than inherited from a Unity quirk.
-_EAR_BLEED = 0.1
 
 
 def _fmt_time(seconds: float) -> str:
@@ -209,36 +202,6 @@ def detected_offset_ms(song_onset_s: float, video_onset_s: float) -> int:
     return int(round((video_onset_s - song_onset_s) * 1000.0))
 
 
-def pan_filter(left_gain: float, right_gain: float) -> str:
-    """An mpv ``af`` string downmixing to stereo at the given per-ear gains.
-
-    ``aformat`` first because ``pan`` addresses input channels positionally:
-    a mono song (``c1`` undefined) would fail the graph outright, and a 5.1
-    video track would drop everything but front-left/right. The halving keeps
-    a summed downmix from clipping.
-
-    Wrapped in ``lavfi=[...]`` so mpv hands the whole graph to libavfilter
-    without splitting on the ``,`` and ``|`` inside it.
-    """
-    l, r = left_gain / 2.0, right_gain / 2.0
-    return (
-        "lavfi=[aformat=channel_layouts=stereo,"
-        f"pan=stereo|c0={l:.4f}*c0+{l:.4f}*c1|c1={r:.4f}*c0+{r:.4f}*c1]"
-    )
-
-
-def drift_speed_trim(error_s: float) -> float:
-    """Playback speed that eases ``error_s`` of drift out over a couple of seconds.
-
-    ``error_s`` is *actual − expected*: positive means the video is running
-    ahead, so it should play slightly slower. Clamped hard — this is a trim,
-    not a scrub.
-    """
-    trim = max(-_DRIFT_MAX_SPEED_TRIM,
-               min(_DRIFT_MAX_SPEED_TRIM, -error_s / _DRIFT_EASE_SECONDS))
-    return 1.0 + trim
-
-
 def _render_one(path, window, px_per_s: float, color: str, height: int,
                 ffmpeg: str | None) -> Path | None:
     """Render one strip, or None if there's nothing (or ffmpeg fails).
@@ -300,11 +263,14 @@ class CinemaOffsetWindow(tk.Toplevel):
         self._detecting = False
         self._detect_note = ""
 
-        self._mpv_audio = None
-        self._mpv_video = None
+        self._preview = None
+        self._preview_starting = False
+        self._preview_gen = 0
+        # Last engine status shown, so _report_preview_status can write only on
+        # a change rather than on every nudge.
+        self._preview_note = ""
         self._preview_after_id: str | None = None
         self._preview_anchor_s = 0.0
-        self._video_speed = 1.0
         self._browser_playback_paused_by_us = False
 
         self.title(f"Cinema Offset — {song.display_name}")
@@ -571,7 +537,7 @@ class CinemaOffsetWindow(tk.Toplevel):
         self._update_offset_display()
         self._reposition_video_strips()
         self._maybe_rerender_video()
-        self._resync_preview_video()
+        self._push_offset_to_preview()
 
     def _nudge(self, delta_ms: int) -> None:
         self._set_offset(self._offset_ms + delta_ms)
@@ -751,7 +717,8 @@ class CinemaOffsetWindow(tk.Toplevel):
     def _on_drag_end(self, _event: tk.Event) -> None:
         self._drag_origin = None
         self._update_offset_display()
-        self._resync_preview_video()
+        # Settle whatever the engine deferred while the drag was in flight.
+        self._push_offset_to_preview()
 
     # ── Rendering ────────────────────────────────────────────────────────────
 
@@ -979,7 +946,7 @@ class CinemaOffsetWindow(tk.Toplevel):
 
     @property
     def _preview_running(self) -> bool:
-        return self._mpv_audio is not None or self._mpv_video is not None
+        return self._preview is not None
 
     @property
     def _split_stereo(self) -> bool:
@@ -992,16 +959,16 @@ class CinemaOffsetWindow(tk.Toplevel):
         """Apply the checkbox live — no need to restart a running preview."""
         app_config.set_split_preview(self._split_stereo)
         self._update_preview_hint()
-        self._apply_stereo_split()
-        # Split listening runs to a much tighter tolerance, so pull the video
-        # onto the exact mark now rather than waiting for the tick to notice.
-        self._resync_preview_video()
+        if self._preview is not None:
+            self._preview.set_split(self._split_stereo)
+            self._report_preview_status()
 
     def _update_preview_hint(self) -> None:
         if self._split_stereo:
             # Cinema's README gives users this exact rule, so it only holds if
             # we assign the ears the same way — video left, song right, not
-            # the reverse. See _apply_stereo_split.
+            # the reverse. The engines are what guarantee that; see
+            # ``cinema_preview.mix_preview`` and ``TwoInstancePreview._apply_routing``.
             text = ("Listen for the two to line up. If the left ear (video) is "
                     "behind, nudge +; if it's ahead, nudge −.")
         else:
@@ -1011,48 +978,42 @@ class CinemaOffsetWindow(tk.Toplevel):
         except tk.TclError:
             pass
 
-    def _apply_stereo_split(self) -> None:
-        """Route the two players to opposite ears, or back to normal.
+    def _report_preview_status(self) -> None:
+        """Surface whatever the engine has to say, only when it changes.
 
-        With the split off the video is simply muted and the song plays
-        centred, which is the watch-it-and-see mode. With it on, each player
-        is downmixed into its own ear — the technique Cinema's README
-        describes for judging sync by ear:
-
-            "Sound from the video will play in your left ear, the map in your
-            right ear. If the sound from the left ear is behind, use the '+'
-            buttons, otherwise the '-' buttons."
-
-        The ear assignment is therefore not arbitrary: reversing it would
-        invert the advice users already have.
+        The engines report their own trouble (a video with no audio track, a
+        libmpv that won't take the split-stereo graph) rather than raising, so
+        this is the only place that reads it. Written on *change* rather than
+        unconditionally because this runs on every nudge, and ``_set_offset``
+        also queues a waveform re-render that puts "Rendering waveforms…" on
+        the same line — blanking it a moment later would make the render look
+        instantaneous and the status line flicker.
         """
-        split = self._split_stereo
-        video_ok = True
-        if self._mpv_video is not None:
-            try:
-                self._mpv_video.af = pan_filter(1.0, _EAR_BLEED) if split else ""
-                self._mpv_video.mute = not split
-            except Exception:
-                video_ok = False
-        if self._mpv_audio is not None:
-            try:
-                self._mpv_audio.af = pan_filter(_EAR_BLEED, 1.0) if split else ""
-            except Exception:
-                pass  # song keeps playing centred; still usable
-        if split and not video_ok:
-            self._set_status(
-                "Could not route the video's audio — is there an audio track?"
-            )
+        engine = self._preview
+        note = engine.status if engine is not None else ""
+        if note == self._preview_note:
+            return
+        self._preview_note = note
+        self._set_status(note or self._detect_note)
 
     def _toggle_preview(self) -> None:
-        if self._preview_running:
+        if self._preview_running or self._preview_starting:
             self._stop_preview()
         else:
             self._start_preview()
 
     def _start_preview(self) -> None:
-        mpv_mod = load_mpv()
-        if mpv_mod is None:
+        """Start the preview engine, off the Tk thread.
+
+        Asynchronous where this used to be synchronous: the default engine
+        decodes the whole song before it can play a note, which is a second or
+        so on a long track and would freeze the window if it ran here. The
+        button reads "Preparing…" meanwhile and a second click cancels, so a
+        slow start can't strand the user.
+        """
+        if self._preview_starting:
+            return
+        if load_mpv() is None:
             dialogs.show_info(
                 "Preview unavailable",
                 "libmpv isn't available, so the offset can't be previewed "
@@ -1064,65 +1025,102 @@ class CinemaOffsetWindow(tk.Toplevel):
         if not song.audio_path or not song.cinema_video_path:
             return
 
-        # Two players rather than one file with an external audio track: a
-        # Cinema offset can be tens of seconds (its bundled config for "Crab
-        # Rave" ships +34900 ms), far past what mpv's audio-delay handles
-        # gracefully on a single instance. Separate instances
-        # seek independently and are resynced on a timer, the same shape as
-        # the visualizer's MediaPlayer + mpv pairing.
         self._pause_browser_playback()
         start_s = self._playhead_s()
         self._preview_anchor_s = start_s
-        try:
-            self._mpv_audio = mpv_mod.MPV(
-                vid="no", idle="yes", osd_level=0,
-                input_default_bindings=False, input_vo_keyboard=False,
-            )
+
+        self._preview_starting = True
+        self._preview_gen += 1
+        gen = self._preview_gen
+        self._preview_btn.config(text="…  Preparing")
+        self._set_status("Preparing the preview…")
+
+        audio_path = song.audio_path
+        video_path = song.cinema_video_path
+        offset_ms = self._offset_ms
+        split = self._split_stereo
+        wid = self._preview_canvas.winfo_id()
+        volume = app_config.get_volume()
+
+        def _work():
             try:
-                # Honour the app's volume slider rather than blasting at 100.
-                from libraries import app_config
-                self._mpv_audio.volume = app_config.get_volume()
-            except Exception:
-                pass
-            self._mpv_audio.loadfile(str(song.audio_path), start=f"{start_s:.3f}")
-        except Exception:
-            self._teardown_players()
-            self._resume_browser_playback()
-            self._set_status("Could not start audio preview.")
+                engine, note = start_preview(
+                    audio_path, video_path, start_s, offset_ms,
+                    split=split, wid=wid, volume=volume,
+                )
+            except PreviewError as exc:
+                self._dispatch(lambda e=exc: self._on_preview_failed(gen, str(e)))
+                return
+            except Exception as exc:
+                self._dispatch(lambda e=exc: self._on_preview_failed(
+                    gen, f"{type(e).__name__}: {e}"))
+                return
+            self._dispatch(lambda: self._on_preview_started(gen, engine, note))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_preview_started(self, gen: int, engine, note: str) -> None:
+        """Adopt a started engine, or discard it if the user gave up waiting."""
+        if not self._alive() or gen != self._preview_gen:
+            # Stopped (or restarted) while this was loading — the engine is
+            # already playing, so it has to be torn down rather than dropped.
+            engine.stop()
             return
-
+        self._preview_starting = False
+        self._preview = engine
+        # The offset may have moved while the engine was loading; the value it
+        # started with is stale by exactly that much.
+        engine.set_offset_ms(self._offset_ms)
         try:
-            self._mpv_video = mpv_mod.MPV(
-                wid=str(self._preview_canvas.winfo_id()),
-                # Audio track selected but muted: the split-stereo checkbox
-                # unmutes it live, and switching `aid` after load is far less
-                # reliable than switching `mute`.
-                mute="yes", idle="yes", keep_open="yes", osd_level=0,
-                input_default_bindings=False, input_vo_keyboard=False,
-                input_cursor=False, cursor_autohide="no",
-            )
+            self._preview_btn.config(text="■  Stop")
+        except tk.TclError:
+            return
+        self._preview_note = engine.status
+        self._set_status(note or engine.status or self._detect_note)
+        # Printed once per start rather than shown: it's a developer's line, and
+        # it answers "is the sync wrong because of the offset, or because the
+        # engine mis-positioned something" without needing another round trip.
+        diag = getattr(engine, "diagnostics", None)
+        if callable(diag):
             try:
-                self._mpv_video.volume = app_config.get_volume()
+                print(f"[cinema preview] {type(engine).__name__}: {diag()}")
             except Exception:
                 pass
-            video_pos = max(0.0, start_s + self._offset_ms / 1000.0)
-            self._mpv_video.loadfile(str(song.cinema_video_path),
-                                     start=f"{video_pos:.3f}")
-        except Exception:
-            self._mpv_video = None  # audio-only preview is still useful
-
-        self._apply_stereo_split()
-        self._preview_btn.config(text="■  Stop")
         self._preview_tick()
 
-    def _preview_tick(self) -> None:
-        if not self._alive() or self._mpv_audio is None:
+    def _on_preview_failed(self, gen: int, message: str) -> None:
+        if not self._alive() or gen != self._preview_gen:
             return
-        pos = None
+        self._preview_starting = False
         try:
-            pos = self._mpv_audio.time_pos
-        except Exception:
-            pos = None
+            self._preview_btn.config(text="▶  Preview")
+        except tk.TclError:
+            return
+        self._resume_browser_playback()
+        self._set_status(f"Could not start the preview: {message}")
+
+    def _push_offset_to_preview(self) -> None:
+        """Hand a new offset to a running engine.
+
+        ``settling`` while a drag is in progress: a drag fires on every motion
+        event, and the engines defer their expensive half of the work (a seek,
+        or rebuilding the shifted audio) until ``_on_drag_end`` calls this again
+        with the drag over.
+        """
+        if self._preview is None:
+            return
+        self._preview.set_offset_ms(
+            self._offset_ms, settling=self._drag_origin is not None,
+        )
+        self._report_preview_status()
+
+    def _preview_tick(self) -> None:
+        engine = self._preview
+        if not self._alive() or engine is None:
+            return
+        engine.poll()
+
+        pos = engine.song_position_s()
         if pos is None:
             # Still loading; check back shortly.
             self._preview_after_id = self.after(120, self._preview_tick)
@@ -1131,6 +1129,10 @@ class CinemaOffsetWindow(tk.Toplevel):
         self._preview_anchor_s = float(pos)
         if pos >= self._song_duration_s - 0.05 and self._song_duration_s > 0:
             self._stop_preview()
+            return
+        if getattr(engine, "ended", False):
+            self._stop_preview()
+            self._set_status("The video ended, so the preview stopped.")
             return
 
         # Keep the playhead on screen: recentre (and re-render) only once it
@@ -1142,7 +1144,6 @@ class CinemaOffsetWindow(tk.Toplevel):
             self._draw_strip_playheads()
             self._draw_ruler()
 
-        self._check_video_drift(pos)
         self._preview_after_id = self.after(100, self._preview_tick)
 
     def _draw_strip_playheads(self) -> None:
@@ -1153,73 +1154,6 @@ class CinemaOffsetWindow(tk.Toplevel):
                 canvas.create_line(x, 0, x, _STRIP_H, fill=_PLAYHEAD,
                                    width=1, tags="playhead")
 
-    def _check_video_drift(self, audio_pos: float) -> None:
-        """Hold the two players in the relationship the current offset states.
-
-        They are independent mpv instances with independent clocks, so they
-        drift. Left uncorrected that would make split-stereo listening
-        meaningless — you'd be judging the drift, not the offset.
-        """
-        if self._mpv_video is None:
-            return
-        expected = audio_pos + self._offset_ms / 1000.0
-        try:
-            actual = self._mpv_video.time_pos
-        except Exception:
-            return
-        if actual is None:
-            return
-        if expected < 0 or (self._video_duration_s and expected > self._video_duration_s):
-            self._set_video_speed(1.0)
-            return  # video legitimately isn't showing at this point
-
-        error = float(actual) - expected
-        split = self._split_stereo
-        tolerance = _DRIFT_TOLERANCE_SPLIT_S if split else _DRIFT_TOLERANCE_S
-
-        if abs(error) <= tolerance:
-            self._set_video_speed(1.0)
-            return
-        if abs(error) > _DRIFT_SEEK_THRESHOLD_S or not split:
-            # Watching: a seek is instant and the click doesn't matter, since
-            # the video's own audio is muted anyway.
-            self._set_video_speed(1.0)
-            self._seek_video(expected)
-            return
-        # Split stereo: a seek would be an obvious click in one ear, so ease
-        # the error out by trimming playback speed instead. mpv pitch-corrects
-        # by default, so ±3% is inaudible.
-        self._set_video_speed(drift_speed_trim(error))
-
-    def _set_video_speed(self, speed: float) -> None:
-        if self._mpv_video is None or self._video_speed == speed:
-            return
-        try:
-            self._mpv_video.speed = speed
-            self._video_speed = speed
-        except Exception:
-            pass
-
-    def _resync_preview_video(self) -> None:
-        """Apply an offset change to a running preview immediately."""
-        if self._mpv_video is None:
-            return
-        if self._drag_origin is not None:
-            # A drag fires on every motion event; seeking mpv that often would
-            # stutter. The 10 Hz drift check keeps it roughly in sync during
-            # the drag, and _on_drag_end snaps it exactly.
-            return
-        self._set_video_speed(1.0)  # drop any drift trim; this is a hard resync
-        self._seek_video(self._preview_anchor_s + self._offset_ms / 1000.0)
-
-    def _seek_video(self, video_pos: float) -> None:
-        if self._mpv_video is None:
-            return
-        try:
-            self._mpv_video.time_pos = max(0.0, video_pos)
-        except Exception:
-            pass
-
     def _stop_preview(self) -> None:
         if self._preview_after_id is not None:
             try:
@@ -1227,24 +1161,18 @@ class CinemaOffsetWindow(tk.Toplevel):
             except Exception:
                 pass
             self._preview_after_id = None
-        self._teardown_players()
+        self._preview_gen += 1
+        self._preview_starting = False
+        self._preview_note = ""
+        engine, self._preview = self._preview, None
+        if engine is not None:
+            engine.stop()
         try:
             self._preview_btn.config(text="▶  Preview")
             self._preview_canvas.delete("all")
         except tk.TclError:
             pass
         self._resume_browser_playback()
-
-    def _teardown_players(self) -> None:
-        self._video_speed = 1.0
-        for attr in ("_mpv_audio", "_mpv_video"):
-            player = getattr(self, attr, None)
-            setattr(self, attr, None)
-            if player is not None:
-                try:
-                    player.terminate()
-                except Exception:
-                    pass
 
     def _pause_browser_playback(self) -> None:
         """Silence the app's own playback so two audio streams don't overlap."""
