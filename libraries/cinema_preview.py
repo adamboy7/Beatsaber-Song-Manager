@@ -368,6 +368,19 @@ def pan_ears(pcm: bytes, left_gain: float, right_gain: float) -> bytes:
     return ap.tostereo(mono, SAMPLE_WIDTH, left_gain, right_gain)
 
 
+def add_pcm(a: bytes, b: bytes) -> bytes:
+    """Sum two s16le buffers, zero-padding the shorter to match.
+
+    Public because the audio replacement editor mixes the same way over
+    different sources; the padding is the part worth sharing, since summing
+    two buffers of unequal length silently truncates to the shorter one and
+    that failure is inaudible until the point where one track simply stops.
+    """
+    n = max(len(a), len(b))
+    return _audioop().add(bytes(a).ljust(n, b"\0"), bytes(b).ljust(n, b"\0"),
+                          SAMPLE_WIDTH)
+
+
 def mix_preview(song_pcm: bytes, video_pcm: bytes | None, shift_ms: int, *,
                 split: bool, ear_bleed: float = EAR_BLEED) -> bytes:
     """Build exactly what should be heard, as one stereo PCM buffer.

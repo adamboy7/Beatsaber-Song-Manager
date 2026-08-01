@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING
 import tkinter as tk
 from PIL import Image, ImageTk
 
-from libraries import app_config, cinema_video, dialogs, waveform
+from libraries import app_config, cinema_video, dialogs, timeline, waveform
 from libraries.audio_utils import (
     OnsetError,
     find_ffmpeg,
@@ -113,32 +113,16 @@ _ZOOMS: tuple[tuple[str, float | None], ...] = (
 _DEFAULT_ZOOM = 3  # 10 s — tight enough that a 20 ms nudge is ~2 px
 
 
-def _fmt_time(seconds: float) -> str:
-    seconds = max(0.0, seconds)
-    return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
+_fmt_time = timeline.fmt_time
 
 
 # ── Timeline math ────────────────────────────────────────────────────────────
 # Free functions rather than methods: this is the part worth testing, and the
 # test suite never opens a window.
 
-def clamp_window(start_s: float, length_s: float,
-                 media_duration_s: float) -> tuple[float, float] | None:
-    """Intersect ``[start, start+length]`` with ``[0, duration]``.
-
-    ffmpeg can't seek before zero or past the end, so a window running off
-    either edge is trimmed; the caller positions the shorter render by the
-    returned start. ``None`` means no overlap at all — which happens
-    legitimately at large offsets, where the visible song range maps entirely
-    outside the video.
-    """
-    if media_duration_s <= 0 or length_s <= 0:
-        return None
-    lo = max(0.0, start_s)
-    hi = min(media_duration_s, start_s + length_s)
-    if hi - lo <= 0.01:
-        return None
-    return lo, hi - lo
+clamp_window = timeline.clamp_window
+clamp_view_start = timeline.clamp_view_start
+song_time_to_x = timeline.song_time_to_x
 
 
 def drag_to_offset_ms(base_offset_ms: int, dx_px: float, px_per_s: float) -> int:
@@ -146,10 +130,12 @@ def drag_to_offset_ms(base_offset_ms: int, dx_px: float, px_per_s: float) -> int
 
     Dragging left (negative dx) shows the video's content earlier in song
     time, and "earlier" is what a larger offset means — hence the sign flip.
+    The audio replacement editor subtracts nothing in the equivalent place: its
+    offset is a plain "starts here", so its drag reads the other way round.
     """
     if px_per_s <= 0:
         return int(base_offset_ms)
-    return int(round(base_offset_ms - (dx_px / px_per_s) * 1000.0))
+    return int(round(base_offset_ms - timeline.drag_delta_ms(dx_px, px_per_s)))
 
 
 def nudge_delta_ms(step_ms: int, direction: int) -> int:
@@ -164,16 +150,6 @@ def nudge_delta_ms(step_ms: int, direction: int) -> int:
     directions on purpose.
     """
     return -direction * step_ms
-
-
-def clamp_view_start(center_s: float, span_s: float, duration_s: float) -> float:
-    """Left edge of a ``span_s`` window centred on ``center_s``, kept in range."""
-    return max(0.0, min(max(0.0, duration_s - span_s), center_s - span_s / 2))
-
-
-def song_time_to_x(song_time_s: float, view_start_s: float, px_per_s: float) -> float:
-    """Canvas x of a moment in the song's timeline."""
-    return (song_time_s - view_start_s) * px_per_s
 
 
 def video_time_to_x(video_time_s: float, offset_ms: int,

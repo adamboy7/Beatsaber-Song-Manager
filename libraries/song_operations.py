@@ -7,7 +7,7 @@ from typing import NamedTuple
 from libraries import dialogs
 
 from libraries.song_data import SongInfo, compute_song_hash
-from libraries.asset_editor import bak_files, restore_files, replace_art, replace_audio
+from libraries.asset_editor import bak_files, restore_files, replace_art
 from libraries.audio_utils import find_ffmpeg, _local_dir
 from libraries.fs_utils import atomic_write_text
 from libraries.player_data import song_level_ids, load_player_stats
@@ -167,24 +167,30 @@ def prompt_ffmpeg_download(parent: tk.Misc, on_ready=None, on_unavailable=None) 
 def replace_song_audio(
     parent: tk.Misc, song: SongInfo, media_player=None, on_replaced=None,
 ) -> bool:
-    """Open file dialog and replace audio file. Returns True if replaced.
+    """Pick a replacement audio file and open the alignment editor for it.
 
-    If ``media_player`` has this very song loaded, its libmpv instance holds an
-    open handle on the audio file — on Windows the in-place overwrite would
-    fail with a sharing violation. Stop playback (and wait for the handle to
-    release) before writing. Other components can hold the file open too (the
-    visualizer's ffmpeg spectrum process), so ``parent`` is asked to release
-    those via its ``_release_song_audio`` hook when it has one. All of this
-    happens only after the user actually picks a file, so cancelling the picker
-    leaves playback untouched.
+    Returns True only when the picked file was written *without* the editor —
+    which now never happens on the interactive path, since the editor always
+    opens. The return value is kept because the deferred ffmpeg path has always
+    returned False for "not yet, ask me later", and callers read it that way.
+
+    Why an editor rather than the overwrite this used to do: the common reason
+    to replace a song's audio is to swap in a different recording of the same
+    music, and two recordings of the same music rarely start at the same
+    instant. Writing one over the other unaligned leaves every note in the
+    chart pointing at the wrong moment. See ``audio_replace_window`` for the
+    timeline model and the padding rules.
+
+    ffmpeg is now required in every case, not just for non-OGG input: the
+    editor's waveforms come from it, and so does the aligned render. The
+    deferred download path is unchanged otherwise — ``on_ready`` reopens this
+    flow once the binaries land.
 
     ``on_replaced(was_active, was_paused)`` fires after a successful write and
     reports whether playback was interrupted to do it — ``was_active`` is True
     only when this song was the loaded, non-stopped one, letting the caller
     resume it (and re-pause if ``was_paused``). Editing any other song leaves
-    playback alone, so both flags come back False. The callback is what makes
-    the deferred path work: when ffmpeg has to be downloaded first, the write
-    happens long after this function has returned False.
+    playback alone, so both flags come back False.
     """
     if not song.audio_path:
         dialogs.show_warning("Replace Audio", "This song has no audio file to replace.")
@@ -192,46 +198,30 @@ def replace_song_audio(
     new_path_str = fd.askopenfilename(
         title="Select New Audio File",
         filetypes=[
-            ("Audio files", "*.mp3 *.wav *.ogg *.egg *.m4a"),
+            ("Audio files", "*.mp3 *.wav *.ogg *.egg *.m4a *.flac *.opus"),
             ("MP3",         "*.mp3"),
             ("WAV",         "*.wav"),
             ("OGG / EGG",   "*.ogg *.egg"),
             ("M4A",         "*.m4a"),
+            ("FLAC",        "*.flac"),
             ("All files",   "*.*"),
         ],
     )
     if not new_path_str:
         return False
 
-    def _convert(ffmpeg_path: str | None) -> bool:
-        # Sampled here rather than at pick time: on the deferred path the user
-        # may have started a different song while ffmpeg downloaded.
-        is_loaded = media_player is not None and song is media_player.playing_song
-        was_active = is_loaded and media_player.is_active
-        was_paused = was_active and media_player.is_paused
-        if is_loaded:
-            media_player.stop_and_wait()
-        release = getattr(parent, "_release_song_audio", None)
-        if release is not None:
-            try:
-                release(song)
-            except Exception:
-                pass  # best-effort; the write may still succeed
-        try:
-            replace_audio(song.audio_path, new_path_str, ffmpeg_path or "")
-        except Exception as exc:
-            dialogs.show_error("Replace Audio Failed", str(exc))
-            return False
-        if on_replaced is not None:
-            on_replaced(was_active, was_paused)
-        return True
+    def _open_editor() -> None:
+        from libraries.audio_replace_window import open_audio_replace_editor
+        open_audio_replace_editor(
+            parent, song, Path(new_path_str), media_player, on_replaced,
+        )
 
-    ffmpeg_path = find_ffmpeg()
-    if not ffmpeg_path and Path(new_path_str).suffix.lower() not in (".egg", ".ogg"):
-        prompt_ffmpeg_download(parent, on_ready=lambda: _convert(find_ffmpeg()))
+    if not find_ffmpeg():
+        prompt_ffmpeg_download(parent, on_ready=_open_editor)
         return False
 
-    return _convert(ffmpeg_path)
+    _open_editor()
+    return False
 
 
 def save_song_info(song: SongInfo, song_name: str, author: str, mapper: str) -> str | None:
