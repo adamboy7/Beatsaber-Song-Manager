@@ -71,6 +71,79 @@ def test_drag_delta_ms_is_zero_at_zero_scale():
     assert timeline.drag_delta_ms(100.0, 0.0) == 0.0
 
 
+# ── Playhead ─────────────────────────────────────────────────────────────────
+# The playhead is its own position rather than the middle of the view. The
+# first test is the bug that motivated the change: the view can't scroll left
+# of zero, so a playhead defined as its centre could never reach the start of
+# the song — the one place a user most wants to start listening.
+
+
+def test_the_playhead_can_reach_the_start_of_the_song():
+    assert timeline.clamp_playhead(0.0, 200.0) == 0.0
+    assert timeline.clamp_playhead(-5.0, 200.0) == 0.0
+
+
+def test_the_playhead_stops_at_the_limit():
+    assert timeline.clamp_playhead(500.0, 200.0) == 200.0
+
+
+def test_matching_the_length_stops_the_playhead_at_the_songs_end():
+    """The trimmed write ends there, so there is nothing past it to hear."""
+    original_s, replacement_s = 180.0, 240.0
+    limit = original_s  # AudioReplaceWindow._playhead_limit_s, box ticked
+    assert plan_replacement(original_s, replacement_s, 0,
+                            match_length=True).result_duration_s == limit
+    assert timeline.clamp_playhead(replacement_s, limit) == 180.0
+
+
+def test_an_untrimmed_replacement_lets_the_playhead_reach_its_tail():
+    original_s, replacement_s = 180.0, 240.0
+    limit = max(original_s, replacement_s)  # the box cleared
+    assert plan_replacement(original_s, replacement_s, 0,
+                            match_length=False).result_duration_s == limit
+    assert timeline.clamp_playhead(300.0, limit) == 240.0
+
+
+def test_the_view_follows_the_playhead_off_either_edge():
+    # Off the right: the window moves just enough to keep it at the edge, so
+    # the waveform slides under a playhead that stays put.
+    assert timeline.follow_playhead(72.0, 60.0, 10.0, 200.0) == 62.0
+    # Off the left, likewise.
+    assert timeline.follow_playhead(55.0, 60.0, 10.0, 200.0) == 55.0
+
+
+def test_the_view_does_not_move_while_the_playhead_is_visible():
+    assert timeline.follow_playhead(65.0, 60.0, 10.0, 200.0) == 60.0
+
+
+def test_the_view_stops_at_the_start_of_the_song():
+    """Scrolling to zero must not keep panning into negative song time."""
+    assert timeline.follow_playhead(0.0, 4.0, 10.0, 200.0) == 0.0
+
+
+def test_the_view_stops_at_the_end_of_the_axis():
+    assert timeline.follow_playhead(200.0, 150.0, 10.0, 200.0) == 190.0
+
+
+def test_a_wheel_notch_moves_the_same_fraction_at_every_zoom():
+    assert timeline.wheel_step_s(10.0) == pytest.approx(0.5)
+    assert timeline.wheel_step_s(60.0) == pytest.approx(3.0)
+
+
+def test_scrolling_down_moves_forward_in_time():
+    """Both wheel dialects: Windows' delta and X11's button pair."""
+    assert timeline.wheel_notches(delta=-120) == 1.0
+    assert timeline.wheel_notches(delta=120) == -1.0
+    assert timeline.wheel_notches(num=5) == 1.0
+    assert timeline.wheel_notches(num=4) == -1.0
+
+
+def test_a_wheel_report_of_nothing_moves_nothing():
+    assert timeline.wheel_notches() == 0.0
+    # Tk fills fields that don't apply to an event with this placeholder.
+    assert timeline.wheel_notches(delta="??", num="??") == 0.0
+
+
 # ── Sign conventions ─────────────────────────────────────────────────────────
 
 

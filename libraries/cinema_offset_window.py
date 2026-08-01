@@ -22,6 +22,15 @@ slides the video's content *left* on this window's axis, and dragging the
 video strip left increases the offset. The nudge steps (20 / 100 / 1000 ms)
 are Cinema's own, so muscle memory carries over from the in-game menu.
 
+Playhead
+--------
+Where the preview starts, and a position of its own rather than the middle of
+the visible window — the wheel moves it over either waveform, right-click drops
+it where you click, clicking the overview brings it to the start of the window
+that lands there, and the view pans to follow when it runs off an edge. It used
+to be derived from the view, which meant song time zero was unreachable: the
+view stops at zero, so its middle stops half a screen later.
+
 Preview
 -------
 Delegated to ``cinema_preview``, which offers two engines: one libmpv instance
@@ -122,7 +131,10 @@ _fmt_time = timeline.fmt_time
 
 clamp_window = timeline.clamp_window
 clamp_view_start = timeline.clamp_view_start
+clamp_playhead = timeline.clamp_playhead
+follow_playhead = timeline.follow_playhead
 song_time_to_x = timeline.song_time_to_x
+x_to_song_time = timeline.x_to_song_time
 
 
 def drag_to_offset_ms(base_offset_ms: int, dx_px: float, px_per_s: float) -> int:
@@ -222,13 +234,17 @@ class CinemaOffsetWindow(tk.Toplevel):
 
         self._zoom_index = _DEFAULT_ZOOM
         self._view_start_s = 0.0
+        self._playhead_pos_s = 0.0
+        self._pan_after_id: str | None = None
 
         # Rendered strips: PhotoImage refs must outlive the canvas item.
         self._photo_song: ImageTk.PhotoImage | None = None
         self._photo_video: ImageTk.PhotoImage | None = None
         self._photo_ov_song: ImageTk.PhotoImage | None = None
         self._photo_ov_video: ImageTk.PhotoImage | None = None
-        # Video strip provenance: (video_time_start, video_time_length).
+        # Strip provenance, so a pan can reposition what's already rendered:
+        # (start, length) in each strip's own time base.
+        self._song_strip_window: tuple[float, float] | None = None
         self._video_strip_window: tuple[float, float] | None = None
         self._ov_video_px_per_s = 0.0
         self._render_gen = 0
@@ -347,7 +363,8 @@ class CinemaOffsetWindow(tk.Toplevel):
         tk.Label(
             self,
             text="Drag the video strip, or nudge it with ← / → "
-                 "(Shift ×100 ms, Ctrl ×1000 ms). Positive offset starts the video earlier.",
+                 "(Shift ×100 ms, Ctrl ×1000 ms). Positive offset starts the video earlier. "
+                 "Scroll over a waveform to move the playhead, or right-click to place it.",
             bg=_BG, fg=SUBTEXT_COLOR, font=("Segoe UI", 8), anchor="w",
         ).pack(fill="x", pady=(0, 8), **pad)
 
@@ -413,6 +430,11 @@ class CinemaOffsetWindow(tk.Toplevel):
             canvas.bind("<Button-1>", self._on_drag_start)
             canvas.bind("<B1-Motion>", self._on_drag_move)
             canvas.bind("<ButtonRelease-1>", self._on_drag_end)
+        canvas.bind("<MouseWheel>", self._on_playhead_wheel)      # Windows / macOS
+        canvas.bind("<Button-4>", self._on_playhead_wheel)        # X11 wheel up
+        canvas.bind("<Button-5>", self._on_playhead_wheel)        # X11 wheel down
+        canvas.bind("<Button-3>", self._on_playhead_click)
+        canvas.bind("<B3-Motion>", self._on_playhead_click)
         return canvas
 
     def _nudge_button(self, parent: tk.Frame, delta_ms: int) -> None:
@@ -669,18 +691,119 @@ class CinemaOffsetWindow(tk.Toplevel):
         label = self._zoom_var.get()
         for i, (name, _) in enumerate(_ZOOMS):
             if name == label:
-                center = self._view_start_s + self._span_s / 2
+                center = (self._playhead_s() if self._playhead_x() is not None
+                          else self._view_start_s + self._span_s / 2)
                 self._zoom_index = i
                 self._center_view_on(center)
                 self._request_render()
                 return
 
     def _on_overview_click(self, event: tk.Event) -> None:
+        """Jump the view here, bringing the playhead to the top of it.
+
+        Clicking the overview is how you say "take me to this part of the
+        song", and leaving the playhead behind would mean a preview started
+        from there still played the old spot. The start of the new window
+        rather than the middle: the window is what was asked for, and its
+        start is the first thing in it.
+        """
         if self._song_duration_s <= 0:
             return
         frac = max(0.0, min(1.0, event.x / _CANVAS_W))
         self._center_view_on(frac * self._song_duration_s)
+        if not self._playhead_locked:
+            self._playhead_pos_s = clamp_playhead(self._view_start_s,
+                                                  self._playhead_limit_s)
+            self._draw_ruler()
+            self._draw_overview()
         self._request_render()
+
+    # ── Playhead ─────────────────────────────────────────────────────────────
+
+    def _playhead_s(self) -> float:
+        """Where the playhead is now, in song time."""
+        if self._preview_running:
+            return self._preview_anchor_s
+        return clamp_playhead(self._playhead_pos_s, self._playhead_limit_s)
+
+    @property
+    def _playhead_locked(self) -> bool:
+        """True while the preview engine, not the user, decides the position.
+
+        Starting counts: the engine was handed a start time a moment ago and
+        is about to report positions of its own, so a scrub in between would
+        be undone as soon as it did.
+        """
+        return self._preview_running or self._preview_starting
+
+    @property
+    def _playhead_limit_s(self) -> float:
+        """The end of the song's audio.
+
+        Not the video's: the axis is song time, the offset is what the user is
+        judging, and a video that runs a minute past the song has nothing left
+        to line up against.
+        """
+        return self._song_duration_s
+
+    def _set_playhead(self, song_time_s: float) -> None:
+        """Move the playhead, panning the view if that takes it off screen."""
+        if self._song_duration_s <= 0:
+            return
+        self._playhead_pos_s = clamp_playhead(song_time_s, self._playhead_limit_s)
+        moved_view = follow_playhead(
+            self._playhead_pos_s, self._view_start_s, self._span_s,
+            self._song_duration_s,
+        )
+        if moved_view != self._view_start_s:
+            self._view_start_s = moved_view
+            self._reposition_view()
+            self._schedule_pan_render()
+        else:
+            self._draw_strip_playheads()
+        self._draw_ruler()
+
+    def _reposition_view(self) -> None:
+        song_win = self._song_strip_window
+        song_x = (song_time_to_x(song_win[0], self._view_start_s, self._px_per_s)
+                  if song_win else None)
+        self._draw_strip(self._song_canvas, self._photo_song, song_x,
+                         "No song audio to display")
+        self._reposition_video_strips()
+
+    def _schedule_pan_render(self) -> None:
+        if self._pan_after_id is not None:
+            try:
+                self.after_cancel(self._pan_after_id)
+            except Exception:
+                pass
+        self._pan_after_id = self.after(160, self._pan_render_now)
+
+    def _pan_render_now(self) -> None:
+        self._pan_after_id = None
+        if self._alive():
+            self._request_render()
+
+    def _on_playhead_wheel(self, event: tk.Event) -> str:
+        """Wheel over a waveform scrubs the playhead. Down is later."""
+        if self._playhead_locked:
+            return "break"  # the engine owns the playhead while it plays
+        notches = timeline.wheel_notches(getattr(event, "delta", 0),
+                                         getattr(event, "num", None))
+        if notches:
+            self._set_playhead(
+                self._playhead_s() + timeline.wheel_step_s(self._span_s, notches)
+            )
+        return "break"
+
+    def _on_playhead_click(self, event: tk.Event) -> str:
+        """Right-click (or right-drag) drops the playhead where you point."""
+        if self._playhead_locked:
+            return "break"
+        self._set_playhead(
+            x_to_song_time(event.x, self._view_start_s, self._px_per_s)
+        )
+        return "break"
 
     # ── Dragging ─────────────────────────────────────────────────────────────
 
@@ -743,6 +866,7 @@ class CinemaOffsetWindow(tk.Toplevel):
             return  # a newer render superseded this one
         self._photo_song = self._load_photo(song_img)
         self._photo_video = self._load_photo(video_img)
+        self._song_strip_window = song_win
         self._video_strip_window = video_win
         # The offset this window was *computed* from, not the live one: a drag
         # that continued during the render already ate into the margin, and
@@ -793,17 +917,13 @@ class CinemaOffsetWindow(tk.Toplevel):
         x = self._playhead_x()
         if x is None:
             return
-        canvas.create_line(x, 0, x, _STRIP_H, fill=_PLAYHEAD, width=1)
+        canvas.create_line(x, 0, x, _STRIP_H, fill=_PLAYHEAD, width=1,
+                           tags="playhead")
 
     def _playhead_x(self) -> float | None:
         """Canvas x of the current playhead, or None when it's out of view."""
         x = song_time_to_x(self._playhead_s(), self._view_start_s, self._px_per_s)
         return x if 0 <= x <= _CANVAS_W else None
-
-    def _playhead_s(self) -> float:
-        if self._preview_running:
-            return self._preview_anchor_s
-        return self._view_start_s + self._span_s / 2
 
     def _reposition_video_strips(self) -> None:
         """Move the already-rendered video strips to match the live offset.
@@ -920,8 +1040,10 @@ class CinemaOffsetWindow(tk.Toplevel):
             x1 = (self._view_start_s + self._span_s) * pps
             c.create_rectangle(
                 x0, 0, max(x1, x0 + 2), _OVERVIEW_H - 1,
-                outline=_PLAYHEAD, width=1,
+                outline=SUBTEXT_COLOR, width=1,
             )
+            px = self._playhead_s() * pps
+            c.create_line(px, 0, px, _OVERVIEW_H, fill=_PLAYHEAD, width=1)
 
     # ── Preview ──────────────────────────────────────────────────────────────
 
@@ -1128,12 +1250,14 @@ class CinemaOffsetWindow(tk.Toplevel):
         self._preview_after_id = self.after(100, self._preview_tick)
 
     def _draw_strip_playheads(self) -> None:
+        """Move just the playhead lines, leaving the rendered strips alone."""
         for canvas in (self._song_canvas, self._video_canvas):
             canvas.delete("playhead")
             x = self._playhead_x()
             if x is not None:
                 canvas.create_line(x, 0, x, _STRIP_H, fill=_PLAYHEAD,
                                    width=1, tags="playhead")
+        self._draw_overview()
 
     def _stop_preview(self) -> None:
         if self._preview_after_id is not None:
@@ -1145,6 +1269,9 @@ class CinemaOffsetWindow(tk.Toplevel):
         self._preview_gen += 1
         self._preview_starting = False
         self._preview_note = ""
+        if self._preview is not None:
+            self._playhead_pos_s = clamp_playhead(self._preview_anchor_s,
+                                                  self._playhead_limit_s)
         engine, self._preview = self._preview, None
         if engine is not None:
             engine.stop()
@@ -1221,6 +1348,12 @@ class CinemaOffsetWindow(tk.Toplevel):
             return
         self._render_gen += 1  # orphan any in-flight render callbacks
         self._ov_render_gen += 1
+        if self._pan_after_id is not None:
+            try:
+                self.after_cancel(self._pan_after_id)
+            except Exception:
+                pass
+            self._pan_after_id = None
         self._stop_preview()
         if getattr(self._browser, "_cinema_offset_window", None) is self:
             self._browser._cinema_offset_window = None

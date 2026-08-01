@@ -44,6 +44,17 @@ wanted and the extra minute past the last note is harmless. Even switched off,
 a replacement that would come out shorter than the original is still padded —
 see :func:`plan_replacement`.
 
+Playhead
+--------
+Where the preview starts, and a position of its own rather than the middle of
+the visible window — the wheel moves it over either waveform, right-click drops
+it where you click, clicking the overview brings it to the start of the window
+that lands there, and the view pans to follow when it runs off an edge. How
+far right it goes is the length checkbox's business: ticked, the write ends
+where the original did and there is nothing past that to hear; cleared, a
+longer replacement keeps its tail, so the playhead runs to the end of the
+longer file.
+
 Rendering and preview
 ---------------------
 Waveforms are ffmpeg ``showwavespic`` PNGs (see ``waveform``), rendered off the
@@ -131,7 +142,10 @@ _fmt_time = timeline.fmt_time
 
 clamp_window = timeline.clamp_window
 clamp_view_start = timeline.clamp_view_start
+clamp_playhead = timeline.clamp_playhead
+follow_playhead = timeline.follow_playhead
 song_time_to_x = timeline.song_time_to_x
+x_to_song_time = timeline.x_to_song_time
 
 
 def new_time_to_x(new_time_s: float, offset_ms: int,
@@ -290,13 +304,17 @@ class AudioReplaceWindow(tk.Toplevel):
 
         self._zoom_index = _DEFAULT_ZOOM
         self._view_start_s = 0.0
+        self._playhead_pos_s = 0.0
+        self._pan_after_id: str | None = None
 
         # Rendered strips: PhotoImage refs must outlive the canvas item.
         self._photo_orig: ImageTk.PhotoImage | None = None
         self._photo_new: ImageTk.PhotoImage | None = None
         self._photo_ov_orig: ImageTk.PhotoImage | None = None
         self._photo_ov_new: ImageTk.PhotoImage | None = None
-        # New strip provenance: (new_time_start, new_time_length).
+        # Strip provenance, so a pan can reposition what's already rendered:
+        # (start, length) in each strip's own time base.
+        self._orig_strip_window: tuple[float, float] | None = None
         self._new_strip_window: tuple[float, float] | None = None
         self._ov_new_px_per_s = 0.0
         self._render_gen = 0
@@ -417,7 +435,8 @@ class AudioReplaceWindow(tk.Toplevel):
             self,
             text="Drag the replacement, or nudge it with ← / → "
                  "(Shift ×100 ms, Ctrl ×1000 ms). A positive offset starts it later, "
-                 "padding the gap with silence.",
+                 "padding the gap with silence. Scroll over a waveform to move the "
+                 "playhead, or right-click to place it.",
             bg=_BG, fg=SUBTEXT_COLOR, font=("Segoe UI", 8), anchor="w",
         ).pack(fill="x", pady=(0, 8), **pad)
 
@@ -491,6 +510,13 @@ class AudioReplaceWindow(tk.Toplevel):
             canvas.bind("<Button-1>", self._on_drag_start)
             canvas.bind("<B1-Motion>", self._on_drag_move)
             canvas.bind("<ButtonRelease-1>", self._on_drag_end)
+        # Playhead gestures work over either strip: the user is aiming at a
+        # moment in time, and both strips draw the same axis.
+        canvas.bind("<MouseWheel>", self._on_playhead_wheel)      # Windows / macOS
+        canvas.bind("<Button-4>", self._on_playhead_wheel)        # X11 wheel up
+        canvas.bind("<Button-5>", self._on_playhead_wheel)        # X11 wheel down
+        canvas.bind("<Button-3>", self._on_playhead_click)
+        canvas.bind("<B3-Motion>", self._on_playhead_click)
         return canvas
 
     def _nudge_button(self, parent: tk.Frame, delta_ms: int) -> None:
@@ -626,6 +652,20 @@ class AudioReplaceWindow(tk.Toplevel):
 
     def _on_match_toggled(self) -> None:
         self._update_plan_display()
+        self._reclamp_playhead()
+
+    def _reclamp_playhead(self) -> None:
+        """Pull the playhead in when the end moves in front of it.
+
+        Ticking "match the original length" while the playhead is out in a
+        long replacement's tail leaves it parked past the end of what will be
+        written; it comes back to the new end rather than staying there.
+        """
+        if self._preview_running or self._original_duration_s <= 0:
+            return
+        limit = self._playhead_limit_s
+        if self._playhead_pos_s > limit:
+            self._set_playhead(limit)
 
     def _update_plan_display(self) -> None:
         if self._original_duration_s <= 0 or self._new_duration_s <= 0:
@@ -745,18 +785,129 @@ class AudioReplaceWindow(tk.Toplevel):
         label = self._zoom_var.get()
         for i, (name, _) in enumerate(_ZOOMS):
             if name == label:
-                center = self._view_start_s + self._span_s / 2
+                center = (self._playhead_s() if self._playhead_x() is not None
+                          else self._view_start_s + self._span_s / 2)
                 self._zoom_index = i
                 self._center_view_on(center)
                 self._request_render()
                 return
 
     def _on_overview_click(self, event: tk.Event) -> None:
+        """Jump the view here, bringing the playhead to the top of it.
+
+        Clicking the overview is how you say "take me to this part of the
+        song", and leaving the playhead behind would mean a preview started
+        from there still played the old spot. The start of the new window
+        rather than the middle: the window is what was asked for, and its
+        start is the first thing in it.
+        """
         if self._original_duration_s <= 0:
             return
         frac = max(0.0, min(1.0, event.x / _CANVAS_W))
         self._center_view_on(frac * self._axis_duration_s)
+        if not self._playhead_locked:
+            self._playhead_pos_s = clamp_playhead(self._view_start_s,
+                                                  self._playhead_limit_s)
+            self._draw_ruler()
+            self._draw_overview()
         self._request_render()
+
+    # ── Playhead ─────────────────────────────────────────────────────────────
+
+    def _playhead_s(self) -> float:
+        """Where the playhead is now, in song time."""
+        if self._preview_running:
+            return self._preview_anchor_s
+        return clamp_playhead(self._playhead_pos_s, self._playhead_limit_s)
+
+    @property
+    def _playhead_locked(self) -> bool:
+        """True while the preview engine, not the user, decides the position.
+
+        Starting counts: the engine was handed a start time a moment ago and
+        is about to report positions of its own, so a scrub in between would
+        be undone as soon as it did.
+        """
+        return self._preview_running or self._preview_starting
+
+    @property
+    def _playhead_limit_s(self) -> float:
+        """How far right the playhead can go.
+
+        Which the length checkbox decides. Ticked, the write comes out exactly
+        as long as the audio being replaced, and there is nothing to hear past
+        that — anything the replacement has out there is about to be trimmed
+        off. Cleared, an extended mix keeps its tail, so the playhead runs to
+        the end of the longer of the two files: the same axis everything else
+        here is drawn against, and deliberately offset-independent for the
+        reason ``_axis_duration_s`` gives.
+        """
+        if self._original_duration_s <= 0:
+            return self._axis_duration_s
+        try:
+            match_length = bool(self._match_var.get())
+        except tk.TclError:
+            match_length = True
+        return self._original_duration_s if match_length else self._axis_duration_s
+
+    def _set_playhead(self, song_time_s: float) -> None:
+        """Move the playhead, panning the view if that takes it off screen."""
+        if self._original_duration_s <= 0:
+            return
+        self._playhead_pos_s = clamp_playhead(song_time_s, self._playhead_limit_s)
+        moved_view = follow_playhead(
+            self._playhead_pos_s, self._view_start_s, self._span_s,
+            self._axis_duration_s,
+        )
+        if moved_view != self._view_start_s:
+            self._view_start_s = moved_view
+            self._reposition_view()
+            self._schedule_pan_render()
+        else:
+            self._draw_strip_playheads()
+        self._draw_ruler()
+
+    def _reposition_view(self) -> None:
+        window = self._orig_strip_window
+        orig_x = (song_time_to_x(window[0], self._view_start_s, self._px_per_s)
+                  if window else None)
+        self._draw_strip(self._orig_canvas, self._photo_orig, orig_x,
+                         "The current audio has ended by here")
+        self._reposition_new_strips()
+
+    def _schedule_pan_render(self) -> None:
+        if self._pan_after_id is not None:
+            try:
+                self.after_cancel(self._pan_after_id)
+            except Exception:
+                pass
+        self._pan_after_id = self.after(160, self._pan_render_now)
+
+    def _pan_render_now(self) -> None:
+        self._pan_after_id = None
+        if self._alive():
+            self._request_render()
+
+    def _on_playhead_wheel(self, event: tk.Event) -> str:
+        """Wheel over a waveform scrubs the playhead. Down is later."""
+        if self._playhead_locked:
+            return "break"  # the engine owns the playhead while it plays
+        notches = timeline.wheel_notches(getattr(event, "delta", 0),
+                                         getattr(event, "num", None))
+        if notches:
+            self._set_playhead(
+                self._playhead_s() + timeline.wheel_step_s(self._span_s, notches)
+            )
+        return "break"
+
+    def _on_playhead_click(self, event: tk.Event) -> str:
+        """Right-click (or right-drag) drops the playhead where you point."""
+        if self._playhead_locked:
+            return "break"
+        self._set_playhead(
+            x_to_song_time(event.x, self._view_start_s, self._px_per_s)
+        )
+        return "break"
 
     # ── Dragging ─────────────────────────────────────────────────────────────
 
@@ -819,6 +970,7 @@ class AudioReplaceWindow(tk.Toplevel):
             return  # a newer render superseded this one
         self._photo_orig = self._load_photo(orig_img)
         self._photo_new = self._load_photo(new_img)
+        self._orig_strip_window = orig_win
         self._new_strip_window = new_win
         # The offset this window was *computed* from, not the live one: a drag
         # that continued during the render already ate into the margin, and
@@ -871,17 +1023,13 @@ class AudioReplaceWindow(tk.Toplevel):
     def _draw_playhead(self, canvas: tk.Canvas) -> None:
         x = self._playhead_x()
         if x is not None:
-            canvas.create_line(x, 0, x, _STRIP_H, fill=_PLAYHEAD, width=1)
+            canvas.create_line(x, 0, x, _STRIP_H, fill=_PLAYHEAD, width=1,
+                               tags="playhead")
 
     def _playhead_x(self) -> float | None:
         """Canvas x of the current playhead, or None when it's out of view."""
         x = song_time_to_x(self._playhead_s(), self._view_start_s, self._px_per_s)
         return x if 0 <= x <= _CANVAS_W else None
-
-    def _playhead_s(self) -> float:
-        if self._preview_running:
-            return self._preview_anchor_s
-        return self._view_start_s + self._span_s / 2
 
     def _reposition_new_strips(self) -> None:
         """Move the already-rendered strip to match the live offset.
@@ -993,8 +1141,10 @@ class AudioReplaceWindow(tk.Toplevel):
         x0 = self._view_start_s * pps
         x1 = (self._view_start_s + self._span_s) * pps
         c.create_rectangle(
-            x0, 0, max(x1, x0 + 2), _OVERVIEW_H - 1, outline=_PLAYHEAD, width=1,
+            x0, 0, max(x1, x0 + 2), _OVERVIEW_H - 1, outline=SUBTEXT_COLOR, width=1,
         )
+        px = self._playhead_s() * pps
+        c.create_line(px, 0, px, _OVERVIEW_H, fill=_PLAYHEAD, width=1)
 
     # ── Preview ──────────────────────────────────────────────────────────────
 
@@ -1129,12 +1279,14 @@ class AudioReplaceWindow(tk.Toplevel):
         self._preview_after_id = self.after(100, self._preview_tick)
 
     def _draw_strip_playheads(self) -> None:
+        """Move just the playhead lines, leaving the rendered strips alone."""
         for canvas in (self._orig_canvas, self._new_canvas):
             canvas.delete("playhead")
             x = self._playhead_x()
             if x is not None:
                 canvas.create_line(x, 0, x, _STRIP_H, fill=_PLAYHEAD,
                                    width=1, tags="playhead")
+        self._draw_overview()
 
     def _stop_preview(self) -> None:
         if self._preview_after_id is not None:
@@ -1145,6 +1297,9 @@ class AudioReplaceWindow(tk.Toplevel):
             self._preview_after_id = None
         self._preview_gen += 1
         self._preview_starting = False
+        if self._preview is not None:
+            self._playhead_pos_s = clamp_playhead(self._preview_anchor_s,
+                                                  self._playhead_limit_s)
         engine, self._preview = self._preview, None
         if engine is not None:
             engine.stop()
@@ -1275,6 +1430,12 @@ class AudioReplaceWindow(tk.Toplevel):
     def _close_now(self) -> None:
         self._render_gen += 1  # orphan any in-flight render callbacks
         self._ov_render_gen += 1
+        if self._pan_after_id is not None:
+            try:
+                self.after_cancel(self._pan_after_id)
+            except Exception:
+                pass
+            self._pan_after_id = None
         self._stop_preview()
         if getattr(self._browser, "_audio_replace_window", None) is self:
             self._browser._audio_replace_window = None

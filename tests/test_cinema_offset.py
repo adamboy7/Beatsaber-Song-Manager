@@ -30,8 +30,10 @@ from libraries.cinema_offset_window import (
     _DRIFT_MAX_SPEED_TRIM,
     _EAR_BLEED,
     _fmt_time,
+    clamp_playhead,
     clamp_view_start,
     clamp_window,
+    follow_playhead,
     detected_offset_ms,
     drag_to_offset_ms,
     drift_speed_trim,
@@ -159,6 +161,32 @@ def test_view_cannot_run_past_the_end():
 
 def test_span_longer_than_the_song_pins_to_zero():
     assert clamp_view_start(100.0, 500.0, 200.0) == 0.0
+
+
+# ── Playhead ─────────────────────────────────────────────────────────────────
+# Here the playhead's limit is the song's audio, not the video's: the axis is
+# song time, and a video running a minute past the song has nothing left to be
+# lined up against.
+
+def test_the_playhead_reaches_the_start_of_the_song():
+    """Which the old view-derived playhead could not: the view stops at zero,
+    so its middle stopped half a screen later."""
+    assert clamp_playhead(0.0, 200.0) == 0.0
+    assert clamp_playhead(-1.0, 200.0) == 0.0
+
+
+def test_the_playhead_stops_at_the_end_of_the_songs_audio():
+    assert clamp_playhead(260.0, 200.0) == 200.0
+
+
+def test_the_view_pans_to_follow_the_playhead():
+    assert follow_playhead(112.0, 100.0, 10.0, 200.0) == 102.0
+    assert follow_playhead(95.0, 100.0, 10.0, 200.0) == 95.0
+    assert follow_playhead(105.0, 100.0, 10.0, 200.0) == 100.0
+
+
+def test_the_view_will_not_pan_past_the_start():
+    assert follow_playhead(0.0, 3.0, 10.0, 200.0) == 0.0
 
 
 # ── Offset sign, checked against Cinema's own behaviour ──────────────────────
