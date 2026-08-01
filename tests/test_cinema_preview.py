@@ -50,6 +50,22 @@ from libraries.cinema_preview import (
 _NO_FFMPEG = shutil.which("ffmpeg") is None
 
 
+def _function_source(path: pathlib.Path, name: str) -> str:
+    """Source text of the named function, read from the file.
+
+    Used where ``inspect`` can't help: modules that import tkinter are loaded
+    against the conftest stub, so their classes are MagicMock subclasses with
+    no real methods to introspect.
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    tree = ast.parse(text)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            lines = text.splitlines()[node.lineno - 1:node.end_lineno]
+            return "\n".join(lines)
+    raise AssertionError(f"{name} not found in {path.name}")
+
+
 def _sine(path, seconds=2.0, channels=2, freq=440):
     subprocess.run(
         ["ffmpeg", "-v", "error", "-f", "lavfi",
@@ -1111,6 +1127,23 @@ def test_the_opening_seek_is_exact_not_keyframe_rounded():
     import inspect
     from libraries import cinema_preview
     src = inspect.getsource(cinema_preview.SinglePlayerPreview.start)
+    assert 'hr_seek="yes"' in src
+
+
+def test_the_visualizers_video_seek_is_exact_too():
+    """The same hazard, and there nothing corrects it afterwards.
+
+    VisualizerWindow seeks its Cinema video once at stream start and never
+    re-syncs (``_video_pos`` is read for the initial seek and for mode
+    selection, not on the tick). A keyframe-rounded seek therefore leaves the
+    picture behind the music for the whole song, and re-rolls on every restart
+    — which a resize or an offset edit triggers.
+    """
+    # Read the file rather than the object: the suite stubs tkinter, so
+    # VisualizerWindow is a MagicMock subclass and inspect can't reach it.
+    root = pathlib.Path(__file__).resolve().parent.parent
+    src = _function_source(root / "libraries" / "visualizer_window.py",
+                           "_start_mpv_video")
     assert 'hr_seek="yes"' in src
 
 

@@ -718,6 +718,7 @@ class VisualizerWindow(tk.Toplevel):
                 idle="yes",
                 keep_open="yes",  # hold the last frame at EOF (no black flash)
                 osd_level=0,
+                hr_seek="yes",
                 # Don't let mpv react to keys/clicks — space-to-pause and the
                 # fullscreen hotkeys belong to the Tk window, and mpv's own
                 # seek/pause bindings would desync the video from the audio.
