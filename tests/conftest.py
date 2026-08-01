@@ -4,10 +4,11 @@ The suite targets the UI-free logic: song parsing/hashing, search-tag
 filtering, playlist matching, player-data parsing, random picks, and
 filesystem helpers. It never opens a window.
 
-Some modules under test (browser_pagination, dialogs) import ``tkinter`` at
-module level even though the functions we exercise never touch it. On a
-headless machine without Tk (CI containers), a minimal stub is injected so
-those imports succeed; when real tkinter is available it is used untouched.
+Some modules under test (browser_pagination, browser_playlists, dialogs) import
+``tkinter`` and ``tkinterdnd2`` at module level even though the functions we
+exercise never touch them. On a headless machine without Tk (CI containers), a
+minimal stub is injected so those imports succeed; when the real packages are
+available they are used untouched.
 
 Run from the repo root:  python -m pytest tests/ -q
 """
@@ -48,6 +49,25 @@ except ImportError:
     for _name in ("tkinter", "tkinter.filedialog", "tkinter.font", "tkinter.ttk"):
         sys.modules.setdefault(_name, _make_stub(_name))
     sys.modules["tkinter"].TclError = TclError
+
+
+try:
+    import tkinterdnd2  # noqa: F401
+    HAS_REAL_DND = True
+except ImportError:
+    # Probed separately from tkinter: tkinterdnd2 is a third-party wheel, so it
+    # can be missing on a machine that has a perfectly good Tk. browser_playlists
+    # imports DND_FILES at module level for the drag-and-drop bindings, which
+    # none of the logic under test reaches.
+    HAS_REAL_DND = False
+    _dnd = types.ModuleType("tkinterdnd2")
+    # A plain string, not a MagicMock: it is only ever passed to Tk's
+    # drop_target_register, and a real value keeps the stub honest about what
+    # the module actually exports.
+    _dnd.DND_FILES = "DND_Files"
+    _dnd.DND_TEXT = "DND_Text"
+    _dnd.__getattr__ = lambda attr: MagicMock(name=f"tkinterdnd2.{attr}")
+    sys.modules.setdefault("tkinterdnd2", _dnd)
 
 
 # ── Song-folder factory ──────────────────────────────────────────────────────

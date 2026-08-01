@@ -228,6 +228,8 @@ class SongBrowser(
         self._startup_playlist: Path | None = startup_playlist
         self._startup_random_groups: list[tuple[int, str | None]] = startup_random_groups or []
         self._startup_shuffle: bool = startup_shuffle
+        self._startup_open_queue: bool = app_config.get_open_queue_on_startup()
+        self._startup_open_visualizer: bool = app_config.get_open_visualizer_on_startup()
         self._drag_prev_status: str = ""
 
         self._install_manager = InstallManager(

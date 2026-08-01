@@ -145,8 +145,15 @@ class TestQueueDurationCache:
     def test_invalidate_durations_clears_only_durations(self):
         """A row whose probe failed caches None and never retries, so the cache
         has to be dropped for it to pick up a newly-installed tool."""
-        pytest.importorskip("tkinterdnd2", reason="queue_window imports it eagerly")
         from libraries.queue_window import QueueWindow
+
+        if not isinstance(QueueWindow, type):
+            # conftest stubs tkinter on a headless machine, which makes every
+            # widget class a MagicMock — including the base QueueWindow derives
+            # from, so QueueWindow itself never becomes a real class and has no
+            # real method to call unbound. Checked directly rather than by
+            # probing for an import, so the skip states the actual precondition.
+            pytest.skip("Tk is stubbed here, so QueueWindow isn't a real class")
 
         win = SimpleNamespace(
             _durations={"a": None, "b": 12.0}, _thumbnails={"a": object()}

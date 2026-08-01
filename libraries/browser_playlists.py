@@ -150,6 +150,44 @@ class BrowserPlaylistsMixin:
                 self._play_audio(self._queue[0])
                 self._notify_queue_window()
 
+        self._open_startup_windows()
+
+    def _open_startup_windows(self):
+        """Open the sub-windows configured to appear at launch.
+
+        Last in ``_on_loaded`` on purpose. Both windows render against state
+        the startup hooks above have just built — the queue window wants the
+        playlist ``--playlist`` loaded, the visualizer wants whatever
+        ``--shuffle`` started playing — so opening them any earlier shows an
+        empty pane that fills in a beat later.
+
+        One-shot, like every other startup hook here: the flags are cleared as
+        they fire, so an F5 refresh or a post-install reload (both of which
+        re-enter ``_on_loaded``) doesn't reopen a window the user has since
+        closed.
+
+        Failures are swallowed to the status bar rather than raised. Both
+        windows have real ways to fail on a given machine — the visualizer
+        wants libmpv and ffmpeg — and ``_on_loaded`` is the callback that
+        finishes populating the library list. A preference about *window
+        layout* must not be able to leave someone staring at an empty song
+        list, so it reports and moves on; the View menu still opens either
+        window by hand afterwards.
+        """
+        for flag, opener, name in (
+            ("_startup_open_queue", self._open_queue_window, "queue"),
+            ("_startup_open_visualizer", self._open_visualizer_window, "visualizer"),
+        ):
+            if not getattr(self, flag, False):
+                continue
+            setattr(self, flag, False)
+            try:
+                opener()
+            except Exception as exc:
+                self.status_bar.config(
+                    text=f"Could not open the {name} window at startup: {exc}"
+                )
+
     # ── View filters ──────────────────────────────────────────────────────────
 
     def _is_favorite(self, song: SongInfo) -> bool:

@@ -26,6 +26,8 @@ APP_DIR_NAME = "BeatSaberSongManager"
 CONFIG_FILENAME = "config.json"
 HASH_CACHE_FILENAME = ".bsm_hash_cache.json"
 
+STARTUP_WINDOW_KEYS = ("open_queue_on_startup", "open_visualizer_on_startup")
+
 # Cache the resolved directory once found — the location never changes within a
 # run and this avoids re-running the mkdir on every hash-cache / binary probe.
 _app_data_dir: Path | None = None
@@ -82,6 +84,17 @@ def load_config() -> dict:
 
 def save_config(cfg: dict) -> bool:
     """Persist ``cfg`` to config.json. Returns True on success."""
+    the UI, so being present in the file is how anyone discovers they exist.
+    Seeding them here rather than in a separate first-run step means they land
+    on whichever write happens first — in practice the ``set_custom_levels``
+    call that creates config.json while resolving the library folder.
+
+    Only *absent* keys are filled, so this never overwrites a choice someone
+    has already made, and it is a seed rather than a migration: no version
+    number, nothing to run once, and an older config picks the keys up the next
+    time anything is saved.
+    """
+    cfg = {**{key: False for key in STARTUP_WINDOW_KEYS}, **cfg}
     try:
         config_path().write_text(
             json.dumps(cfg, indent=2), encoding="utf-8"
@@ -143,6 +156,37 @@ def set_split_preview(enabled: bool) -> bool:
     cfg = load_config()
     cfg["cinema_split_preview"] = bool(enabled)
     return save_config(cfg)
+
+# ── Startup windows ──────────────────────────────────────────────────────────
+#
+# Which auxiliary windows to open once the library has loaded. Both default to
+# False, so the out-of-the-box startup is unchanged for anyone who never edits
+# the file.
+#
+# Edited in config.json rather than through a menu, which is why ``STARTUP_
+# WINDOW_KEYS`` seeds them into every config the app writes: a preference with
+# no UI has to be *visible* somewhere or nobody will ever know it exists. That
+# also makes them the only keys this module writes without being asked to,
+# hence no setters — the app writes the default, the user writes the choice.
+#
+# Read only by ``SongBrowser`` (see ``_open_startup_windows``). Every headless
+# CLI path exits before a ``SongBrowser`` is constructed, so ``--install``,
+# ``--randomAdd`` and ``--shuffle`` never consult them — a batch job must not
+# try to open a Tk window.
+#
+# ``is True`` rather than a truthiness test throughout: these are hand-typed,
+# and ``"false"`` is a non-empty string. Reading someone's attempt to switch a
+# window *off* as a request to switch it on would be a miserable bug to chase.
+
+def get_open_queue_on_startup() -> bool:
+    """Whether to open the queue window once the library has loaded."""
+    return load_config().get("open_queue_on_startup") is True
+
+
+def get_open_visualizer_on_startup() -> bool:
+    """Whether to open the visualizer window once the library has loaded."""
+    return load_config().get("open_visualizer_on_startup") is True
+
 
 PREVIEW_ENGINES = ("single", "two-instance")
 DEFAULT_PREVIEW_ENGINE = "single"
