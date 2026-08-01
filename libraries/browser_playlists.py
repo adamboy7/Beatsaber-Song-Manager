@@ -56,6 +56,10 @@ def _ask_overwrite_or_append(parent: tk.Misc, anchor: tk.Misc | None = None) -> 
     ))
 
 
+_STARTUP_WINDOW_RETRY_MS = 50
+_STARTUP_WINDOW_MAX_ATTEMPTS = 10
+
+
 class BrowserPlaylistsMixin:
     """Song loading, view filters, .bplist I/O, and sub-window
     orchestration. Reads/writes the standard SongBrowser attributes
@@ -152,7 +156,7 @@ class BrowserPlaylistsMixin:
 
         self._open_startup_windows()
 
-    def _open_startup_windows(self):
+    def _open_startup_windows(self, _attempt: int = 0):
         """Open the sub-windows configured to appear at launch.
 
         Last in ``_on_loaded`` on purpose. Both windows render against state
@@ -166,6 +170,20 @@ class BrowserPlaylistsMixin:
         re-enter ``_on_loaded``) doesn't reopen a window the user has since
         closed.
 
+        Deferred until this window is actually on screen, because
+        ``_on_loaded`` can run before it is. The dispatcher's pump is started
+        in ``SongBrowser.__init__`` and re-arms every 20 ms, while
+        ``mainloop()`` is only entered after the constructor returns — so on a
+        library small enough to finish scanning during construction, the first
+        pump tick after mainloop starts fires this while Windows is still
+        completing the main window's initial show-and-activate. A child
+        Toplevel created in that gap gets stacked against a parent the OS has
+        not finished bringing to the foreground, and the result is a queue or
+        visualizer window that sits above the browser and won't go behind it
+        until something forces the OS to re-evaluate — which is what clicking
+        it does. Waiting for ``winfo_ismapped`` sidesteps the race rather than
+        trying to correct it afterwards.
+
         Failures are swallowed to the status bar rather than raised. Both
         windows have real ways to fail on a given machine — the visualizer
         wants libmpv and ffmpeg — and ``_on_loaded`` is the callback that
@@ -174,12 +192,22 @@ class BrowserPlaylistsMixin:
         list, so it reports and moves on; the View menu still opens either
         window by hand afterwards.
         """
-        for flag, opener, name in (
-            ("_startup_open_queue", self._open_queue_window, "queue"),
-            ("_startup_open_visualizer", self._open_visualizer_window, "visualizer"),
-        ):
-            if not getattr(self, flag, False):
-                continue
+        wanted = [
+            (flag, opener, name) for flag, opener, name in (
+                ("_startup_open_queue", self._open_queue_window, "queue"),
+                ("_startup_open_visualizer", self._open_visualizer_window,
+                 "visualizer"),
+            ) if getattr(self, flag, False)
+        ]
+        if not wanted:
+            return
+
+        if not self._ready_for_startup_windows(_attempt):
+            self.after(_STARTUP_WINDOW_RETRY_MS,
+                       lambda: self._open_startup_windows(_attempt + 1))
+            return
+
+        for flag, opener, name in wanted:
             setattr(self, flag, False)
             try:
                 opener()
@@ -187,6 +215,28 @@ class BrowserPlaylistsMixin:
                 self.status_bar.config(
                     text=f"Could not open the {name} window at startup: {exc}"
                 )
+
+        try:
+            self.lift()
+            self.focus_force()
+        except tk.TclError:
+            pass
+
+    def _ready_for_startup_windows(self, attempt: int = 0) -> bool:
+        """Whether the main window is on screen enough to parent a Toplevel.
+
+        ``attempt`` bounds the wait: a window that is iconified at launch (a
+        ``Run: minimized`` shortcut, or a session restored minimized) never
+        maps, and blocking on that forever would silently drop a preference the
+        user set. After the cap the windows open anyway — a wrong stacking
+        order is a far smaller problem than a window that never appears.
+        """
+        if attempt >= _STARTUP_WINDOW_MAX_ATTEMPTS:
+            return True
+        try:
+            return bool(self.winfo_ismapped() and self.winfo_viewable())
+        except tk.TclError:
+            return True  # being torn down; let the opener fail normally
 
     # ── View filters ──────────────────────────────────────────────────────────
 

@@ -1,15 +1,22 @@
 """Opening the queue/visualizer windows at launch.
 
-Two properties are worth holding onto here. The first is that the flags are
-*one-shot*: ``_on_loaded`` runs again on every F5 and after every install, and
-a window that reopened each time would be worse than useless. The second is
-that headless never reaches this code at all — every CLI batch path exits
-before a ``SongBrowser`` exists, which is what stops ``--randomAdd`` on a
-machine with these keys set from trying to open a Tk window.
+Three properties are worth holding onto here.
 
-The mixin methods are called unbound against a stub, so no window is ever
-constructed; what is under test is the sequencing and the flag bookkeeping, not
-Tk.
+The flags are *one-shot*: ``_on_loaded`` runs again on every F5 and after every
+install, and a window that reopened each time would be worse than useless.
+
+Headless never reaches this code at all — every CLI batch path exits before a
+``SongBrowser`` exists, which is what stops ``--randomAdd`` on a machine with
+these keys set from trying to open a Tk window.
+
+Opening is *deferred until the main window is mapped*. Creating a Toplevel
+before Windows has finished activating its parent leaves it stacked above the
+browser until clicked, which is the bug this deferral fixes; the browser is
+lifted afterwards so the launch ends with the song list in front.
+
+Nothing here constructs a real window: ``FakeBrowser`` inherits the mixin and
+stubs the two openers plus the few Tk calls they reach, so the sequencing and
+the flag bookkeeping are what get exercised.
 """
 
 from __future__ import annotations
@@ -32,15 +39,52 @@ class _StatusBar:
         self.text = text
 
 
-class FakeBrowser:
-    """Just enough SongBrowser for ``_open_startup_windows``."""
+class FakeBrowser(BrowserPlaylistsMixin):
+    """Just enough SongBrowser for ``_open_startup_windows``.
 
-    def __init__(self, queue=False, visualizer=False, fail: str | None = None):
+    Inherits the mixin so the real ``_open_startup_windows`` and its
+    ``_ready_for_startup_windows`` helper run against each other exactly as
+    they do in production; only the two window openers and the handful of Tk
+    calls they reach are stubbed out.
+
+    ``after`` runs the callback immediately rather than scheduling it, so a
+    deferral loop resolves synchronously inside ``run()``; ``mapped_after``
+    controls how many checks pass before the window reports itself on screen.
+    """
+
+    def __init__(self, queue=False, visualizer=False, fail: str | None = None,
+                 mapped_after: int = 0):
         self._startup_open_queue = queue
         self._startup_open_visualizer = visualizer
         self._fail = fail
+        self._mapped_after = mapped_after
         self.opened: list[str] = []
         self.status_bar = _StatusBar()
+        self.map_checks = 0
+        self.deferrals = 0
+        self.raised = 0
+        self.focused = 0
+
+    # ── Tk surface ───────────────────────────────────────────────────────────
+
+    def winfo_ismapped(self):
+        self.map_checks += 1
+        return self.map_checks > self._mapped_after
+
+    def winfo_viewable(self):
+        return self.map_checks > self._mapped_after
+
+    def after(self, _ms, callback):
+        self.deferrals += 1
+        callback()
+
+    def lift(self):
+        self.raised += 1
+
+    def focus_force(self):
+        self.focused += 1
+
+    # ── The windows ──────────────────────────────────────────────────────────
 
     def _open(self, name):
         if self._fail == name:
@@ -54,7 +98,7 @@ class FakeBrowser:
         self._open("visualizer")
 
     def run(self):
-        BrowserPlaylistsMixin._open_startup_windows(self)
+        self._open_startup_windows()
         return self
 
 
@@ -81,8 +125,8 @@ def test_the_flags_are_one_shot():
     browser = FakeBrowser(queue=True, visualizer=True).run()
     assert browser.opened == ["queue", "visualizer"]
 
-    BrowserPlaylistsMixin._open_startup_windows(browser)  # a later refresh
-    BrowserPlaylistsMixin._open_startup_windows(browser)
+    browser._open_startup_windows()  # a later refresh
+    browser._open_startup_windows()
     assert browser.opened == ["queue", "visualizer"]
     assert browser._startup_open_queue is False
     assert browser._startup_open_visualizer is False
@@ -92,8 +136,8 @@ def test_a_window_that_fails_to_open_does_not_abort_the_load():
     """``_on_loaded`` is what finishes populating the library list.
 
     The visualizer needs libmpv and ffmpeg and can legitimately fail on a given
-    machine. An undocumented, hand-edited debug key must not be able to leave
-    the user staring at an empty song list.
+    machine. A preference about window layout must not be able to leave the
+    user staring at an empty song list.
     """
     browser = FakeBrowser(queue=True, visualizer=True, fail="queue").run()
     assert browser.opened == ["visualizer"]  # the other one still ran
@@ -104,6 +148,74 @@ def test_a_failure_still_clears_the_flag():
     """Otherwise a broken visualizer retries on every single refresh."""
     browser = FakeBrowser(visualizer=True, fail="visualizer").run()
     assert browser._startup_open_visualizer is False
+
+
+# ── Stacking against an unmapped main window ─────────────────────────────────
+
+
+def test_opening_waits_until_the_main_window_is_on_screen():
+    """The mapping race is why the windows used to come up stuck on top.
+
+    ``_on_loaded`` can fire on the first dispatcher tick after ``mainloop()``
+    starts, while Windows is still activating the main window. A child
+    Toplevel created in that gap stacks against a parent that isn't in the
+    foreground yet and ends up above the browser until clicked.
+    """
+    browser = FakeBrowser(queue=True, mapped_after=3).run()
+
+    assert browser.deferrals == 3, "should have waited, not opened immediately"
+    assert browser.opened == ["queue"]
+
+
+def test_nothing_is_deferred_once_the_window_is_already_up():
+    """The common case — a library slow enough that mainloop settled first."""
+    browser = FakeBrowser(queue=True, visualizer=True).run()
+    assert browser.deferrals == 0
+    assert browser.opened == ["queue", "visualizer"]
+
+
+def test_the_wait_is_bounded():
+    """A window launched minimized never maps.
+
+    Waiting forever would silently drop a preference the user set, so the
+    windows open anyway once patience runs out — wrong stacking beats no
+    window at all.
+    """
+    browser = FakeBrowser(queue=True, visualizer=True, mapped_after=10_000).run()
+    assert browser.opened == ["queue", "visualizer"]
+    assert browser.deferrals < 20, "bounded, not unbounded"
+
+
+def test_no_deferral_loop_when_neither_flag_is_set():
+    """The check runs after the flags, so a default launch costs nothing."""
+    browser = FakeBrowser(mapped_after=10_000).run()
+    assert browser.deferrals == 0
+    assert browser.map_checks == 0
+
+
+def test_the_browser_ends_up_in_front():
+    """Each Toplevel takes the foreground as it is created.
+
+    Without lifting afterwards the launch state is 'whichever window was
+    constructed last' — with both keys set, the visualizer, sitting over the
+    song list the user actually came to look at.
+    """
+    browser = FakeBrowser(queue=True, visualizer=True).run()
+    assert browser.raised == 1
+    assert browser.focused == 1
+
+
+def test_the_browser_is_not_disturbed_when_nothing_opens():
+    """A default launch must not have its focus poked at all."""
+    browser = FakeBrowser().run()
+    assert (browser.raised, browser.focused) == (0, 0)
+
+
+def test_the_browser_is_still_raised_after_a_window_fails():
+    """The failure path leaves the foreground in the same odd state."""
+    browser = FakeBrowser(queue=True, fail="queue").run()
+    assert browser.opened == []
+    assert (browser.raised, browser.focused) == (1, 1)
 
 
 # ── Structural guarantees ────────────────────────────────────────────────────
