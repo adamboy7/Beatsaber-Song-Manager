@@ -416,12 +416,16 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
         "ffmpeg Not Found",
         "ffmpeg wasn't found in the app-data folder, on your PATH, or next to "
         "the app. The download installs three tools, each with its own job:\n\n"
-        "• ffmpeg — the visualizer's sound bars and audio conversion.\n"
+        "• ffmpeg — the waveforms the Cinema offset editor and the Replace "
+        "Audio tool are built on, the visualizer's sound bars, and audio "
+        "conversion.\n"
         "• ffprobe — track durations for files the built-in reader can't "
         "parse.\n"
         "• ffplay — audio playback when libmpv isn't available.\n\n"
-        "None of them are required: music playback and Cinema videos work "
-        "through libmpv, and durations come from the built-in reader.\n\n"
+        "The Cinema offset editor and Replace Audio won't open without "
+        "ffmpeg. Nothing else here is required: music playback and Cinema "
+        "videos work through libmpv, and durations come from the built-in "
+        "reader.\n\n"
         f"Download the latest static ffmpeg ({arch}) build from "
         "github.com/BtbN/FFmpeg-Builds and install it to the app-data folder now?",
     ):
@@ -484,16 +488,18 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
             # running, so it already works and nothing is broken by leaving it.
             dialogs.show_info(
                 "ffmpeg Installed",
-                "ffmpeg was installed — the visualizer's sound bars and audio "
-                "conversion are now available.\n\n"
+                "ffmpeg was installed — the Cinema offset editor, Replace "
+                "Audio, the visualizer's sound bars and audio conversion are "
+                "now available.\n\n"
                 f"{', '.join(sorted(skipped))} was in use and left as it was. "
                 "Stop playback and reinstall if you want that replaced too.",
             )
         else:
             dialogs.show_info(
                 "ffmpeg Installed",
-                "ffmpeg was installed — the visualizer's sound bars and audio "
-                "conversion are now available.",
+                "ffmpeg was installed — the Cinema offset editor, Replace "
+                "Audio, the visualizer's sound bars and audio conversion are "
+                "now available.",
             )
 
     _in_flight = True
