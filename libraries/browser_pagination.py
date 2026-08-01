@@ -690,6 +690,60 @@ class BrowserPaginationMixin:
             self.status_bar.config(text=f"{len(self.filtered)} songs shown")
         self._update_search_icon_color()
 
+    def _refilter_in_place(self, song=None) -> None:
+        """Recompute ``self.filtered`` against the current query, keeping place.
+
+        ``_render_list`` redraws ``self.filtered``; it never recomputes it. A
+        song whose data changes under an active tag therefore keeps whatever
+        membership it had until the next keystroke — write a cinema-video.json
+        while ``{cinema}:y`` is up and the row simply never appears, which is
+        exactly when the user is looking for it.
+
+        Unlike ``_do_search`` this holds the page and the scroll offset: the
+        edit was made to a row the user is looking at, and being thrown back to
+        page 1 loses their place over a change they just made themselves. When
+        ``song`` is given and it's on a page other than the current one, the
+        page follows it instead — a song that has just left the filter would
+        otherwise take its whole page's worth of rows with it, and one that has
+        just joined would be somewhere the user can't see.
+
+        The special query forms (a bare song ID, a playlist URL) don't own a
+        filter to recompute, so they're left alone.
+        """
+        query = self.search_var.get().strip()
+        if (self._pending_install_id or self._pending_playlist_url
+                or self._extract_song_id(query) or self._extract_playlist_url(query)):
+            return
+
+        scroll_pos = self.canvas.yview()[0]
+        if not query:
+            self.filtered = self.songs[:]
+        else:
+            self.filtered = filter_songs(
+                self.songs, query, self.player_stats, self.favorite_ids,
+            )
+        self.filtered = self._apply_view_filters(self.filtered)
+
+        pages = max(1, (len(self.filtered) + self.page_size - 1) // self.page_size)
+        if song is not None:
+            for idx, candidate in enumerate(self.filtered):
+                if candidate is song:
+                    self.page = idx // self.page_size
+                    break
+            else:
+                self.page = min(self.page, pages - 1)
+        else:
+            self.page = min(self.page, pages - 1)
+
+        self.selected_indices = {
+            i for i, s in enumerate(self.filtered)
+            if str(s.folder) in self._selected_folders
+        }
+        self.selected_index = max(self.selected_indices) if self.selected_indices else None
+        self._render_list()
+        self.canvas.update_idletasks()
+        self.canvas.yview_moveto(scroll_pos)
+
     def _on_search_enter(self, *_):
         if self._search_after_id:
             self.after_cancel(self._search_after_id)

@@ -81,6 +81,7 @@ class _FakeBrowser(BrowserActionsMixin):
         self.canvas = _Canvas()
         self._clipboard = clipboard
         self.rendered = 0
+        self.refiltered: list = []
         self.editor_opened: list = []
         self.offset_notified: list = []
         self.ffmpeg_warmed = 0
@@ -90,6 +91,10 @@ class _FakeBrowser(BrowserActionsMixin):
         return False
 
     def _render_list(self):
+        self.rendered += 1
+
+    def _refilter_in_place(self, song=None):
+        self.refiltered.append(song)
         self.rendered += 1
 
     def clipboard_get(self):
@@ -361,6 +366,19 @@ def test_a_successful_download_writes_the_manifest_and_opens_the_editor(
     # A fresh config is at offset 0 and therefore almost certainly out of
     # sync, so the editor is the next step, not an afterthought.
     assert browser.editor_opened == [song]
+
+
+def test_writing_the_config_recomputes_the_filter(song_factory, captured_dialogs):
+    """Not just a redraw: the song's {cinema} value has flipped, and under
+    ``{cinema}:y`` it isn't in ``filtered`` at all until the filter is re-run —
+    so the row the user just created would never appear."""
+    folder, song = song_factory()
+    browser = _FakeBrowser()
+    (folder / cinema_video.derive_video_filename(folder, "Some Video", ID)).write_bytes(b"x")
+
+    _download_result(browser, song, ok=True)
+
+    assert browser.refiltered == [song]
 
 
 # ── Backups: only where there is something to restore to ─────────────────────

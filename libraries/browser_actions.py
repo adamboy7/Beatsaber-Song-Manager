@@ -303,7 +303,7 @@ class BrowserActionsMixin:
         if err:
             dialogs.show_error("Edit Info Failed", err)
             return
-        self._render_list()
+        self._refilter_in_place(song)
         self.status_bar.config(text=f"Updated info for: {song.display_name}")
 
     # ── Cinema video download ─────────────────────────────────────────────────
@@ -856,10 +856,10 @@ class BrowserActionsMixin:
             self._cinema_configs_created.add(str(song.folder))
 
         song._parse()
-        scroll_pos = self.canvas.yview()[0]
-        self._render_list()
-        self.canvas.update_idletasks()
-        self.canvas.yview_moveto(scroll_pos)
+        # Refilter, not just redraw: the song's {cinema} value has flipped, so
+        # under that tag it now belongs on the opposite side of the filter —
+        # and when it's just joined, a redraw alone would never show the row.
+        self._refilter_in_place(song)
         self._notify_cinema_offset_changed(song)
         self.status_bar.config(text=f"Cinema video added for: {song.display_name}")
 
@@ -1162,7 +1162,7 @@ class BrowserActionsMixin:
                 save_custom_tags(song.folder, existing)
                 song.custom_tags = frozenset(existing)
             dlg.destroy()
-            self._render_list()
+            self._refilter_in_place()
 
         def _cancel(_event=None):
             dlg.destroy()
