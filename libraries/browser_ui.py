@@ -31,6 +31,61 @@ THUMBNAIL_CACHE_LIMIT = 300
 
 SOURCE_REPO_URL = "https://github.com/adamboy7/Beatsaber-Song-Manager"
 
+# What each companion binary does here, for the ⚠ ffmpeg dialog. ffmpeg itself
+# isn't listed: it's present by definition whenever that dialog is reachable.
+_FFMPEG_COMPANIONS = {
+    "ffprobe": ("reads track durations for files the built-in reader can't "
+                "parse"),
+    "ffplay": "plays audio when libmpv isn't available",
+}
+
+# The reassurance that goes with each one on its own: what still covers the job.
+_FALLBACK_NOTE = {
+    "ffprobe": ("It's only a fallback for unusual files — the built-in reader "
+                "handles the usual formats, so normal use isn't affected."),
+    "ffplay": ("It's only a fallback — playback normally runs through libmpv, "
+               "so this matters if libmpv is missing or fails to load."),
+}
+
+
+def missing_ffmpeg_companions() -> "list[str]":
+    """Which of ffprobe/ffplay are absent, in the order they're reported.
+
+    Only meaningful alongside a found ffmpeg: the three ship as one bundle, so
+    any of them missing while ffmpeg is present means the install is partial —
+    the state the Tools menu flags with ⚠ and the repair dialog explains.
+    """
+    from libraries.audio_utils import find_ffplay, find_ffprobe
+
+    finders = {"ffprobe": find_ffprobe, "ffplay": find_ffplay}
+    return [name for name in _FFMPEG_COMPANIONS if finders[name]() is None]
+
+
+def ffmpeg_incomplete_message(missing: "list[str]") -> str:
+    """Body text for the ⚠ ffmpeg dialog, naming only what's actually absent.
+
+    ``missing`` holds the companion binaries (see ``_FFMPEG_COMPANIONS``) that
+    weren't found next to a working ffmpeg. They ship in the same bundle, so one
+    reinstall supplies all of them — the text varies only to describe what's
+    currently lost, since a missing ffprobe and a missing ffplay cost different
+    things.
+    """
+    named = [n for n in _FFMPEG_COMPANIONS if n in missing]
+    if not named:
+        return ""
+    if len(named) == 1:
+        one = named[0]
+        return (f"ffmpeg was found, but it's missing {one}, which "
+                f"{_FFMPEG_COMPANIONS[one]}.\n\n{_FALLBACK_NOTE[one]}\n\n"
+                "Reinstall ffmpeg to include it again.")
+    lost = "\n".join(f"• {n} — {_FFMPEG_COMPANIONS[n]}." for n in named)
+    return (f"ffmpeg was found, but it's missing {' and '.join(named)} — only "
+            f"the converter is installed.\n\n{lost}\n\n"
+            "Both are fallbacks — durations normally come from the built-in "
+            "reader and playback from libmpv — so normal use may be "
+            "unaffected.\n\n"
+            "Reinstall ffmpeg to get the full bundle back.")
+
 
 class BrowserUIMixin:
     """Menu/window construction, thumbnail caching, list rendering,
@@ -172,7 +227,7 @@ class BrowserUIMixin:
         Windows platform) it stays clickable and opens the Mod Assistant repo in
         a browser.
         """
-        from libraries.audio_utils import find_ffmpeg, find_ffprobe
+        from libraries.audio_utils import find_ffmpeg
         from libraries.mpv_backend import find_libmpv
         from libraries.mod_assistant import find_mod_assistant
 
@@ -184,14 +239,16 @@ class BrowserUIMixin:
 
         mpv_found = find_libmpv() is not None
         ffmpeg_found = find_ffmpeg() is not None
-        ffprobe_found = find_ffprobe() is not None
 
         menu.add_command(
             label=f"{_mark(mpv_found)}mpv",
             command=None if mpv_found else self._tools_install_mpv,
             state="disabled" if mpv_found else "normal",
         )
-        ffmpeg_warn = ffmpeg_found and not ffprobe_found
+        # The bundle ships ffmpeg + ffprobe + ffplay together, and each covers a
+        # different job (conversion / duration probing / playback fallback), so
+        # a lone ffmpeg is an incomplete install however it got that way.
+        ffmpeg_warn = ffmpeg_found and bool(missing_ffmpeg_companions())
         if ffmpeg_found and not ffmpeg_warn:
             ffmpeg_label = f"{_mark(True)}ffmpeg"
             ffmpeg_command = None
@@ -218,12 +275,14 @@ class BrowserUIMixin:
     def _tools_ffmpeg_warning(self):
         """Explain the ⚠ ffmpeg state and offer a fix.
 
-        Reached when ffmpeg is present but ffprobe is missing — an incomplete
-        build. Durations are normally read by the built-in reader (mutagen);
-        ffprobe is only its fallback for files it can't parse, so this is
-        informational rather than a blocker. The single fix is reinstalling
-        ffmpeg, which bundles ffprobe. mpv is unrelated to this path and is no
-        longer offered here.
+        Reached when ffmpeg is present but ffprobe, ffplay or both are missing —
+        an incomplete build. All three ship in the same bundle and each has its
+        own job: ffmpeg converts, ffprobe reads durations the built-in reader
+        can't, and ffplay is the playback backend when libmpv is unavailable.
+        Both missing pieces are fallbacks, so this is informational rather than
+        a blocker, and the single fix either way is reinstalling ffmpeg. The
+        message names only what's actually absent. mpv is unrelated to this path
+        and is no longer offered here.
 
         Built on the shared ``dialogs`` helpers so it matches the ffmpeg
         installer's look: dark theme, Warning.png title-bar icon, ⚠ glyph and
@@ -232,6 +291,10 @@ class BrowserUIMixin:
         centered under the message.
         """
         from libraries import dialogs
+
+        message = ffmpeg_incomplete_message(missing_ffmpeg_companions())
+        if not message:
+            return  # nothing missing any more (a reinstall landed since)
 
         dlg = dialogs.themed_toplevel(self, "ffmpeg incomplete",
                                       icon=dialogs._ICON_PATH, modal=True)
@@ -244,12 +307,7 @@ class BrowserUIMixin:
                      side="left", anchor="n", padx=(0, 16))
         tk.Label(
             body,
-            text=("ffmpeg was found, but it's missing ffprobe. Audio durations "
-                  "are read by a built-in reader that handles the usual "
-                  "formats, so normal use isn't affected — ffprobe is only a "
-                  "fallback for unusual files.\n\n"
-                  "Reinstall ffmpeg to include ffprobe and restore that "
-                  "fallback."),
+            text=message,
             font=("Segoe UI", 10), bg=dialogs.DIALOG_BG, fg=TEXT_COLOR,
             justify="left", wraplength=360,
         ).pack(side="left", anchor="n")

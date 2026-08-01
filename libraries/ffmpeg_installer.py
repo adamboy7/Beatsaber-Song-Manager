@@ -415,9 +415,13 @@ def offer_download_once(dest_dir: Path, dispatch_fn, status_cb=None,
     if not dialogs.ask_yes_no(
         "ffmpeg Not Found",
         "ffmpeg wasn't found in the app-data folder, on your PATH, or next to "
-        "the app. It's used for the visualizer's sound bars and audio "
-        "conversion. Music playback and Cinema videos work through libmpv "
-        "without it.\n\n"
+        "the app. The download installs three tools, each with its own job:\n\n"
+        "• ffmpeg — the visualizer's sound bars and audio conversion.\n"
+        "• ffprobe — track durations for files the built-in reader can't "
+        "parse.\n"
+        "• ffplay — audio playback when libmpv isn't available.\n\n"
+        "None of them are required: music playback and Cinema videos work "
+        "through libmpv, and durations come from the built-in reader.\n\n"
         f"Download the latest static ffmpeg ({arch}) build from "
         "github.com/BtbN/FFmpeg-Builds and install it to the app-data folder now?",
     ):
