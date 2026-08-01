@@ -83,7 +83,9 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> bool:
-    """Persist ``cfg`` to config.json. Returns True on success."""
+    """Persist ``cfg`` to config.json, seeding startup-window defaults.
+
+    The two ``*_on_startup`` keys are the only preferences with no control in
     the UI, so being present in the file is how anyone discovers they exist.
     Seeding them here rather than in a separate first-run step means they land
     on whichever write happens first — in practice the ``set_custom_levels``
