@@ -616,6 +616,7 @@ class BrowserActionsMixin:
             self._render_list()
             self.canvas.update_idletasks()
             self.canvas.yview_moveto(scroll_pos)
+            self._notify_cinema_offset_changed(song)
             self.status_bar.config(text=f"Video downloaded for: {song.display_name}")
         elif attempt == 1:
             self.status_bar.config(

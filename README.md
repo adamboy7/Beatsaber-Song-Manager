@@ -319,6 +319,7 @@ Access via **View → Visualizer**. Shows a real-time frequency-bar spectrum syn
 - **Space** — play/pause
 - **F11 / Alt+Enter** — toggle fullscreen (video or spectrum fills the screen edge to edge)
 - **Escape** — exit fullscreen
+- **Right-click** — View Queue, View Song, Save Image…, plus the Cinema action that fits the current song: **Add Cinema Video…** when it has no config, **Download Video** when it has one whose video isn't downloaded, or **Cinema Offset…** when the video is there (Shift+right-click adds **Replace Cinema Video…**, as in the song list). Picking any of them drops out of fullscreen, so the dialog it opens isn't stranded behind the window.
 
 ### Cinema Video Support
 
@@ -326,7 +327,7 @@ Many maps ship a `cinema-video.json` for the [Cinema mod](https://github.com/Kev
 
 **Playback** — if the referenced video file is present in the song folder, the Visualizer plays it instead of the spectrum, seeked to stay in sync with the song's audio and honoring Cinema's configured offset and duration. Outside the video's window (before the offset, or after it ends), the spectrum shows instead. Playback uses libmpv embedded directly into the Visualizer window — hardware-accelerated, with pause/resume tracked frame-accurately against the audio — falling back to the spectrum if libmpv or the video is unavailable.
 
-**Download** — the manifest often references a video you haven't downloaded in-game yet. Right-click the song → **Download Video** fetches it with yt-dlp using the same format and filename Cinema would (720p MP4, saved into the song folder), with download progress in the status bar. Failed downloads retry once automatically. Once finished, the video is immediately available in-game and in the Visualizer.
+**Download** — the manifest often references a video you haven't downloaded in-game yet. Right-click the song (in the list, or in the Visualizer) → **Download Video** fetches it with yt-dlp using the same format and filename Cinema would (720p MP4, saved into the song folder), with download progress in the status bar. Failed downloads retry once automatically. Once finished, the video is immediately available in-game and in the Visualizer.
 
 **Add your own** — for a song with no `cinema-video.json`, right-click → **Add Cinema Video…** and paste a YouTube link. Normally this means launching the game and searching from Cinema's in-game menu; here it's one paste. The dialog prefills from your clipboard if you've already copied a link, and accepts every form YouTube hands out — `watch?v=`, `youtu.be/`, Shorts, embeds, or a bare video ID.
 
@@ -334,7 +335,7 @@ The app fetches the video's title, channel and duration with yt-dlp, downloads t
 
 The offset editor (Shift+right-click → **Cinema Offset…**) opens automatically afterwards — a config created from scratch starts at offset 0 and is essentially never in sync. It draws the song's waveform above the video's on a shared timeline: drag the video strip or nudge it with ← / → (Shift ×100 ms, Ctrl ×1000 ms), scroll the wheel over either waveform to move the playhead — right-click drops it where you point, clicking the overview strip up top jumps the view and takes the playhead to the start of it, the view pans to follow, and it stops at the start and end of the song — and **Preview** plays from the playhead with the offset applied live. Syncing a config you just created doesn't leave a `.bak`: there's no earlier version to restore to, and the file has never been anything but yours.
 
-**Replace** — hold Shift and right-click a song that already has a video for **Replace Cinema Video…**. This confirms first: a mapper's config carries screen placement, colour correction and environment changes that can't be reconstructed from a YouTube link. The original is backed up, so **Restore Files** undoes it.
+**Replace** — hold Shift and right-click a song that already has a video for **Replace Cinema Video…** — in the song list or in the Visualizer. This confirms first: a mapper's config carries screen placement, colour correction and environment changes that can't be reconstructed from a YouTube link. The original is backed up, so **Restore Files** undoes it.
 
 yt-dlp is looked for in Beat Saber's `Libs` folder (where Cinema keeps it), then next to the application — the same place as ffmpeg. If it isn't found, the app offers to download it for you.
 

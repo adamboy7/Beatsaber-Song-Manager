@@ -106,6 +106,44 @@ def _resume_pid(pid: int) -> bool:
         return False
 
 
+def cinema_menu_entries(song: "SongInfo", *, downloading: bool,
+                        shift_held: bool = False
+                        ) -> list[tuple[str, str, bool]]:
+    """The Cinema right-click entries for ``song``, as (label, action, enabled).
+
+    Three states, and they're the song folder's rather than the visualizer's:
+    no cinema-video.json at all, one whose video is downloaded, and one whose
+    video isn't. Offering "Cinema Offset…" alone (the old behaviour) meant the
+    only songs you could act on from here were the ones already playing a
+    video — the ones least in need of anything. The song on screen is exactly
+    the one you've just noticed has no video, so all three belong on the menu.
+
+    "Replace Cinema Video…" needs Shift, matching the song list. It overwrites
+    a mapper's config — screen placement, colour correction, environment
+    changes, none of it reconstructible from a YouTube link — and sits directly
+    below the offset editor most right-clicks here are aiming for. Adding and
+    downloading create what wasn't there and stay unmodified.
+
+    ``downloading`` greys out everything that would start a second yt-dlp run
+    for this song. The offset editor stays live — it only rewrites the config
+    that's already there, and it's the one useful thing to be doing while a
+    download runs.
+
+    Split out from the window so the decision is testable without Tk.
+    """
+    if song.has_playable_cinema_video:
+        entries = [("Cinema Offset…", "offset", True)]
+        if shift_held:
+            entries.append(
+                ("Replace Cinema Video…", "replace", not downloading))
+        return entries
+    if not song.has_cinema_video:
+        return [("Add Cinema Video…", "add", not downloading)]
+    if song.cinema_video_id:
+        return [("Download Video", "download", not downloading)]
+    return []
+
+
 class VisualizerWindow(tk.Toplevel):
     def __init__(self, browser: "SongBrowser"):
         super().__init__(browser)
@@ -1110,14 +1148,57 @@ class VisualizerWindow(tk.Toplevel):
                          command=self._browser._open_queue_window)
         menu.add_command(label="View Song", command=lambda: self._view_song(song))
         menu.add_command(label="Save Image…", command=lambda: self._save_cover_art(song))
-        if song.has_playable_cinema_video:
-            menu.add_separator()
-            menu.add_command(label="Cinema Offset…",
-                             command=lambda: self._edit_cinema_offset(song))
+        self._add_cinema_entries(menu, song, shift_held=bool(event.state & 0x1))
         menu.tk_popup(event.x_root, event.y_root)
 
+    def _add_cinema_entries(self, menu: tk.Menu, song: "SongInfo", *,
+                            shift_held: bool = False) -> None:
+        """Append the Cinema section, whichever of the three states applies."""
+        actions = {
+            "offset": self._edit_cinema_offset,
+            "add": self._add_cinema_video,
+            "replace": self._replace_cinema_video,
+            "download": self._download_cinema_video,
+        }
+        downloading = str(song.folder) in getattr(
+            self._browser, "_cinema_downloads_active", ())
+        entries = cinema_menu_entries(song, downloading=downloading,
+                                      shift_held=shift_held)
+        if not entries:
+            return
+        menu.add_separator()
+        for label, action, enabled in entries:
+            command = actions[action]
+            menu.add_command(label=label,
+                             command=lambda c=command: c(song),
+                             state="normal" if enabled else "disabled")
+
+    def _leave_fullscreen_for_dialog(self) -> None:
+        """Drop fullscreen before handing off to a browser-owned window.
+
+        Every Cinema action opens something parented to the main window — a
+        link prompt, a confirmation, the offset editor. Fullscreen keeps this
+        window on top of all of them, so a modal would sit behind an
+        unresponsive-looking visualizer with no way to reach it.
+        """
+        if self._is_fullscreen:
+            self._exit_fullscreen()
+
     def _edit_cinema_offset(self, song: "SongInfo"):
+        self._leave_fullscreen_for_dialog()
         self._browser._open_cinema_offset_editor(song)
+
+    def _add_cinema_video(self, song: "SongInfo"):
+        self._leave_fullscreen_for_dialog()
+        self._browser._add_cinema_video(song)
+
+    def _replace_cinema_video(self, song: "SongInfo"):
+        self._leave_fullscreen_for_dialog()
+        self._browser._add_cinema_video(song, replace=True)
+
+    def _download_cinema_video(self, song: "SongInfo"):
+        self._leave_fullscreen_for_dialog()
+        self._browser._download_cinema_video(song)
 
     def cinema_offset_changed(self, song: "SongInfo") -> None:
         """Restart the video at the song's current position after an offset edit.
