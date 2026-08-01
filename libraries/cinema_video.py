@@ -143,6 +143,38 @@ def save_offset(folder: Path, offset_ms: int) -> Path:
     return path
 
 
+def save_video_file(folder: Path, filename: str) -> Path:
+    """Write ``filename`` into the folder's ``cinema-video.json`` as videoFile.
+
+    Only used to repair a name the filesystem can't represent. Cinema takes
+    ``videoFile`` verbatim (``VideoConfig.GetVideoFileName``), so a mapper who
+    pastes a video title containing a slash leaves the mod downloading into a
+    subfolder it never looks in again — the map reads as "not downloaded"
+    in-game no matter how many times the user tries. Correcting the stored
+    name is the only thing that makes the mod agree with what's on disk.
+
+    Backed up to ``cinema-video.json.bak`` on the first edit, like
+    ``save_offset``, so "Restore Files" undoes it. No ``userSettings`` is
+    recorded: that flag is Cinema's marker for an *offset* the user moved off
+    the mapper's value, and this isn't a preference to reset to.
+    """
+    path, data = load_config(folder)
+
+    if data.get("videoFile") == filename:
+        return path
+
+    data["videoFile"] = filename
+
+    bak = path.with_name(path.name + ".bak")
+    if not bak.exists():
+        shutil.copy2(path, bak)
+
+    atomic_write_text(
+        path, json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    )
+    return path
+
+
 def _record_user_override(data: dict) -> None:
     """Mark a mapper-provided offset as user-customised, Cinema-style.
 

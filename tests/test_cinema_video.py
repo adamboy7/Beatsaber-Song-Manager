@@ -168,6 +168,39 @@ def test_existing_user_settings_are_left_alone(tmp_path):
     assert read_config(path)["userSettings"]["originalOffset"] == -3000
 
 
+# ── videoFile repair ─────────────────────────────────────────────────────────
+
+def test_save_video_file_rewrites_an_impossible_name(tmp_path):
+    # 22e58: the mapper pasted the raw video title, slash included, so Cinema
+    # downloads into a subfolder and then reports the map as not downloaded.
+    path = write_config(tmp_path, {
+        **BASE, "videoFile": "徳川カップヌードル禁止令 / 草薙寧々.mp4",
+        "configByMapper": True,
+    })
+    cinema_video.save_video_file(tmp_path, "徳川カップヌードル禁止令 _ 草薙寧々.mp4")
+    data = read_config(path)
+    assert data["videoFile"] == "徳川カップヌードル禁止令 _ 草薙寧々.mp4"
+    # Everything else survives, and this isn't an offset override.
+    assert data["offset"] == -1200
+    assert data["videoID"] == "dQw4w9WgXcQ"
+    assert "userSettings" not in data
+
+
+def test_save_video_file_backs_up_once(tmp_path):
+    path = write_config(tmp_path, BASE)
+    cinema_video.save_video_file(tmp_path, "first.mp4")
+    bak = path.with_name(path.name + ".bak")
+    assert read_config(bak)["videoFile"] == "Some Video.mp4"
+    cinema_video.save_video_file(tmp_path, "second.mp4")
+    assert read_config(bak)["videoFile"] == "Some Video.mp4"  # still the original
+
+
+def test_save_video_file_skips_a_no_op_write(tmp_path):
+    path = write_config(tmp_path, BASE)
+    cinema_video.save_video_file(tmp_path, "Some Video.mp4")
+    assert not path.with_name(path.name + ".bak").exists()
+
+
 def test_original_offset_ms_helper():
     assert cinema_video.original_offset_ms({}) is None
     assert cinema_video.original_offset_ms({"userSettings": {}}) is None

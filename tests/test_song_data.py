@@ -180,6 +180,25 @@ class TestCinema:
         # …but a fresh download still goes to the flat, legal name.
         assert song.cinema_video_file == "徳川カップヌードル禁止令 _ 草薙寧々 & ネネロボ.mp4"
 
+    def test_illegal_filename_flag_drives_the_repair_offer(self, song_factory):
+        folder, _ = song_factory()
+        (folder / "cinema-video.json").write_text(json.dumps({
+            "videoID": "abc", "videoFile": "a / b.mp4",
+        }), encoding="utf-8")
+        assert SongInfo(folder).has_illegal_cinema_filename
+
+        (folder / "cinema-video.json").write_text(json.dumps({
+            "videoID": "abc", "videoFile": "clip.mp4",
+        }), encoding="utf-8")
+        assert not SongInfo(folder).has_illegal_cinema_filename
+
+        # A manifest with no videoFile at all is Cinema's normal case, not a
+        # broken one — there's nothing to rewrite.
+        (folder / "cinema-video.json").write_text(json.dumps({
+            "videoID": "abc", "title": "Some: Title",
+        }), encoding="utf-8")
+        assert not SongInfo(folder).has_illegal_cinema_filename
+
     def test_legal_video_file_is_left_alone(self, tmp_path, song_factory):
         folder, _ = song_factory()
         assert _cinema_video_filename(folder, "feat. Miku.mp4") == "feat. Miku.mp4"

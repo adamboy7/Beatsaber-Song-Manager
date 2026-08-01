@@ -355,6 +355,8 @@ class BrowserActionsMixin:
         if str(song.folder) in self._cinema_downloads_active:
             return
 
+        self._offer_cinema_filename_fix(song)
+
         yt_dlp = self._find_yt_dlp()
         if yt_dlp is not None:
             self._run_yt_dlp(yt_dlp, song)
@@ -422,6 +424,95 @@ class BrowserActionsMixin:
                 ))
 
         threading.Thread(target=do_download, daemon=True).start()
+
+    def _offer_cinema_filename_fix(self, song: SongInfo) -> None:
+        """Offer to repair a videoFile the filesystem can't represent.
+
+        Some mappers paste the raw video title into ``videoFile``; when it
+        carries a slash (22e58's "…禁止令 / 草薙寧々…" is the one that turned
+        this up) Cinema hands yt-dlp a nested path, the video lands in a
+        subfolder, and the mod's own File.Exists check never finds it again —
+        so in-game the map sits at "not downloaded" however often it's
+        re-downloaded. We download to a flattened name either way, so the
+        video works here regardless; the rewrite is what makes it work in Beat
+        Saber, and it edits the mapper's config, so it's the user's call.
+        """
+        if not song.has_illegal_cinema_filename:
+            return
+
+        # A video downloaded before the fix is sitting in the subfolder yt-dlp
+        # made for it; move it rather than make the user fetch it twice.
+        stray = song.cinema_video_path
+        target = song.folder / song.cinema_video_file
+        movable = (
+            stray is not None
+            and stray.parent != song.folder
+            and song.folder in stray.parents
+            and not target.exists()
+        )
+
+        message = (
+            f"This song's cinema-video.json names its video:\n\n"
+            f"    {song.cinema_video_file_raw}\n\n"
+            f"That isn't a name a filesystem can store, so Cinema downloads "
+            f"the video somewhere it can't find again — in-game the map stays "
+            f"at \"not downloaded\" no matter how often you retry.\n\n"
+            f"Fix the config to use:\n\n"
+            f"    {song.cinema_video_file}\n\n"
+        )
+        message += (
+            "The video you already have is moved to match, so nothing is "
+            "re-downloaded. "
+            if movable else ""
+        )
+        message += (
+            "The original config is backed up and \"Restore Files\" undoes "
+            "this. Choose No to leave the mapper's config alone — the video "
+            "still plays here, but not in Beat Saber."
+        )
+        if not dialogs.ask_yes_no(
+            "Fix Video Filename?", message, parent=self, default="yes",
+        ):
+            return
+
+        try:
+            from libraries import cinema_video
+            if movable and stray is not None:
+                stray.replace(target)
+                self._prune_empty_dirs(stray.parent, song.folder)
+            cinema_video.save_video_file(song.folder, song.cinema_video_file)
+        except (OSError, ValueError) as exc:
+            dialogs.show_error(
+                "Fix Video Filename",
+                f"Couldn't update cinema-video.json:\n\n{exc}",
+                parent=self,
+            )
+        song._parse()
+
+    def _fix_cinema_filename(self, song: SongInfo) -> None:
+        """Context-menu entry point: repair the manifest, then redraw the row.
+
+        The download flow offers the same fix on its way past; this exists for
+        the song whose video is already downloaded, where "Download Video"
+        never appears.
+        """
+        self._offer_cinema_filename_fix(song)
+        scroll_pos = self.canvas.yview()[0]
+        self._render_list()
+        self.canvas.update_idletasks()
+        self.canvas.yview_moveto(scroll_pos)
+
+    @staticmethod
+    def _prune_empty_dirs(leaf: Path, stop_at: Path) -> None:
+        """Remove the empty folders left behind between ``leaf`` and the song
+        folder. Anything still holding a file is left alone."""
+        current = leaf
+        while current != stop_at and stop_at in current.parents:
+            try:
+                current.rmdir()
+            except OSError:
+                return
+            current = current.parent
 
     def _run_yt_dlp(self, yt_dlp: Path, song: SongInfo, attempt: int = 1):
         """Run yt-dlp the way Cinema does and refresh the song when done.
@@ -590,6 +681,7 @@ class BrowserActionsMixin:
                              command=lambda: self.search_var.set(
                                  '{mapper}:"%s"' % song.mapper.replace('"', '')),
                              state="normal" if song.mapper else "disabled")
+        offer_fix = song.has_illegal_cinema_filename and song.has_playable_cinema_video
         if song.has_cinema_video and not song.has_playable_cinema_video \
                 and song.cinema_video_id:
             menu.add_separator()
@@ -601,6 +693,13 @@ class BrowserActionsMixin:
             menu.add_separator()
             menu.add_command(label="Cinema Offset…",
                              command=lambda: self._open_cinema_offset_editor(song))
+            if offer_fix:
+                menu.add_command(label="Fix Video Filename…",
+                                 command=lambda: self._fix_cinema_filename(song))
+        elif offer_fix:
+            menu.add_separator()
+            menu.add_command(label="Fix Video Filename…",
+                             command=lambda: self._fix_cinema_filename(song))
         menu.add_separator()
         menu.add_command(label="Open Folder",
                          command=lambda: self._open_folder(song.folder))

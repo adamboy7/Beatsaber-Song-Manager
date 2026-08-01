@@ -130,7 +130,8 @@ class SongInfo:
         "diff_labels", "difficulties", "song_hash", "custom_tags",
         "mod_required", "mod_suggested", "has_cinema_video",
         "cinema_video_path", "cinema_video_offset_ms", "cinema_video_duration_s",
-        "cinema_video_id", "cinema_video_file", "search_blob",
+        "cinema_video_id", "cinema_video_file", "cinema_video_file_raw",
+        "search_blob",
     )
 
     def __init__(self, folder: Path, info_path: Path | None = None):
@@ -160,6 +161,7 @@ class SongInfo:
         # (explicit videoFile, or derived from the title like Cinema does).
         self.cinema_video_id: str = ""
         self.cinema_video_file: str = ""
+        self.cinema_video_file_raw: str = ""
         self.search_blob: str = ""
         # Use st_birthtime (Windows/macOS) with st_ctime as fallback.
         # A racy filesystem (folder deleted mid-scan, permission denied)
@@ -317,6 +319,7 @@ class SongInfo:
                 return
             self.cinema_video_id = str(data.get("videoID", "") or "")
             raw_filename = str(data.get("videoFile", "") or "")
+            self.cinema_video_file_raw = raw_filename
             if raw_filename:
                 video_filename = _cinema_video_filename(self.folder, raw_filename)
             else:
@@ -332,6 +335,7 @@ class SongInfo:
                     video_filename = self.cinema_video_id + ".mp4"
             if video_filename:
                 self.cinema_video_file = video_filename
+                self.cinema_video_path = None
                 vp = self.folder / video_filename
                 if vp.exists():
                     self.cinema_video_path = vp
@@ -353,6 +357,21 @@ class SongInfo:
     def has_playable_cinema_video(self) -> bool:
         """True when a Cinema video is configured *and* the file is downloaded."""
         return self.cinema_video_path is not None
+
+    @property
+    def has_illegal_cinema_filename(self) -> bool:
+        """True when the manifest's videoFile can't exist as written.
+
+        Cinema stores the name verbatim and then can never find the file it
+        downloaded, so the map is stuck at "not downloaded" in-game. We can
+        still play it, but only a manifest rewrite fixes the mod — hence the
+        offer before downloading.
+        """
+        return bool(
+            self.cinema_video_file_raw
+            and self.cinema_video_file
+            and self.cinema_video_file_raw != self.cinema_video_file
+        )
 
     @property
     def bpm_str(self) -> str:
