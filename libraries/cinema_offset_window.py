@@ -200,10 +200,15 @@ def _render_one(path, window, px_per_s: float, color: str, height: int,
 class CinemaOffsetWindow(tk.Toplevel):
     """Editor for one song's Cinema video offset."""
 
-    def __init__(self, browser: "SongBrowser", song: "SongInfo"):
+    def __init__(self, browser: "SongBrowser", song: "SongInfo",
+                 *, allow_backup: bool = True):
         super().__init__(browser)
         self._browser = browser
         self._song = song
+        # False for a config this app just created from scratch: there is no
+        # prior state to restore to, so a .bak would only preserve our own
+        # unsynced offset-0 config. See save_offset.
+        self._allow_backup = allow_backup
 
         self._original_offset_ms = int(song.cinema_video_offset_ms)
         self._offset_ms = self._original_offset_ms
@@ -1180,7 +1185,8 @@ class CinemaOffsetWindow(tk.Toplevel):
     def _save(self) -> None:
         offset = self._offset_ms
         try:
-            cinema_video.save_offset(self._song.folder, offset)
+            cinema_video.save_offset(self._song.folder, offset,
+                                     backup=self._allow_backup)
         except FileNotFoundError:
             dialogs.show_error(
                 "Save Failed",
@@ -1248,6 +1254,11 @@ def open_offset_editor(browser: "SongBrowser", song: "SongInfo") -> None:
     Refuses politely rather than opening a broken window when the video isn't
     downloaded; offers to fetch ffmpeg when it's missing, since every waveform
     here comes from it.
+
+    Whether saving writes a ``.bak`` is decided here rather than passed in, so
+    that it holds however the editor was reached — "Add Cinema Video…" opens
+    it directly, but the user can just as easily close it and come back via
+    Shift+right-click, and the answer shouldn't change between the two.
     """
     if not song.has_playable_cinema_video:
         dialogs.show_info(
@@ -1285,4 +1296,7 @@ def open_offset_editor(browser: "SongBrowser", song: "SongInfo") -> None:
             ensure(on_ready=lambda: open_offset_editor(browser, song))
         return
 
-    browser._cinema_offset_window = CinemaOffsetWindow(browser, song)
+    created_here = getattr(browser, "_cinema_configs_created", ())
+    browser._cinema_offset_window = CinemaOffsetWindow(
+        browser, song, allow_backup=str(song.folder) not in created_here,
+    )

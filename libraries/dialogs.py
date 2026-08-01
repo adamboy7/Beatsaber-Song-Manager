@@ -13,7 +13,9 @@ migrate with a straight rename:
     messagebox.askyesno("Q", msg, default=...) -> dialogs.ask_yes_no("Q", msg, default=...)
     messagebox.askokcancel("Q", msg)           -> dialogs.ask_ok_cancel("Q", msg)
 
-``show_*`` return ``None``; ``ask_*`` return ``bool``. Extra keyword arguments
+``show_*`` return ``None``; ``ask_*`` return ``bool``, except ``ask_string``
+(one line of text, or ``None`` when cancelled) and ``ask_custom`` (the chosen
+button's value). Extra keyword arguments
 accepted by ``messagebox`` (``icon=``, ``parent=``, ``default=``) are accepted
 here too so existing calls keep working unchanged; severity is conveyed by a
 colored glyph in the body regardless of any ``icon=`` value.
@@ -425,6 +427,70 @@ def ask_ok_cancel(
         buttons=[("OK", True, True), ("Cancel", False, False)],
         parent=parent, default_value=default_value,
     ))
+
+
+def ask_string(
+    title: str,
+    prompt: str,
+    *,
+    initial: str = "",
+    parent: Optional[tk.Misc] = None,
+    width: int = 46,
+    ok_label: str = "OK",
+) -> Optional[str]:
+    """Prompt for one line of text. Returns the entry's contents, or ``None``
+    if the dialog was cancelled, escaped or closed.
+
+    ``_run_dialog`` can't do this — it has no entry field — so this builds on
+    ``themed_toplevel``/``themed_entry`` directly. The returned string is
+    stripped; both cancel and an empty entry are falsy, so callers that just
+    want "did I get something" can test the result directly.
+
+    ``initial`` is pre-selected, so typing replaces it and Ctrl+V/Enter is the
+    whole interaction when the prefill is wrong.
+    """
+    master = _resolve_parent(parent)
+    if master is None:
+        return None
+
+    result: dict[str, Optional[str]] = {"value": None}
+
+    dlg = themed_toplevel(master, title)
+
+    body = tk.Frame(dlg, bg=DIALOG_BG, padx=24, pady=18)
+    body.pack(fill="both", expand=True)
+
+    tk.Label(
+        body, text=prompt, font=("Segoe UI", 10), bg=DIALOG_BG, fg=TEXT_COLOR,
+        justify="left", wraplength=420, anchor="w",
+    ).pack(fill="x", pady=(0, 10))
+
+    entry = themed_entry(body, width=width)
+    entry.insert(0, initial)
+    entry.pack(fill="x")
+
+    btn_frame = tk.Frame(dlg, bg=DIALOG_BG)
+    btn_frame.pack(padx=24, pady=(12, 18))
+
+    def _ok(_event=None):
+        result["value"] = entry.get().strip()
+        dlg.destroy()
+
+    def _cancel(_event=None):
+        dlg.destroy()
+
+    themed_button(btn_frame, ok_label, _ok, primary=True).pack(side="left", padx=4)
+    themed_button(btn_frame, "Cancel", _cancel).pack(side="left", padx=4)
+
+    dlg.bind("<Return>", _ok)
+    dlg.bind("<Escape>", _cancel)
+    dlg.protocol("WM_DELETE_WINDOW", _cancel)
+
+    center_over(dlg, master)
+    entry.focus_set()
+    entry.select_range(0, "end")
+    dlg.wait_window()
+    return result["value"]
 
 
 def ask_custom(

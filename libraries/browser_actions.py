@@ -5,12 +5,15 @@ Groups together:
   • Favorites add/remove (single + multi-select).
   • File operations: restore from .bak, replace art, replace
     audio, delete folder, clear scores.
+  • Cinema video: downloading a mapper's configured video, and creating a
+    config from scratch out of a pasted YouTube link.
   • Clipboard helpers.
   • Single- and multi-song right-click context menus.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -357,9 +360,20 @@ class BrowserActionsMixin:
 
         self._offer_cinema_filename_fix(song)
 
+        self._ensure_yt_dlp(lambda yt_dlp: self._run_yt_dlp(yt_dlp, song))
+
+    def _ensure_yt_dlp(self, on_ready) -> None:
+        """Call ``on_ready(yt_dlp_path)`` once yt-dlp is available.
+
+        Fires immediately when the binary is already there; otherwise offers
+        to fetch it and calls back when the download lands. The callback is
+        what makes this reusable — the installer used to hard-code its own
+        continuation, so a second caller couldn't share it. Nothing happens if
+        the user declines or the download fails; the status bar says why.
+        """
         yt_dlp = self._find_yt_dlp()
         if yt_dlp is not None:
-            self._run_yt_dlp(yt_dlp, song)
+            on_ready(yt_dlp)
             return
 
         yt_name = platform_utils.exe_name("yt-dlp")
@@ -417,7 +431,7 @@ class BrowserActionsMixin:
                         _os.chmod(dest, 0o755)
                     except OSError:
                         pass
-                self._dispatcher.dispatch(lambda: self._run_yt_dlp(dest, song))
+                self._dispatcher.dispatch(lambda: on_ready(dest))
             except Exception as exc:
                 self._dispatcher.dispatch(lambda e=exc: self.status_bar.config(
                     text=f"yt-dlp download failed: {e}"
@@ -514,19 +528,32 @@ class BrowserActionsMixin:
                 return
             current = current.parent
 
-    def _run_yt_dlp(self, yt_dlp: Path, song: SongInfo, attempt: int = 1):
+    def _run_yt_dlp(self, yt_dlp: Path, song: SongInfo, attempt: int = 1,
+                    *, video_id: str | None = None,
+                    out_path: Path | None = None,
+                    on_done=None):
         """Run yt-dlp the way Cinema does and refresh the song when done.
 
         A failed first attempt is retried once automatically — YouTube
         commonly 403s the very first extraction from a fresh yt-dlp
         (stale signature negotiation) and the retry succeeds.
+
+        ``video_id`` and ``out_path`` default to the song's manifest, which is
+        the "Download Video" case. The create flow passes them explicitly:
+        there is no manifest yet, deliberately, so that a failed download
+        leaves nothing behind claiming the song has a video. ``on_done`` then
+        fires on the main thread with ``True``/``False``, in place of the
+        default row-refresh + error dialog.
         """
         self._cinema_downloads_active.add(str(song.folder))
 
-        out_path = song.folder / song.cinema_video_file
+        if video_id is None:
+            video_id = song.cinema_video_id
+        if out_path is None:
+            out_path = song.folder / song.cinema_video_file
         cmd = [
             str(yt_dlp),
-            f"https://www.youtube.com/watch?v={song.cinema_video_id}",
+            f"https://www.youtube.com/watch?v={video_id}",
             "-f", "bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4]",
             "--no-cache-dir",
             "-o", str(out_path),
@@ -564,15 +591,27 @@ class BrowserActionsMixin:
                 rc = -1
                 tail.append(str(exc))
             self._dispatcher.dispatch(lambda: self._on_yt_dlp_done(
-                song, rc, "\n".join(tail), yt_dlp, attempt))
+                song, rc, "\n".join(tail), yt_dlp, attempt,
+                video_id=video_id, out_path=out_path, on_done=on_done))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_yt_dlp_done(self, song: SongInfo, rc: int, output: str,
-                        yt_dlp: Path, attempt: int):
+                        yt_dlp: Path, attempt: int,
+                        *, video_id: str | None = None,
+                        out_path: Path | None = None,
+                        on_done=None):
         self._cinema_downloads_active.discard(str(song.folder))
         song._parse()
-        if rc == 0 and song.has_playable_cinema_video:
+        if on_done is not None:
+            succeeded = rc == 0 and out_path is not None and out_path.exists()
+        else:
+            succeeded = rc == 0 and song.has_playable_cinema_video
+
+        if succeeded:
+            if on_done is not None:
+                on_done(True, output)
+                return
             scroll_pos = self.canvas.yview()[0]
             self._render_list()
             self.canvas.update_idletasks()
@@ -582,13 +621,248 @@ class BrowserActionsMixin:
             self.status_bar.config(
                 text=f"Video download failed for {song.display_name} — retrying…"
             )
-            self.after(1000, lambda: self._run_yt_dlp(yt_dlp, song, attempt=2))
+            self.after(1000, lambda: self._run_yt_dlp(
+                yt_dlp, song, attempt=2,
+                video_id=video_id, out_path=out_path, on_done=on_done))
+        elif on_done is not None:
+            on_done(False, f"yt-dlp exited with code {rc}.\n\n{output}")
         else:
             self.status_bar.config(text=f"Video download failed for: {song.display_name}")
             dialogs.show_error(
                 "Download Video Failed",
                 f"yt-dlp exited with code {rc}.\n\n{output}"[:2000],
             )
+
+    # ── Cinema video creation ─────────────────────────────────────────────────
+
+    def _clipboard_youtube_url(self) -> str:
+        """The clipboard's contents if they parse as a YouTube link, else "".
+
+        Pasting the link is the whole interaction, and the user almost always
+        arrives here having just copied one — prefilling removes the step. An
+        empty or unrelated clipboard silently prefills nothing.
+        """
+        from libraries.cinema_video import parse_youtube_url
+        try:
+            text = self.clipboard_get()
+        except Exception:
+            return ""  # empty clipboard, or it holds something that isn't text
+        text = (text or "").strip()
+        video_id, _ = parse_youtube_url(text)
+        return text if video_id else ""
+
+    def _add_cinema_video(self, song: SongInfo, replace: bool = False) -> None:
+        """Create a Cinema config for ``song`` from a pasted YouTube link.
+
+        Order matters: metadata → download → *then* write the manifest. The
+        obvious sequence (write the config first, download into it) leaves the
+        song advertising a video it doesn't have whenever the download fails,
+        and the only recovery is deleting the file by hand. Writing last means
+        a failure leaves nothing behind.
+        """
+        from libraries.cinema_video import parse_youtube_url
+
+        if str(song.folder) in self._cinema_downloads_active:
+            return
+
+        if replace and not dialogs.ask_yes_no(
+            "Replace Cinema Video",
+            f'Replace the Cinema video configured for "{song.display_name}"?\n\n'
+            "The existing cinema-video.json is overwritten. If a mapper "
+            "shipped it, its screen placement, colour correction and "
+            "environment changes are lost — none of that can be recovered "
+            "from a YouTube link.\n\n"
+            "The original is backed up and \"Restore Files\" undoes this.",
+            icon="warning", default="no", parent=self,
+        ):
+            return
+
+        url = dialogs.ask_string(
+            "Replace Cinema Video" if replace else "Add Cinema Video",
+            "Paste a YouTube link for:\n"
+            f"{song.display_name}\n\n"
+            "The video is downloaded into the song folder and a "
+            "cinema-video.json is written the way Cinema would. "
+            "YouTube links only.",
+            initial=self._clipboard_youtube_url(),
+            parent=self,
+        )
+        if not url:
+            return
+
+        video_id, start_s = parse_youtube_url(url)
+        if video_id is None:
+            dialogs.show_error(
+                "Add Cinema Video",
+                "That doesn't look like a YouTube video link.\n\n"
+                "Accepted: youtube.com/watch?v=…, youtu.be/…, "
+                "youtube.com/shorts/…, an embed link, or a bare 11-character "
+                "video ID.\n\n"
+                "Cinema can only play YouTube videos, so other sites aren't "
+                "supported even though yt-dlp handles them.",
+                parent=self,
+            )
+            return
+
+        # A "&t=" in the link is a real head start: video_time = song_time +
+        # offset/1000, so a link timestamped at 42s becomes offset 42000 and
+        # the video begins where the user pointed at it. That is often within
+        # a second of right, turning the editor step into a nudge.
+        offset_ms = (start_s or 0) * 1000
+
+        self._ensure_yt_dlp(
+            lambda yt_dlp: self._fetch_cinema_metadata(
+                yt_dlp, song, video_id, offset_ms)
+        )
+
+    def _fetch_cinema_metadata(self, yt_dlp: Path, song: SongInfo,
+                               video_id: str, offset_ms: int) -> None:
+        """Ask yt-dlp for the video's id/title/uploader/duration, off-thread.
+
+        The same four fields Cinema's ``YTResult`` reads. ``--no-playlist`` is
+        not optional: on a URL that still carries ``&list=``, ``--dump-json``
+        emits one JSON object *per playlist entry*.
+        """
+        cmd = [
+            str(yt_dlp),
+            f"https://www.youtube.com/watch?v={video_id}",
+            "--dump-json", "--no-playlist", "--skip-download",
+            "--no-cache-dir", "--socket-timeout", "10", "--ignore-config",
+        ]
+        self._cinema_downloads_active.add(str(song.folder))
+        self.status_bar.config(text=f"Looking up video for: {song.display_name}")
+
+        def worker():
+            meta = None
+            error = ""
+            try:
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                proc = subprocess.run(
+                    cmd, capture_output=True, text=True, errors="replace",
+                    creationflags=creationflags, timeout=120,
+                )
+                if proc.returncode == 0:
+                    for line in proc.stdout.splitlines():
+                        line = line.strip()
+                        if not line.startswith("{"):
+                            continue
+                        try:
+                            candidate = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(candidate, dict):
+                            meta = candidate
+                            break
+                if meta is None:
+                    # yt-dlp's own words, not ours: age-restricted, private
+                    # and region-blocked videos each say exactly which they
+                    # are, and a generic "couldn't fetch" sends the user
+                    # hunting for a bug that isn't in this app.
+                    error = (proc.stderr or proc.stdout or "").strip()
+            except Exception as exc:
+                error = str(exc)
+            self._dispatcher.dispatch(lambda: self._on_cinema_metadata(
+                yt_dlp, song, video_id, offset_ms, meta, error))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_cinema_metadata(self, yt_dlp: Path, song: SongInfo, video_id: str,
+                            offset_ms: int, meta: dict | None, error: str) -> None:
+        from libraries import cinema_video
+
+        self._cinema_downloads_active.discard(str(song.folder))
+        if meta is None:
+            self.status_bar.config(text=f"Video lookup failed for: {song.display_name}")
+            dialogs.show_error(
+                "Add Cinema Video",
+                f"Couldn't read that video's details.\n\n{error}"[:2000],
+                parent=self,
+            )
+            return
+
+        title = cinema_video.filter_emoji(str(meta.get("title") or "Untitled Video"))
+        author = cinema_video.filter_emoji(str(meta.get("uploader") or "Unknown Author"))
+        try:
+            duration_s = int(float(meta.get("duration") or 0))
+        except (TypeError, ValueError):
+            duration_s = 0
+
+        video_file = cinema_video.derive_video_filename(song.folder, title, video_id)
+        out_path = song.folder / video_file
+
+        try:
+            out_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+        def _finish(ok: bool, output: str) -> None:
+            self._on_cinema_video_downloaded(
+                song, video_id, title, author, duration_s, offset_ms,
+                video_file, out_path, ok, output,
+            )
+
+        self._run_yt_dlp(yt_dlp, song, video_id=video_id, out_path=out_path,
+                         on_done=_finish)
+
+        self._ensure_ffmpeg()
+
+    def _on_cinema_video_downloaded(self, song: SongInfo, video_id: str,
+                                    title: str, author: str, duration_s: int,
+                                    offset_ms: int, video_file: str,
+                                    out_path: Path, ok: bool, output: str) -> None:
+        from libraries import cinema_video
+
+        if not ok:
+            try:
+                out_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self.status_bar.config(text=f"Video download failed for: {song.display_name}")
+            dialogs.show_error(
+                "Add Cinema Video",
+                f"The video couldn't be downloaded, so no Cinema config was "
+                f"written.\n\n{output}"[:2000],
+                parent=self,
+            )
+            return
+
+        if duration_s <= 0:
+            try:
+                from libraries.audio_utils import get_audio_duration
+                probed = get_audio_duration(out_path)
+                duration_s = int(probed) if probed else 0
+            except Exception:
+                duration_s = 0
+
+        from_scratch = cinema_video.find_config(song.folder) is None
+
+        try:
+            cinema_video.create_config(
+                song.folder, video_id, title, author, duration_s,
+                offset_ms=offset_ms, video_file=video_file,
+            )
+        except (OSError, ValueError) as exc:
+            self.status_bar.config(text=f"Couldn't write Cinema config for: {song.display_name}")
+            dialogs.show_error(
+                "Add Cinema Video",
+                f"The video downloaded, but cinema-video.json couldn't be "
+                f"written:\n\n{exc}",
+                parent=self,
+            )
+            return
+
+        if from_scratch:
+            self._cinema_configs_created.add(str(song.folder))
+
+        song._parse()
+        scroll_pos = self.canvas.yview()[0]
+        self._render_list()
+        self.canvas.update_idletasks()
+        self.canvas.yview_moveto(scroll_pos)
+        self._notify_cinema_offset_changed(song)
+        self.status_bar.config(text=f"Cinema video added for: {song.display_name}")
+
+        self._open_cinema_offset_editor(song)
 
     # ── Cinema video offset ───────────────────────────────────────────────────
 
@@ -682,17 +956,25 @@ class BrowserActionsMixin:
                                  '{mapper}:"%s"' % song.mapper.replace('"', '')),
                              state="normal" if song.mapper else "disabled")
         offer_fix = song.has_illegal_cinema_filename and song.has_playable_cinema_video
+        downloading = str(song.folder) in self._cinema_downloads_active
         if song.has_cinema_video and not song.has_playable_cinema_video \
                 and song.cinema_video_id:
             menu.add_separator()
-            downloading = str(song.folder) in self._cinema_downloads_active
             menu.add_command(label="Download Video",
                              command=lambda: self._download_cinema_video(song),
+                             state="disabled" if downloading else "normal")
+        elif not song.has_cinema_video:
+            menu.add_separator()
+            menu.add_command(label="Add Cinema Video…",
+                             command=lambda: self._add_cinema_video(song),
                              state="disabled" if downloading else "normal")
         elif shift_held and song.has_playable_cinema_video:
             menu.add_separator()
             menu.add_command(label="Cinema Offset…",
                              command=lambda: self._open_cinema_offset_editor(song))
+            menu.add_command(label="Replace Cinema Video…",
+                             command=lambda: self._add_cinema_video(song, replace=True),
+                             state="disabled" if downloading else "normal")
             if offer_fix:
                 menu.add_command(label="Fix Video Filename…",
                                  command=lambda: self._fix_cinema_filename(song))

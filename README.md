@@ -106,6 +106,7 @@ Right-click a song for:
 - **Copy Name** — copies the song's display name
 - **More from This Artist / More from This Mapper** — instantly filters the library to that artist or mapper
 - **Download Video** — appears when a song ships a `cinema-video.json` whose video isn't downloaded yet. See [Cinema Video Support](#cinema-video-support).
+- **Add Cinema Video…** — appears when a song has no `cinema-video.json` at all. Paste a YouTube link and the app downloads the video and writes the config for you.
 - **Open Folder…** — opens the song's folder in Explorer
 - **Delete** — disabled for favorited songs unless Shift is held
 
@@ -326,6 +327,14 @@ Many maps ship a `cinema-video.json` for the [Cinema mod](https://github.com/Kev
 **Playback** — if the referenced video file is present in the song folder, the Visualizer plays it instead of the spectrum, seeked to stay in sync with the song's audio and honoring Cinema's configured offset and duration. Outside the video's window (before the offset, or after it ends), the spectrum shows instead. Playback uses libmpv embedded directly into the Visualizer window — hardware-accelerated, with pause/resume tracked frame-accurately against the audio — falling back to the spectrum if libmpv or the video is unavailable.
 
 **Download** — the manifest often references a video you haven't downloaded in-game yet. Right-click the song → **Download Video** fetches it with yt-dlp using the same format and filename Cinema would (720p MP4, saved into the song folder), with download progress in the status bar. Failed downloads retry once automatically. Once finished, the video is immediately available in-game and in the Visualizer.
+
+**Add your own** — for a song with no `cinema-video.json`, right-click → **Add Cinema Video…** and paste a YouTube link. Normally this means launching the game and searching from Cinema's in-game menu; here it's one paste. The dialog prefills from your clipboard if you've already copied a link, and accepts every form YouTube hands out — `watch?v=`, `youtu.be/`, Shorts, embeds, or a bare video ID.
+
+The app fetches the video's title, channel and duration with yt-dlp, downloads the video, and only then writes a `cinema-video.json` — so a failed download leaves nothing behind. The config records exactly the fields Cinema itself writes for a video you pick in-game, using the same filename the mod would derive, so the video is immediately playable in Beat Saber without re-downloading. A link with a timestamp (`&t=1m30s`) seeds the offset, so the video starts where you pointed at it.
+
+The offset editor (Shift+right-click → **Cinema Offset…**) opens automatically afterwards — a config created from scratch starts at offset 0 and is essentially never in sync. Syncing a config you just created doesn't leave a `.bak`: there's no earlier version to restore to, and the file has never been anything but yours.
+
+**Replace** — hold Shift and right-click a song that already has a video for **Replace Cinema Video…**. This confirms first: a mapper's config carries screen placement, colour correction and environment changes that can't be reconstructed from a YouTube link. The original is backed up, so **Restore Files** undoes it.
 
 yt-dlp is looked for in Beat Saber's `Libs` folder (where Cinema keeps it), then next to the application — the same place as ffmpeg. If it isn't found, the app offers to download it for you.
 

@@ -3,6 +3,11 @@ import json
 import hashlib
 from pathlib import Path
 
+from libraries.cinema_video import (
+    derive_video_filename as _cinema_derive_filename,
+    safe_filename as _cinema_safe_filename,  # noqa: F401 — re-export
+    shorten_filename as _shorten_filename,
+)
 
 _TAGS_FILE = "tags.json"
 
@@ -20,29 +25,6 @@ def save_custom_tags(folder: Path, tags: frozenset | set) -> None:
         json.dumps({"tags": sorted(tags)}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-
-
-def _cinema_safe_filename(title: str) -> str:
-    """Replicate Cinema's illegal-filesystem-char replacement so we derive the
-    same video filename the mod would (e.g. "DECO*27 … feat. Miku" becomes
-    "DECO_27 … feat_ Miku"). Cinema replaces invalid filename chars *and*
-    periods with underscores."""
-    return re.sub(r'[<>:"/\\|?*.\x00-\x1f]', "_", title)
-
-
-def _shorten_filename(folder: Path, name: str) -> str:
-    """Cinema's ``Util.ShortenFilename``: keep the full path under MAX_PATH.
-
-    The mod budgets 259 characters minus the level directory, ".mp4" and the
-    ".fXXXX" yt-dlp adds to format-specific parts, then truncates the name to
-    fit — so a very long title produces a *different* file on disk than the
-    untruncated one, and we have to truncate identically or we'd look for a
-    video the mod never wrote (and write one it will never find).
-    """
-    allowed = 259 - len(str(folder)) - len(".mp4") - len(".fxxxx")
-    if allowed >= len(name):
-        return name
-    return name[:allowed] if allowed > 0 else name
 
 
 def _cinema_video_filename(folder: Path, raw: str) -> str:
@@ -324,15 +306,14 @@ class SongInfo:
                 video_filename = _cinema_video_filename(self.folder, raw_filename)
             else:
                 # Cinema derives the filename from the title when videoFile
-                # is absent from the manifest.
+                # is absent from the manifest — emoji stripped first, then
+                # illegal chars replaced, then truncated to fit MAX_PATH.
                 video_filename = ""
                 title = str(data.get("title", "") or "").strip()
-                if title:
-                    video_filename = _shorten_filename(
-                        self.folder, _cinema_safe_filename(title)
-                    ) + ".mp4"
-                elif self.cinema_video_id:
-                    video_filename = self.cinema_video_id + ".mp4"
+                if title or self.cinema_video_id:
+                    video_filename = _cinema_derive_filename(
+                        self.folder, title, self.cinema_video_id
+                    )
             if video_filename:
                 self.cinema_video_file = video_filename
                 self.cinema_video_path = None

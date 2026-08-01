@@ -201,6 +201,255 @@ def test_save_video_file_skips_a_no_op_write(tmp_path):
     assert not path.with_name(path.name + ".bak").exists()
 
 
+# ── YouTube URL parsing ──────────────────────────────────────────────────────
+
+ID = "dQw4w9WgXcQ"
+
+
+@pytest.mark.parametrize("url", [
+    f"https://www.youtube.com/watch?v={ID}",
+    f"http://youtube.com/watch?v={ID}",
+    f"https://m.youtube.com/watch?v={ID}",
+    f"https://music.youtube.com/watch?v={ID}",
+    f"www.youtube.com/watch?v={ID}",            # no scheme, as pasted
+    f"youtube.com/watch?v={ID}",
+    f"https://youtu.be/{ID}",
+    f"youtu.be/{ID}",
+    f"https://www.youtube.com/shorts/{ID}",
+    f"https://www.youtube.com/embed/{ID}",
+    f"https://www.youtube-nocookie.com/embed/{ID}",
+    f"https://www.youtube.com/live/{ID}",
+    f"https://www.youtube.com/v/{ID}",
+    ID,                                          # bare ID
+    f"  {ID}  ",                                 # stray whitespace
+])
+def test_parse_youtube_url_accepts_every_form(url):
+    assert cinema_video.parse_youtube_url(url) == (ID, None)
+
+
+def test_parse_youtube_url_ignores_playlist_parameters():
+    # A link copied from a playlist still points at one video; list= and
+    # index= describe the surrounding queue, which is not our business.
+    assert cinema_video.parse_youtube_url(
+        f"https://www.youtube.com/watch?v={ID}&list=PLabc123&index=4"
+    ) == (ID, None)
+
+
+@pytest.mark.parametrize("url,expected", [
+    (f"https://www.youtube.com/watch?v={ID}&t=42", 42),
+    (f"https://youtu.be/{ID}?t=42s", 42),
+    (f"https://youtu.be/{ID}?t=1m30s", 90),
+    (f"https://www.youtube.com/watch?v={ID}&t=1h2m3s", 3723),
+    (f"https://www.youtube.com/watch?v={ID}&t=2m", 120),
+    (f"https://www.youtube.com/embed/{ID}?start=90", 90),
+    (f"https://www.youtube.com/watch?v={ID}#t=15", 15),
+    (f"https://www.youtube.com/watch?v={ID}&t=0", 0),
+])
+def test_parse_youtube_url_reads_the_timestamp(url, expected):
+    assert cinema_video.parse_youtube_url(url) == (ID, expected)
+
+
+@pytest.mark.parametrize("url", [
+    f"https://www.youtube.com/watch?v={ID}&t=",
+    f"https://www.youtube.com/watch?v={ID}&t=later",
+    f"https://www.youtube.com/watch?v={ID}&t=1:30",   # not a form YouTube emits
+])
+def test_parse_youtube_url_ignores_an_unreadable_timestamp(url):
+    # An unparseable t= must not sink the whole link — the video ID is the
+    # part that matters and offset 0 is the safe default.
+    assert cinema_video.parse_youtube_url(url) == (ID, None)
+
+
+@pytest.mark.parametrize("junk", [
+    "", "   ", None,
+    "not a url",
+    "https://vimeo.com/123456789",
+    "https://example.com/watch?v=" + ID,          # right shape, wrong host
+    "https://www.youtube.com/watch?v=tooshort",   # IDs are exactly 11 chars
+    "https://www.youtube.com/watch?v=" + ID + "extra",
+    "https://www.youtube.com/",                   # no video at all
+    "https://www.youtube.com/@somechannel",
+    "https://www.youtube.com/playlist?list=PLabc",
+    "abcdefghij!",                                # 11 chars, illegal one
+])
+def test_parse_youtube_url_rejects_junk(junk):
+    assert cinema_video.parse_youtube_url(junk) == (None, None)
+
+
+# ── Filename derivation (must match VideoConfig.GetVideoFileName) ────────────
+
+def test_derive_video_filename_replaces_illegal_chars(tmp_path):
+    assert cinema_video.derive_video_filename(
+        tmp_path, "DECO*27 - Ghost Rule feat. Hatsune Miku"
+    ) == "DECO_27 - Ghost Rule feat_ Hatsune Miku.mp4"
+
+
+def test_derive_video_filename_strips_emoji(tmp_path):
+    # Util.FilterEmoji drops \p{Cs} — UTF-16 surrogates — so in Python terms
+    # every character above the BMP goes. Leaving one in derives a name the
+    # mod will never look for, and it re-downloads the video on first play.
+    assert cinema_video.derive_video_filename(
+        tmp_path, "Song 🎵 Title 🔥"
+    ) == "Song  Title .mp4"
+
+
+def test_derive_video_filename_keeps_non_astral_characters(tmp_path):
+    # Japanese titles are ordinary BMP text and must survive untouched;
+    # a too-eager "strip non-ASCII" would mangle a large slice of the library.
+    assert cinema_video.derive_video_filename(
+        tmp_path, "初音ミク - メルト"
+    ) == "初音ミク - メルト.mp4"
+
+
+def test_derive_video_filename_truncates_to_max_path(tmp_path):
+    name = cinema_video.derive_video_filename(tmp_path, "A" * 400)
+    assert len(str(tmp_path)) + len(name) + len(".fxxxx") <= 259
+    assert name.endswith(".mp4")
+
+
+def test_derive_video_filename_strips_emoji_before_truncating(tmp_path):
+    # Order matters: truncating first can cut mid-astral-character. Once the
+    # emoji are gone there is no surrogate left to split.
+    name = cinema_video.derive_video_filename(tmp_path, "🎵" * 200 + "B" * 200)
+    assert "🎵" not in name
+
+
+def test_derive_video_filename_appends_exactly_one_extension(tmp_path):
+    # A title that already reads like a filename still gains ".mp4": the
+    # period in it was replaced with "_" first, so the mod's EndsWith(".mp4")
+    # check doesn't fire either. Matching that is the whole point.
+    assert cinema_video.derive_video_filename(
+        tmp_path, "My Video.mp4"
+    ) == "My Video_mp4.mp4"
+
+
+def test_derive_video_filename_falls_back_to_the_video_id(tmp_path):
+    assert cinema_video.derive_video_filename(tmp_path, "", ID) == f"{ID}.mp4"
+
+
+def test_song_data_reads_back_the_name_create_config_writes(tmp_path):
+    # The reader and the writer are the two halves that have to agree; if
+    # they ever drift, the app downloads a video it then can't find.
+    from libraries.song_data import SongInfo
+
+    title = "初音ミク 🎵 DECO*27 - Ghost Rule feat. Miku"
+    folder = tmp_path / "12345 (Ghost Rule - DECO27)"
+    folder.mkdir()
+    (folder / "Info.dat").write_text(json.dumps({"_songName": "Ghost Rule"}))
+    cinema_video.create_config(folder, ID, title, "DECO*27", 212)
+
+    expected = cinema_video.derive_video_filename(folder, title, ID)
+    (folder / expected).write_bytes(b"not really an mp4")
+
+    song = SongInfo(folder)
+    assert song.cinema_video_file == expected
+    assert song.has_playable_cinema_video
+
+
+# ── create_config ────────────────────────────────────────────────────────────
+
+def test_create_config_writes_the_six_fields_cinema_sets(tmp_path):
+    path = cinema_video.create_config(
+        tmp_path, ID, "Some Video", "Some Channel", 212,
+    )
+    assert path.name == "cinema-video.json"
+    assert read_config(path) == {
+        "videoID": ID,
+        "title": "Some Video",
+        "author": "Some Channel",
+        "videoFile": "Some Video.mp4",
+        "duration": 212,
+        "offset": 0,
+    }
+
+
+def test_create_config_never_claims_to_be_a_mapper_config(tmp_path):
+    # configByMapper gates save_offset's originalOffset bookkeeping. Setting
+    # it on a config the user created would make Cinema offer to "reset" the
+    # offset to a value we invented.
+    path = cinema_video.create_config(tmp_path, ID, "T", "A", 10)
+    data = read_config(path)
+    assert "configByMapper" not in data
+    assert "userSettings" not in data
+
+
+def test_create_config_seeds_the_offset_from_a_timestamp(tmp_path):
+    path = cinema_video.create_config(
+        tmp_path, ID, "T", "A", 10, offset_ms=42_000,
+    )
+    assert read_config(path)["offset"] == 42_000
+
+
+def test_create_config_accepts_an_explicit_video_file(tmp_path):
+    # The download happens before the manifest is written, so the caller
+    # passes the name it actually downloaded to rather than re-deriving it.
+    path = cinema_video.create_config(
+        tmp_path, ID, "T", "A", 10, video_file="downloaded as this.mp4",
+    )
+    assert read_config(path)["videoFile"] == "downloaded as this.mp4"
+
+
+def test_create_config_clamps_the_offset_and_floors_the_duration(tmp_path):
+    path = cinema_video.create_config(
+        tmp_path, ID, "T", "A", -5, offset_ms=10**12,
+    )
+    data = read_config(path)
+    assert data["offset"] == 2_147_483_647
+    assert data["duration"] == 0
+
+
+def test_create_config_tolerates_a_missing_duration(tmp_path):
+    # Livestreams and some music-service uploads have no duration in
+    # --dump-json; song_data tolerates 0 and the editor probes the file.
+    path = cinema_video.create_config(tmp_path, ID, "T", "A", None)
+    assert read_config(path)["duration"] == 0
+
+
+def test_create_config_backs_up_an_existing_config(tmp_path):
+    write_config(tmp_path, BASE)
+    cinema_video.create_config(tmp_path, ID, "New Title", "New Author", 99)
+    bak = tmp_path / "cinema-video.json.bak"
+    assert read_config(bak) == BASE
+    assert read_config(tmp_path / "cinema-video.json")["title"] == "New Title"
+
+
+def test_create_config_keeps_the_first_backup(tmp_path):
+    write_config(tmp_path, BASE)
+    cinema_video.create_config(tmp_path, ID, "First", "A", 1)
+    cinema_video.create_config(tmp_path, ID, "Second", "A", 1)
+    bak = tmp_path / "cinema-video.json.bak"
+    assert read_config(bak)["title"] == BASE["title"]
+
+
+def test_create_config_refuses_the_legacy_list_format(tmp_path):
+    (tmp_path / "cinema-video.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError):
+        cinema_video.create_config(tmp_path, ID, "T", "A", 10)
+    assert (tmp_path / "cinema-video.json").read_text(encoding="utf-8") == "[]"
+
+
+def test_create_config_writes_to_the_spelling_that_exists(tmp_path):
+    write_config(tmp_path, BASE, name="Cinema-Video.json")
+    path = cinema_video.create_config(tmp_path, ID, "T", "A", 10)
+    assert path.name == "Cinema-Video.json"
+    assert not (tmp_path / "cinema-video.json").exists()
+
+
+def test_create_config_keeps_non_ascii_titles_readable(tmp_path):
+    path = cinema_video.create_config(tmp_path, ID, "初音ミク", "A", 10)
+    assert "初音ミク" in path.read_text(encoding="utf-8")
+
+
+def test_create_config_output_round_trips_through_save_offset(tmp_path):
+    # The editor is the next step after every create, so the file this
+    # produces has to be one save_offset can read and rewrite.
+    cinema_video.create_config(tmp_path, ID, "T", "A", 10, offset_ms=42_000)
+    cinema_video.save_offset(tmp_path, 41_500)
+    data = read_config(tmp_path / "cinema-video.json")
+    assert data["offset"] == 41_500
+    assert "userSettings" not in data  # not a mapper config, nothing to reset
+
+
 def test_original_offset_ms_helper():
     assert cinema_video.original_offset_ms({}) is None
     assert cinema_video.original_offset_ms({"userSettings": {}}) is None

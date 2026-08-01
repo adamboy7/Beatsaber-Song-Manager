@@ -162,6 +162,7 @@ class SongBrowser(
         self._shuffle_queue: bool = False
         self._last_shuffle_index: int | None = None
         self._cinema_downloads_active: set[str] = set()
+        self._cinema_configs_created: set[str] = set()
         self._mod_tooltip = None
         self._hover_row: tk.Frame | None = None   # row currently hover-highlighted
         self._wheel_accum: float = 0.0            # fractional wheel ticks (high-res wheels/touchpads)
