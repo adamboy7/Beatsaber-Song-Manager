@@ -92,12 +92,14 @@ class BrowserPlaybackMixin:
         """Return True if ffmpeg is available right now.
 
         Otherwise offer to download it (once per run) and return False.
-        ``on_ready`` fires when ffmpeg lands, letting the caller enable the
-        ffmpeg-dependent extra (the visualizer's spectrum bars); the media
-        progress bar's duration comes from libmpv and doesn't need ffmpeg.
-        ``on_unavailable`` fires if the user
-        declines or the download fails. This never blocks the underlying
-        feature — callers use it only to light up the ffmpeg-only extras."""
+        ``on_ready`` fires when ffmpeg lands, letting the caller enable
+        whatever needed it — the visualizer's spectrum bars, or the waveform
+        editors (Cinema offset, Replace Audio), which re-open from it; the
+        media progress bar's duration comes from libmpv and doesn't need
+        ffmpeg. ``on_unavailable`` fires if the user declines or the download
+        fails. Playback itself is never blocked by this: most callers use it
+        only to light up the ffmpeg-only extras, and the waveform editors are
+        the exception that genuinely can't open without it."""
         if self._ffmpeg_available:
             return True
         # Re-probe: an ffmpeg dropped beside the app after launch is picked up live.
