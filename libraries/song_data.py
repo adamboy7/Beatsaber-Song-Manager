@@ -30,6 +30,90 @@ def _cinema_safe_filename(title: str) -> str:
     return re.sub(r'[<>:"/\\|?*.\x00-\x1f]', "_", title)
 
 
+def _shorten_filename(folder: Path, name: str) -> str:
+    """Cinema's ``Util.ShortenFilename``: keep the full path under MAX_PATH.
+
+    The mod budgets 259 characters minus the level directory, ".mp4" and the
+    ".fXXXX" yt-dlp adds to format-specific parts, then truncates the name to
+    fit — so a very long title produces a *different* file on disk than the
+    untruncated one, and we have to truncate identically or we'd look for a
+    video the mod never wrote (and write one it will never find).
+    """
+    allowed = 259 - len(str(folder)) - len(".mp4") - len(".fxxxx")
+    if allowed >= len(name):
+        return name
+    return name[:allowed] if allowed > 0 else name
+
+
+def _cinema_video_filename(folder: Path, raw: str) -> str:
+    """Resolve a manifest's explicit ``videoFile`` to one legal filename.
+
+    Cinema's ``VideoConfig.GetVideoFileName`` trusts ``videoFile`` verbatim and
+    only sanitises the name when it derives one from the title. That is fine
+    until a mapper pastes the raw YouTube title in as the filename — the title
+    of 22e58 ("… 禁止令 / 草薙寧々 …") carries a slash, so the mod hands yt-dlp a
+    *nested* output path, yt-dlp rewrites the folder component to be legal (a
+    trailing space becomes "#"), and the video lands in a subfolder that
+    nothing afterwards looks in. In-game the map is stuck at "not downloaded"
+    forever; here it downloaded and then vanished from the visualizer.
+
+    The mod has no handling for it, so this is the one place we deliberately
+    diverge: run the mapper's value through the same replacement Cinema uses
+    for titles (minus the period rule, which would eat a legitimate extension)
+    to get a flat filename. For this map that lands on exactly the name Cinema
+    would have picked had the mapper left ``videoFile`` out.
+    """
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw).strip()
+    name = name.rstrip(" .")
+    name = _shorten_filename(folder, name)
+    if not name.endswith(".mp4"):
+        name += ".mp4"
+    return name
+
+
+def _loose_name(name: str) -> str:
+    """Compare path components the way the filesystem/yt-dlp mangle them."""
+    return re.sub(r"[\s.#]+$", "", name.strip()).casefold()
+
+
+def _misplaced_video(folder: Path, raw: str) -> Path | None:
+    """Find a video an earlier download dropped into a subfolder.
+
+    Only reachable when ``videoFile`` contained a path separator (see
+    ``_cinema_video_filename``). Components are matched loosely because the
+    write path mangles them: yt-dlp turns a component's trailing whitespace
+    into "#", and Windows trims trailing spaces and dots outright. Returning
+    the stray file means an affected song plays immediately instead of the
+    user paying for the same download twice.
+    """
+    parts = [p for p in re.split(r"[\\/]+", raw) if p.strip()]
+    if len(parts) < 2:
+        return None
+    current = folder
+    for part in parts[:-1]:
+        current = _matching_child(current, part, want_dir=True)
+        if current is None:
+            return None
+    return _matching_child(current, parts[-1], want_dir=False)
+
+
+def _matching_child(parent: Path, name: str, want_dir: bool) -> Path | None:
+    wanted = _loose_name(name)
+    try:
+        entries = list(parent.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        try:
+            if entry.is_dir() != want_dir:
+                continue
+        except OSError:
+            continue
+        if _loose_name(entry.name) == wanted:
+            return entry
+    return None
+
+
 def _has_cinema_video(folder: Path) -> bool:
     """True if a Cinema mod video manifest exists in the folder (case-insensitive)."""
     for name in ("cinema-video.json", "Cinema-Video.json", "CINEMA-VIDEO.JSON"):
@@ -232,13 +316,18 @@ class SongInfo:
             except Exception:
                 return
             self.cinema_video_id = str(data.get("videoID", "") or "")
-            video_filename = data.get("videoFile", "")
-            if not video_filename:
+            raw_filename = str(data.get("videoFile", "") or "")
+            if raw_filename:
+                video_filename = _cinema_video_filename(self.folder, raw_filename)
+            else:
                 # Cinema derives the filename from the title when videoFile
                 # is absent from the manifest.
+                video_filename = ""
                 title = str(data.get("title", "") or "").strip()
                 if title:
-                    video_filename = _cinema_safe_filename(title) + ".mp4"
+                    video_filename = _shorten_filename(
+                        self.folder, _cinema_safe_filename(title)
+                    ) + ".mp4"
                 elif self.cinema_video_id:
                     video_filename = self.cinema_video_id + ".mp4"
             if video_filename:
@@ -246,6 +335,10 @@ class SongInfo:
                 vp = self.folder / video_filename
                 if vp.exists():
                     self.cinema_video_path = vp
+                elif raw_filename:
+                    self.cinema_video_path = _misplaced_video(
+                        self.folder, raw_filename
+                    )
             try:
                 self.cinema_video_offset_ms = int(data.get("offset", 0) or 0)
             except (TypeError, ValueError):

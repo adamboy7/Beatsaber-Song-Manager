@@ -10,6 +10,7 @@ from conftest import make_song_folder, v2_info
 from libraries.song_data import (
     SongInfo,
     _cinema_safe_filename,
+    _cinema_video_filename,
     compute_song_hash,
     load_songs,
     save_custom_tags,
@@ -151,6 +152,45 @@ class TestCinema:
         assert song.cinema_video_path == folder / "clip.mp4"
         assert song.has_playable_cinema_video
         assert song.has_cinema  # manifest alone implies cinema support
+
+    def test_video_file_with_a_slash_stays_one_filename(self, tmp_path, song_factory):
+        folder, _ = song_factory()
+        raw = "徳川カップヌードル禁止令 / 草薙寧々 & ネネロボ.mp4"
+        (folder / "cinema-video.json").write_text(json.dumps({
+            "videoID": "jPXAgWkqbo4", "videoFile": raw, "configByMapper": True,
+        }), encoding="utf-8")
+        song = SongInfo(folder)
+        assert song.cinema_video_file == "徳川カップヌードル禁止令 _ 草薙寧々 & ネネロボ.mp4"
+        assert "/" not in song.cinema_video_file
+        assert "\\" not in song.cinema_video_file
+
+    def test_video_already_downloaded_into_a_subfolder_is_found(self, song_factory):
+        folder, _ = song_factory()
+        raw = "徳川カップヌードル禁止令 / 草薙寧々 & ネネロボ.mp4"
+        (folder / "cinema-video.json").write_text(json.dumps({
+            "videoID": "jPXAgWkqbo4", "videoFile": raw,
+        }), encoding="utf-8")
+        stray_dir = folder / "徳川カップヌードル禁止令#"
+        stray_dir.mkdir()
+        stray = stray_dir / "草薙寧々 & ネネロボ.mp4"
+        stray.write_bytes(b"\x00")
+        song = SongInfo(folder)
+        assert song.cinema_video_path == stray
+        assert song.has_playable_cinema_video
+        # …but a fresh download still goes to the flat, legal name.
+        assert song.cinema_video_file == "徳川カップヌードル禁止令 _ 草薙寧々 & ネネロボ.mp4"
+
+    def test_legal_video_file_is_left_alone(self, tmp_path, song_factory):
+        folder, _ = song_factory()
+        assert _cinema_video_filename(folder, "feat. Miku.mp4") == "feat. Miku.mp4"
+        assert _cinema_video_filename(folder, "clip") == "clip.mp4"
+        assert _cinema_video_filename(folder, "trailing space .mp4") == "trailing space .mp4"
+
+    def test_long_video_file_truncated_like_cinema(self, tmp_path):
+        folder = make_song_folder(tmp_path, "long (Long - Mapper)", v2_info())
+        name = _cinema_video_filename(folder, "x" * 400 + ".mp4")
+        assert len(str(folder)) + len(name) <= 259
+        assert name.endswith(".mp4")
 
     def test_manifest_case_insensitive_and_bad_offsets_coerced(self, song_factory):
         folder, _ = song_factory()
