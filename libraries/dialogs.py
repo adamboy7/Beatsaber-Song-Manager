@@ -127,6 +127,136 @@ def themed_entry(parent: tk.Misc, **kw) -> tk.Entry:
     return tk.Entry(parent, **opts)
 
 
+def selected_text(entry) -> str:
+    """``entry``'s selected text, or ``""`` if nothing is selected.
+
+    Read through ``sel.first``/``sel.last`` rather than ``selection_get()``,
+    which reads the X PRIMARY selection and so can return another widget's
+    text — or raise — when this entry isn't the selection owner.
+    """
+    try:
+        if not entry.selection_present():
+            return ""
+        return entry.get()[entry.index("sel.first"):entry.index("sel.last")]
+    except tk.TclError:
+        return ""
+
+
+def copy_from_entry(entry) -> str:
+    """Put ``entry``'s selection on the clipboard. Returns what was copied.
+
+    A no-op when nothing is selected: the menu disables Copy in that case, but
+    a keyboard binding could still reach here with an empty selection, and
+    clobbering the clipboard with "" would lose whatever the user had.
+    """
+    text = selected_text(entry)
+    if not text:
+        return ""
+    try:
+        entry.clipboard_clear()
+        entry.clipboard_append(text)
+    except tk.TclError:
+        return ""
+    return text
+
+
+def cut_from_entry(entry) -> str:
+    """Copy the selection to the clipboard, then delete it from ``entry``.
+
+    Returns what was cut. Deletes only if the copy succeeded, so a clipboard
+    failure can't silently eat the user's text.
+    """
+    text = copy_from_entry(entry)
+    if not text:
+        return ""
+    try:
+        entry.delete("sel.first", "sel.last")
+    except tk.TclError:
+        return ""
+    entry.focus_set()
+    return text
+
+
+def paste_into_entry(entry, clipboard: str) -> None:
+    """Insert ``clipboard`` at the cursor, replacing any selection.
+
+    Tk's built-in ``<<Paste>>`` leaves the selection in place on some
+    platforms, which turns a paste-over-all into an append. Doing the delete
+    ourselves makes the behaviour the same everywhere.
+    """
+    if not clipboard:
+        return
+    try:
+        if entry.selection_present():
+            entry.delete("sel.first", "sel.last")
+        entry.insert("insert", clipboard)
+    except tk.TclError:
+        return
+    entry.focus_set()
+
+
+def bind_clipboard_menu(entry, extend=None) -> None:
+    """Give ``entry`` a Cut / Copy / Paste right-click menu and Ctrl keys.
+
+    Cut and Copy are disabled with no selection and Paste with an empty
+    clipboard, so the menu always describes what it will actually do.
+
+    ``extend`` is an optional ``callable(menu)`` invoked after a separator,
+    for callers that want more than the clipboard items; ``bind_tag_menu``
+    uses it to hang the tag picker off the same menu. Left out, the menu is
+    just the three clipboard entries — which is all a plain prompt like the
+    YouTube-link dialog wants.
+    """
+
+    def _paste() -> None:
+        try:
+            text = entry.clipboard_get()
+        except tk.TclError:
+            return  # empty clipboard, or it holds something that isn't text
+        paste_into_entry(entry, text)
+
+    def _popup(event):
+        menu = tk.Menu(entry, tearoff=0, bg=ENTRY_BG, fg=TEXT_COLOR,
+                       activebackground=ACCENT_COLOR,
+                       activeforeground=TEXT_COLOR, bd=0)
+        try:
+            can_paste = bool(entry.clipboard_get())
+        except tk.TclError:
+            can_paste = False
+        has_sel = bool(selected_text(entry))
+        menu.add_command(label="Cut", command=lambda: cut_from_entry(entry),
+                         state="normal" if has_sel else "disabled")
+        menu.add_command(label="Copy", command=lambda: copy_from_entry(entry),
+                         state="normal" if has_sel else "disabled")
+        menu.add_command(label="Paste", command=_paste,
+                         state="normal" if can_paste else "disabled")
+        # Held on the widget so Tk can't garbage-collect the menu out from
+        # under the posted window while it is still on screen.
+        entry._clipboard_menu = menu  # type: ignore[attr-defined]
+        if extend is not None:
+            menu.add_separator()
+            extend(menu)
+        menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
+    def _select_all(_event=None):
+        entry.select_range(0, "end")
+        entry.icursor("end")
+        return "break"
+
+    entry.bind("<Button-3>", _popup)
+
+    for seq, fn in (
+        ("<Control-x>", cut_from_entry), ("<Control-X>", cut_from_entry),
+        ("<Control-c>", copy_from_entry), ("<Control-C>", copy_from_entry),
+    ):
+        entry.bind(seq, lambda _e, f=fn: (f(entry), "break")[1])
+    for seq in ("<Control-v>", "<Control-V>"):
+        entry.bind(seq, lambda _e: (_paste(), "break")[1])
+    for seq in ("<Control-a>", "<Control-A>"):
+        entry.bind(seq, _select_all)
+
+
 def themed_option_menu(
     parent: tk.Misc,
     textvariable: tk.StringVar,
@@ -468,6 +598,7 @@ def ask_string(
     entry = themed_entry(body, width=width)
     entry.insert(0, initial)
     entry.pack(fill="x")
+    bind_clipboard_menu(entry)
 
     btn_frame = tk.Frame(dlg, bg=DIALOG_BG)
     btn_frame.pack(padx=24, pady=(12, 18))

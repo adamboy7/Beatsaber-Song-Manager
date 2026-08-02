@@ -24,6 +24,13 @@ import tkinter as tk
 from typing import NamedTuple
 
 from libraries import dialogs
+from libraries.dialogs import (  # noqa: F401
+    bind_clipboard_menu,
+    copy_from_entry,
+    cut_from_entry,
+    paste_into_entry,
+    selected_text,
+)
 from libraries.constants import (
     BG_COLOR, ACCENT_COLOR, TEXT_COLOR, SUBTEXT_COLOR,
     SELECTED_BG, HOVER_BG, ITEM_BG, SEPARATOR_COLOR,
@@ -111,39 +118,6 @@ def append_tag(current: str, spec: TagSpec) -> str:
     return f"{current}{sep}{spec.insert_text}"
 
 
-def selected_text(entry) -> str:
-    """``entry``'s selected text, or ``""`` if nothing is selected.
-
-    Read through ``sel.first``/``sel.last`` rather than ``selection_get()``,
-    which reads the X PRIMARY selection and so can return another widget's
-    text — or raise — when this entry isn't the selection owner.
-    """
-    try:
-        if not entry.selection_present():
-            return ""
-        return entry.get()[entry.index("sel.first"):entry.index("sel.last")]
-    except tk.TclError:
-        return ""
-
-
-def copy_from_entry(entry) -> str:
-    """Put ``entry``'s selection on the clipboard. Returns what was copied.
-
-    A no-op when nothing is selected: the menu disables Copy in that case, but
-    a keyboard binding could still reach here with an empty selection, and
-    clobbering the clipboard with "" would lose whatever the user had.
-    """
-    text = selected_text(entry)
-    if not text:
-        return ""
-    try:
-        entry.clipboard_clear()
-        entry.clipboard_append(text)
-    except tk.TclError:
-        return ""
-    return text
-
-
 def insert_tag_into_entry(entry, var, spec: TagSpec) -> None:
     """Append ``spec``'s token to ``var`` and leave ``entry`` ready to type.
 
@@ -164,113 +138,28 @@ def insert_tag_into_entry(entry, var, spec: TagSpec) -> None:
     entry.icursor("end")
 
 
-def cut_from_entry(entry) -> str:
-    """Copy the selection to the clipboard, then delete it from ``entry``.
-
-    Returns what was cut. Deletes only if the copy succeeded, so a clipboard
-    failure can't silently eat the user's text.
-    """
-    text = copy_from_entry(entry)
-    if not text:
-        return ""
-    try:
-        entry.delete("sel.first", "sel.last")
-    except tk.TclError:
-        return ""
-    entry.focus_set()
-    return text
-
-
-def paste_into_entry(entry, clipboard: str) -> None:
-    """Insert ``clipboard`` at the cursor, replacing any selection.
-
-    Tk's built-in ``<<Paste>>`` leaves the selection in place on some
-    platforms, which turns a paste-over-all into an append. Doing the delete
-    ourselves makes the behaviour the same everywhere.
-    """
-    if not clipboard:
-        return
-    try:
-        if entry.selection_present():
-            entry.delete("sel.first", "sel.last")
-        entry.insert("insert", clipboard)
-    except tk.TclError:
-        return
-    entry.focus_set()
-
-
 def bind_tag_menu(entry, var) -> None:
     """Wire up ``entry``'s right-click menu and its clipboard keys.
 
-    The menu is Cut / Copy / Paste, then the full tag list; Ctrl+X/C/V and
-    Ctrl+A are bound to the same handlers. ``var`` is the entry's
-    textvariable; picking a tag appends it there and hands typing back to the
-    entry with the cursor after the colon.
+    The menu is the shared Cut / Copy / Paste (see
+    ``dialogs.bind_clipboard_menu``) with the tag list hung off the end.
+    ``var`` is the entry's textvariable; picking a tag appends it there and
+    hands typing back to the entry with the cursor after the colon.
     """
 
-    def _append(spec: TagSpec) -> None:
-        insert_tag_into_entry(entry, var, spec)
-
-    def _paste() -> None:
-        try:
-            text = entry.clipboard_get()
-        except tk.TclError:
-            return  # empty clipboard, or it holds something that isn't text
-        paste_into_entry(entry, text)
-
-    def _popup(event):
-        menu = tk.Menu(entry, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
-                       activebackground=ACCENT_COLOR,
-                       activeforeground=TEXT_COLOR, bd=0)
-        try:
-            can_paste = bool(entry.clipboard_get())
-        except tk.TclError:
-            can_paste = False
-        has_sel = bool(selected_text(entry))
-        menu.add_command(label="Cut", command=lambda: cut_from_entry(entry),
-                         state="normal" if has_sel else "disabled")
-        menu.add_command(label="Copy", command=lambda: copy_from_entry(entry),
-                         state="normal" if has_sel else "disabled")
-        menu.add_command(label="Paste", command=_paste,
-                         state="normal" if can_paste else "disabled")
-        menu.add_separator()
-
+    def _add_tag_picker(menu) -> None:
         tag_menu = tk.Menu(menu, tearoff=0, bg="#1e1e1e", fg=TEXT_COLOR,
                            activebackground=ACCENT_COLOR,
                            activeforeground=TEXT_COLOR, bd=0)
         for spec in TAG_SPECS:
-            tag_menu.add_command(label=spec.label,
-                                 command=lambda s=spec: _append(s))
+            tag_menu.add_command(
+                label=spec.label,
+                command=lambda s=spec: insert_tag_into_entry(entry, var, s))
         menu.add_cascade(label="Add tag…", menu=tag_menu)
+        # Submenus need a reference of their own; Tk holds only the parent.
         entry._tag_menus = (menu, tag_menu)  # type: ignore[attr-defined]
-        menu.tk_popup(event.x_root, event.y_root)
-        return "break"
 
-    def _select_all(_event=None):
-        entry.select_range(0, "end")
-        entry.icursor("end")
-        return "break"
-
-    entry.bind("<Button-3>", _popup)
-
-    # Every handler returns "break". Widget bindings run *before* class
-    # bindings, and Tk's Entry class already binds Control-x/c/v to its own
-    # <<Cut>>/<<Copy>>/<<Paste>>; without the break both would fire and a
-    # paste would land twice. Breaking also means the paste-over-selection
-    # behaviour above is what runs, rather than Tk's insert-alongside default.
-    #
-    # The upper-case spellings are for Caps Lock, which sends Control-C rather
-    # than Control-c and would otherwise fall straight through to the class
-    # binding — the one case where the doubling would still be visible.
-    for seq, fn in (
-        ("<Control-x>", cut_from_entry), ("<Control-X>", cut_from_entry),
-        ("<Control-c>", copy_from_entry), ("<Control-C>", copy_from_entry),
-    ):
-        entry.bind(seq, lambda _e, f=fn: (f(entry), "break")[1])
-    for seq in ("<Control-v>", "<Control-V>"):
-        entry.bind(seq, lambda _e: (_paste(), "break")[1])
-    for seq in ("<Control-a>", "<Control-A>"):
-        entry.bind(seq, _select_all)
+    bind_clipboard_menu(entry, extend=_add_tag_picker)
 
 
 def _has_invalid_tags(tags: list[tuple[str, str]]) -> bool:
