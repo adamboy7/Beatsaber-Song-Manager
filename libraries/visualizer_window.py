@@ -159,6 +159,8 @@ class VisualizerWindow(tk.Toplevel):
         # playback session (see _tick).
         self._current_song_id: int | None = None
         self._current_session_id: int | None = None
+        self._current_seek_id: int | None = None
+        self._seek_pending: bool = False
 
         # Streaming ffmpeg subprocess + reader thread state.
         self._ffmpeg_proc: subprocess.Popen | None = None
@@ -434,11 +436,16 @@ class VisualizerWindow(tk.Toplevel):
                 and not stopped
             )
 
+            if mp.seek_id != self._current_seek_id:
+                self._current_seek_id = mp.seek_id
+                self._seek_pending = song is not None and not stopped
+
             # Song change (or a same-song restart): restart the stream.
             if song_id != self._current_song_id or is_repeat_restart:
                 self._current_song_id = song_id
                 self._current_session_id = session_id
                 self._current_song = song
+                self._seek_pending = False  # the restart supersedes it
                 self._on_song_changed(song)
                 self._was_paused = paused
                 self._was_stopped = stopped
@@ -446,6 +453,7 @@ class VisualizerWindow(tk.Toplevel):
                 self._current_session_id = session_id
                 # Pause / resume transitions.
                 if stopped and not self._was_stopped:
+                    self._seek_pending = False
                     self._stop_stream()
                     self._set_status("Stopped.")
                     self._clear_canvas()
@@ -453,7 +461,11 @@ class VisualizerWindow(tk.Toplevel):
                     # Resumed from stop with the same song still tracked
                     # (e.g. user hit Play after Stop). Re-launch the stream
                     # from the current elapsed offset.
+                    self._seek_pending = False
                     self._restart_stream_at_elapsed()
+                elif self._seek_pending:
+                    self._seek_pending = False
+                    self._resync_stream_after_seek(paused)
                 elif paused and not self._was_paused:
                     self._suspend_stream()
                 elif not paused and self._was_paused:
@@ -589,6 +601,27 @@ class VisualizerWindow(tk.Toplevel):
         self._stop_stream()
         elapsed = self._browser._media_player.elapsed_seconds() or 0.0
         self._start_stream(song, max(0.0, elapsed))
+
+    def _resync_stream_after_seek(self, paused: bool):
+        """Re-position the stream after the audio was scrubbed.
+
+        Both backends are seeked once at stream start and then run on their own
+        clock, so a scrub only reaches the picture by way of a restart. Paused,
+        the restart is followed by a freeze, so the visualizer holds the frame
+        the audio is now sitting on instead of running on past it.
+        """
+        # A scrub backwards can land inside a Cinema video window that was
+        # already written off as finished, so give the clip another chance —
+        # the EOF watchdog will set this again if it really is done.
+        self._video_ended = False
+        self._restart_stream_at_elapsed()
+        if not paused:
+            return
+        if self._video_active:
+            # mpv holds its decoded frame while paused.
+            self._suspend_stream()
+        else:
+            self._freeze_spectrum_after_restart()
 
     # ── Cinema video mode selection ──────────────────────────────────────────
 
@@ -1120,10 +1153,21 @@ class VisualizerWindow(tk.Toplevel):
         if not mp.is_paused:
             self._restart_stream_at_elapsed()
             return
-        self._freeze_after_resize_spectrum()
+        self._freeze_spectrum_at_elapsed()
 
-    def _freeze_after_resize_spectrum(self):
+    def _freeze_spectrum_at_elapsed(self):
+        """Restart the spectrum stream at the audio's position, then hold it.
+
+        For the cases where a paused stream has to be re-positioned rather than
+        merely re-sized: a canvas resize (the ffmpeg stream renders at a fixed
+        size) and a scrub of paused audio. Either way the bars must come back at
+        the new position and then stay frozen, matching audio that isn't moving.
+        """
         self._restart_stream_at_elapsed()
+        self._freeze_spectrum_after_restart()
+
+    def _freeze_spectrum_after_restart(self):
+        """Hold a just-restarted spectrum stream on its first frame."""
         proc = self._ffmpeg_proc
         if proc is not None and proc.poll() is None:
             _suspend_pid(proc.pid)
@@ -1253,6 +1297,8 @@ class VisualizerWindow(tk.Toplevel):
         self._current_song = song
         self._current_song_id = id(song) if song is not None else None
         self._current_session_id = mp.session_id if song is not None else None
+        self._current_seek_id = mp.seek_id
+        self._seek_pending = False
         self._was_paused = mp.is_paused
         self._was_stopped = mp.is_stopped
         if song is None:

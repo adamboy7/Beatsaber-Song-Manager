@@ -202,6 +202,7 @@ class MediaPlayer:
         self.song_duration: float | None = None
         self._volume: int = 75
         self.session_id: int = 0
+        self.seek_id: int = 0
 
     # ── Public state helpers ─────────────────────────────────────────────────
 
@@ -242,6 +243,18 @@ class MediaPlayer:
         if self._backend != "ffplay":
             return True
         return self._ffplay_proc is None or not self.is_active
+
+    @property
+    def has_live_seek(self) -> bool:
+        """Whether ``seek`` lands without relaunching a subprocess.
+
+        Same backend split as ``has_live_volume``: on mpv the position is a
+        live property, while an active ffplay session can only be moved by
+        killing it and starting a new one at the target. The progress bar
+        reads this to decide whether a drag can seek on every motion event
+        (mpv) or should preview silently and jump once on release (ffplay).
+        """
+        return self.has_live_volume
 
     @property
     def is_finished(self) -> bool:
@@ -369,6 +382,92 @@ class MediaPlayer:
                 self._pause_start = time.time()
         except Exception as exc:
             dialogs.show_error("Pause Failed", str(exc))
+
+    _SEEK_END_MARGIN_S = 0.25
+
+    def seek(self, position: float) -> None:
+        """Jump to ``position`` seconds into the current song.
+
+        Works while playing and while paused; a paused seek repositions
+        without resuming, so the next play starts from where the user put it.
+
+        On mpv the position is a live property and the jump is immediate. The
+        ffplay fallback has no live transport, so it relaunches the subprocess
+        at the new offset — the same relaunch trick ``set_volume`` uses there.
+        A *paused* ffplay is not relaunched at all: that would start audio the
+        user deliberately stopped, so the target is parked in
+        ``_ffplay_pending_seek`` and applied by the resume in
+        ``_toggle_pause_ffplay``.
+
+        The wall-clock estimate is rebased to match either way, so
+        ``elapsed_seconds`` reports the new position immediately — mpv's
+        ``time_pos`` is authoritative once it updates, but the estimate covers
+        the gap before then, and it's all the ffplay backend ever has.
+
+        No-op when nothing is loaded or playback is stopped.
+        """
+        if self.playing_song is None or self._stopped:
+            return
+        position = max(0.0, float(position))
+        duration = self.duration_seconds()
+        if duration:
+            position = min(position, max(0.0, duration - self._SEEK_END_MARGIN_S))
+
+        if self._backend == "ffplay":
+            if not self._seek_ffplay(position):
+                return
+        else:
+            player = self._player
+            if player is None:
+                return
+            try:
+                player.time_pos = position
+            except Exception:
+                return
+            self._finished = False
+            if not self._audio_paused:
+                try:
+                    player.pause = False
+                except Exception:
+                    pass
+
+        self._rebase_clock(position)
+        self.seek_id += 1
+
+    def _seek_ffplay(self, position: float) -> bool:
+        """Move the ffplay backend to ``position``. Returns False if it couldn't.
+
+        Paused, this only records where to resume from (see ``seek``). Playing,
+        the running process is replaced by a fresh one started at the offset.
+        """
+        song = self.playing_song
+        if song is None:
+            return False
+        paused = self._audio_paused
+        self._stop_ffplay()  # clears _ffplay_pending_seek, so set it after
+        if paused:
+            self._ffplay_pending_seek = position
+            return True
+        if not self._launch_ffplay(song, position):
+            # Couldn't restart — mark finished so an active queue moves on.
+            self._finished = True
+            return False
+        self._finished = False
+        return True
+
+    def _rebase_clock(self, position: float) -> None:
+        """Re-anchor the wall-clock elapsed estimate so it reads ``position``.
+
+        ``elapsed_seconds`` derives its fallback from ``_play_start`` and the
+        accumulated pause time; after a jump those describe the old position,
+        so they're rewritten rather than adjusted. A clock rebased while paused
+        keeps ``_pause_start`` set to now, so the paused reading holds steady at
+        ``position`` until playback resumes.
+        """
+        now = time.time()
+        self._play_start = now - position
+        self._paused_total = 0.0
+        self._pause_start = now if self._audio_paused else None
 
     def elapsed_seconds(self) -> float | None:
         if self._play_start is None:

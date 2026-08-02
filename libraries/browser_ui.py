@@ -671,8 +671,15 @@ class BrowserUIMixin:
             orient="horizontal",
             mode="determinate",
             maximum=100,
+            cursor="hand2",
         )
         self._player_progress.pack(fill="x", padx=10, pady=(0, 2))
+        self._player_progress.bind("<Button-1>", self._on_progress_press)
+        self._player_progress.bind("<B1-Motion>", self._on_progress_drag)
+        self._player_progress.bind("<ButtonRelease-1>", self._on_progress_release)
+        # Mid-scrub the bar answers to the cursor, not the 500ms tick.
+        self._seek_dragging: bool = False
+        self._seek_preview: float | None = None
 
         # Volume slider row
         volume_row = tk.Frame(self._player_bar_frame, bg="#0d0d1a")

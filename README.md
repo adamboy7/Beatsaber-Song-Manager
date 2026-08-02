@@ -90,6 +90,7 @@ When a playlist is already loaded, you'll be asked to overwrite the current queu
 
 - **Hardware media keys** — respected system-wide while the app is running
 - **Clickable player controls** — play/pause, next, previous, shuffle, loop
+- **Click-to-seek progress bar** — click anywhere on the bar to jump there, or hold and drag to scrub. Works while playing and while paused; a paused scrub repositions without resuming, so play picks up where you left the playhead. On libmpv the audio follows the cursor as you drag; on the ffplay fallback, which can only seek by relaunching, the bar previews and the audio jumps once when you let go. The Visualizer re-syncs to the new position either way.
 - **Queue window** — for full queue management, reordering, and editing
 
 The media player bar can be hidden (Options → Show Media Player). If you prefer controlling playback through media keys and the Queue window alone, you can keep the main window lean or minimize it entirely.

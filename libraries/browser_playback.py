@@ -47,6 +47,18 @@ def _pick_shuffle_index(queue_len: int, current_index: int, last_shuffle_index: 
     return idx
 
 
+def _seek_position(x: int, width: int, duration: float) -> float:
+    """Song position (seconds) for a click ``x`` pixels into a bar ``width`` wide.
+
+    Clamped at both ends so a click on the very edge — or a drag that runs off
+    the widget, which keeps reporting coordinates outside it — still resolves
+    to a real position instead of a negative one or one past the end.
+    """
+    if width < 2:
+        return 0.0
+    return max(0.0, min(1.0, x / width)) * duration
+
+
 def _nav_button_states(
     queue_len: int, queue_index: int, shuffle_queue: bool, loop_queue: bool, looping: bool,
 ) -> tuple[bool, bool]:
@@ -407,7 +419,18 @@ class BrowserPlaybackMixin:
 
     # ── Player bar ────────────────────────────────────────────────────────────
 
+    def _cancel_scrub(self) -> None:
+        """Drop any in-progress scrub, so it can't land on a different song.
+
+        The bar is repainted by whatever is calling this; a drag that outlives
+        a song change or a stop would otherwise keep seeking against the new
+        state on the next motion event.
+        """
+        self._seek_dragging = False
+        self._seek_preview = None
+
     def _show_player_bar_idle(self, song: SongInfo | None, duration: float | None) -> None:
+        self._cancel_scrub()
         if song is None:
             self._player_time_label.config(text="--:--")
             self._player_progress["value"] = 0
@@ -425,6 +448,7 @@ class BrowserPlaybackMixin:
             self._player_progress["value"] = 0
 
     def _show_player_bar(self, song: SongInfo):
+        self._cancel_scrub()
         self._stop_idle_animation()
         name = song.display_name or song.song_name or "Unknown"
         self._player_name_label.config(text=f"▶  {name}")
@@ -589,6 +613,73 @@ class BrowserPlaybackMixin:
             )
         menu.tk_popup(event.x_root, event.y_root)
 
+    # ── Progress bar scrubbing ────────────────────────────────────────────────
+
+    def _seekable_duration(self) -> float | None:
+        """The current song's length if it can be scrubbed right now, else None.
+
+        Seeking needs a loaded song (playing or paused — ``is_active`` covers
+        both and excludes stopped) and a known duration to map pixels onto.
+        The idle bar, the stopped bar, and the brief window before a duration
+        is known are all non-interactive by this test.
+        """
+        mp = self._media_player
+        if not mp.is_active:
+            return None
+        duration = mp.duration_seconds()
+        return duration if duration and duration > 0 else None
+
+    def _on_progress_press(self, event: tk.Event):
+        if self._seekable_duration() is None:
+            return
+        self._seek_dragging = True
+        self._preview_seek(event)
+
+    def _on_progress_drag(self, event: tk.Event):
+        if not self._seek_dragging:
+            return
+        self._preview_seek(event)
+
+    def _on_progress_release(self, event: tk.Event):
+        if not self._seek_dragging:
+            return
+        self._seek_dragging = False
+        self._preview_seek(event, commit=True)
+        self._seek_preview = None
+
+    def _preview_seek(self, event: tk.Event, commit: bool = False):
+        """Move the bar to the cursor, and the audio with it where that's cheap.
+
+        On mpv the seek goes out on every motion event — the position is a live
+        property, so scrubbing is audible and costs nothing. On an active
+        ffplay each seek is a process relaunch, so a drag only previews and the
+        audio jumps once, on release (``commit``). Either way the bar and the
+        time label track the cursor immediately rather than waiting up to 500ms
+        for the next tick.
+        """
+        duration = self._seekable_duration()
+        if duration is None:
+            self._seek_dragging = False
+            self._seek_preview = None
+            return
+        pos = _seek_position(event.x, self._player_progress.winfo_width(), duration)
+        self._seek_preview = pos
+        self._render_progress(pos, duration)
+        mp = self._media_player
+        if commit or mp.has_live_seek:
+            mp.seek(pos)
+
+    def _render_progress(self, elapsed: float, duration: float | None) -> None:
+        """Paint ``elapsed`` onto the progress bar and the time label."""
+        e_min, e_sec = divmod(int(elapsed), 60)
+        if duration:
+            d_min, d_sec = divmod(int(duration), 60)
+            self._player_time_label.config(text=f"{e_min}:{e_sec:02d} / {d_min}:{d_sec:02d}")
+            self._player_progress["value"] = min(100.0, elapsed / duration * 100)
+        else:
+            self._player_time_label.config(text=f"{e_min}:{e_sec:02d}")
+            self._player_progress["value"] = 0
+
     # ── Periodic tick ─────────────────────────────────────────────────────────
 
     def _start_player_tick(self):
@@ -639,14 +730,9 @@ class BrowserPlaybackMixin:
         self._update_status_icon()
         self._refresh_player_play_btn()
 
-        e_min, e_sec = divmod(int(elapsed), 60)
-        if duration:
-            d_min, d_sec = divmod(int(duration), 60)
-            self._player_time_label.config(text=f"{e_min}:{e_sec:02d} / {d_min}:{d_sec:02d}")
-            pct = min(100.0, elapsed / duration * 100)
-            self._player_progress["value"] = pct
+        if self._seek_dragging and self._seek_preview is not None:
+            self._render_progress(self._seek_preview, duration)
         else:
-            self._player_time_label.config(text=f"{e_min}:{e_sec:02d}")
-            self._player_progress["value"] = 0
+            self._render_progress(elapsed, duration)
 
         self._player_tick_id = self.after(500, self._tick_player)
