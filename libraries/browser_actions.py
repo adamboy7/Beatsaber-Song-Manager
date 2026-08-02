@@ -544,7 +544,15 @@ class BrowserActionsMixin:
         leaves nothing behind claiming the song has a video. ``on_done`` then
         fires on the main thread with ``True``/``False``, in place of the
         default row-refresh + error dialog.
+
+        The format is whatever ``cinema_video_quality`` in config.json asks
+        for, defaulting to the 720p H.264 pair Cinema itself downloads — see
+        ``app_config.video_download_args``. At ``"max"`` the download may be
+        followed by an ffmpeg transcode, which is why the output parser has a
+        case for ``[VideoConvertor]``.
         """
+        from libraries import app_config
+
         self._cinema_downloads_active.add(str(song.folder))
 
         if video_id is None:
@@ -554,7 +562,7 @@ class BrowserActionsMixin:
         cmd = [
             str(yt_dlp),
             f"https://www.youtube.com/watch?v={video_id}",
-            "-f", "bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4]",
+            *app_config.video_download_args(),
             "--no-cache-dir",
             "-o", str(out_path),
             "--no-playlist", "--no-part",
@@ -585,6 +593,13 @@ class BrowserActionsMixin:
                     if line.startswith("[download]") and "%" in line:
                         self._dispatcher.dispatch(lambda l=line: self.status_bar.config(
                             text=f"Downloading video for {name}  •  {l.removeprefix('[download]').strip()}"
+                        ))
+                    elif line.startswith(("[VideoConvertor]", "[Merger]")):
+                        stage = ("Converting" if line.startswith("[VideoConvertor]")
+                                 else "Merging")
+                        self._dispatcher.dispatch(lambda s=stage: self.status_bar.config(
+                            text=f"{s} video for {name}… (this can take a while)"
+                            if s == "Converting" else f"{s} video for {name}…"
                         ))
                 rc = proc.wait()
             except Exception as exc:

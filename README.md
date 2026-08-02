@@ -327,7 +327,7 @@ Many maps ship a `cinema-video.json` for the [Cinema mod](https://github.com/Kev
 
 **Playback** — if the referenced video file is present in the song folder, the Visualizer plays it instead of the spectrum, seeked to stay in sync with the song's audio and honoring Cinema's configured offset and duration. Outside the video's window (before the offset, or after it ends), the spectrum shows instead. Playback uses libmpv embedded directly into the Visualizer window — hardware-accelerated, with pause/resume tracked frame-accurately against the audio — falling back to the spectrum if libmpv or the video is unavailable.
 
-**Download** — the manifest often references a video you haven't downloaded in-game yet. Right-click the song (in the list, or in the Visualizer) → **Download Video** fetches it with yt-dlp using the same format and filename Cinema would (720p MP4, saved into the song folder), with download progress in the status bar. Failed downloads retry once automatically. Once finished, the video is immediately available in-game and in the Visualizer.
+**Download** — the manifest often references a video you haven't downloaded in-game yet. Right-click the song (in the list, or in the Visualizer) → **Download Video** fetches it with yt-dlp using the same format and filename Cinema would (720p MP4 by default, saved into the song folder — see **Quality** below), with download progress in the status bar. Failed downloads retry once automatically. Once finished, the video is immediately available in-game and in the Visualizer.
 
 **Add your own** — for a song with no `cinema-video.json`, right-click → **Add Cinema Video…** and paste a YouTube link. Normally this means launching the game and searching from Cinema's in-game menu; here it's one paste. The dialog prefills from your clipboard if you've already copied a link, and accepts every form YouTube hands out — `watch?v=`, `youtu.be/`, Shorts, embeds, or a bare video ID.
 
@@ -336,6 +336,22 @@ The app fetches the video's title, channel and duration with yt-dlp, downloads t
 The offset editor (Shift+right-click → **Cinema Offset…**) opens automatically afterwards — a config created from scratch starts at offset 0 and is essentially never in sync. It draws the song's waveform above the video's on a shared timeline: drag the video strip or nudge it with ← / → (Shift ×100 ms, Ctrl ×1000 ms), scroll the wheel over either waveform to move the playhead — right-click drops it where you point, clicking the overview strip up top jumps the view and takes the playhead to the start of it, the view pans to follow, and it stops at the start and end of the song — and **Preview** plays from the playhead with the offset applied live. Syncing a config you just created doesn't leave a `.bak`: there's no earlier version to restore to, and the file has never been anything but yours.
 
 **Replace** — hold Shift and right-click a song that already has a video for **Replace Cinema Video…** — in the song list or in the Visualizer. This confirms first: a mapper's config carries screen placement, colour correction and environment changes that can't be reconstructed from a YouTube link. The original is backed up, so **Restore Files** undoes it.
+
+**Quality** — downloads default to the 720p H.264 stream Cinema itself fetches, so the file is what the mod would have produced. To go higher, set `cinema_video_quality` in `config.json` (in `%APPDATA%\BeatSaberSongManager` on Windows) to `"1080"` or `"max"`; the key is written into the file automatically, so it's there to edit. Both raised settings take the best resolution a video actually publishes rather than failing when it doesn't go that high.
+
+`"1080"` is the highest setting that never re-encodes. YouTube publishes H.264 up to 1080p and nothing above it, so anything higher has to be converted on the way in — which is what `"max"` will do, but only when it buys something:
+
+| The video's best stream | `"max"` downloads | Re-encodes? |
+| --- | --- | --- |
+| 1080p (the common case) | 1080p H.264 | No — identical to `"1080"` |
+| 1440p, or 4K at 30fps | that resolution, in VP9 | Yes, to H.264 |
+| 4K at 60fps | 1440p60 | Yes, to H.264 |
+
+4K60 is capped on purpose. H.264's level is set by macroblocks *per second*, so 4K at 30fps lands in level 5.1 while 4K at 60fps needs 5.2 — and the Media Foundation decoder Cinema ends up on [documents support only up to 5.1](https://learn.microsoft.com/en-us/windows/win32/medfound/h-264-video-decoder). 1440p60 is the most resolution that still fits. (4K30 fits by 1.2%.)
+
+The re-encode is why this isn't the default. It's a full ffmpeg pass over the video — minutes rather than seconds for a 4K stream, and lossy — so the status bar shows **Converting** while it runs. The files are large, too: a 7-minute 4K video lands around 450 MB in the song folder. And Microsoft only guarantees hardware-accelerated decoding up to 1920×1088; above that it uses the GPU if it can and falls back to software if it can't, which is not something you want happening on a VR frame budget.
+
+The conversion is needed because Cinema plays video through Unity's `VideoPlayer`, which decodes H.264, H.265 and VP8 — [not VP9 or AV1](https://docs.unity3d.com/6000.3/Documentation/Manual/video-encoding-compatibility.html). That's why the mod's own downloader hardcodes `vcodec*=avc1`, and why its in-game quality setting stops at 1080p with 1440p and 2160p commented out of the source. Left as VP9 or AV1, a 4K download would play fine in the Visualizer and show a black screen behind the map.
 
 yt-dlp is looked for in Beat Saber's `Libs` folder (where Cinema keeps it), then next to the application — the same place as ffmpeg. If it isn't found, the app offers to download it for you.
 

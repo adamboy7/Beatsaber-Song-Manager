@@ -210,3 +210,145 @@ def test_split_preview_round_trips(config):
 def test_a_hand_edited_split_preview_value_is_ignored(config):
     config["cinema_split_preview"] = "false"
     assert app_config.get_split_preview() is False
+
+
+# ── Cinema video quality ─────────────────────────────────────────────────────
+
+
+def test_video_quality_defaults_to_720(config):
+    assert app_config.get_video_quality() == "720"
+
+
+@pytest.mark.parametrize("quality", app_config.VIDEO_QUALITIES)
+def test_every_documented_quality_round_trips(config, quality):
+    assert app_config.set_video_quality(quality)
+    assert app_config.get_video_quality() == quality
+
+
+def test_an_unknown_quality_is_refused_rather_than_stored(config):
+    assert not app_config.set_video_quality("4k")
+    assert app_config.get_video_quality() == app_config.DEFAULT_VIDEO_QUALITY
+
+
+@pytest.mark.parametrize("stored", ["4k", "", None, [], "1080p"])
+def test_a_hand_edited_quality_falls_back_to_the_default(config, stored):
+    config[app_config.VIDEO_QUALITY_KEY] = stored
+    assert app_config.get_video_quality() == app_config.DEFAULT_VIDEO_QUALITY
+
+
+def test_an_unquoted_number_is_read_as_the_quality_meant(config):
+    """1080 without quotes is a JSON int, and obviously means "1080"."""
+    config[app_config.VIDEO_QUALITY_KEY] = 1080
+    assert app_config.get_video_quality() == "1080"
+
+
+def test_the_quality_key_is_seeded_so_it_can_be_discovered(config, tmp_path):
+    app_config.set_custom_levels(tmp_path)
+    assert config[app_config.VIDEO_QUALITY_KEY] == app_config.DEFAULT_VIDEO_QUALITY
+
+
+def test_seeding_never_overwrites_a_chosen_quality(config, tmp_path):
+    app_config.set_video_quality("max")
+    app_config.set_custom_levels(tmp_path)
+    assert config[app_config.VIDEO_QUALITY_KEY] == "max"
+
+
+# ── Format selector ──────────────────────────────────────────────────────────
+
+
+def test_the_default_selector_is_the_720p_format_cinema_uses(config):
+    assert app_config.video_format_selector() == (
+        "bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4]"
+    )
+
+
+def test_the_default_selector_has_no_fallback_rungs(config):
+    """720p must stay byte-identical to what the mod itself downloads."""
+    assert "/" not in app_config.video_format_selector("720")
+
+
+def test_1080_still_ends_at_the_720p_pair(config):
+    """A video with only low-resolution streams downloads rather than fails."""
+    assert app_config.video_format_selector("1080").endswith(
+        "/bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4]"
+    )
+
+
+@pytest.mark.parametrize("quality", app_config.VIDEO_QUALITIES)
+def test_no_rung_can_land_on_av1(config, quality):
+    """AV1 ships in .mp4, so --recode-video mp4 skips it and Cinema — whose
+    Unity player cannot decode AV1 — shows a black screen behind the map."""
+    for rung in app_config.video_format_selector(quality).split("/"):
+        assert "avc1" in rung or "vcodec!*=av01" in rung, rung
+
+
+@pytest.mark.parametrize("quality", ["720", "1080"])
+def test_a_capped_quality_only_ever_asks_for_h264(config, quality):
+    """Neither capped setting may re-encode, so every rung must be avc1."""
+    rungs = app_config.video_format_selector(quality).split("/")
+    assert all("vcodec*=avc1" in rung for rung in rungs)
+
+
+@pytest.mark.parametrize("quality", ["720", "1080"])
+def test_a_capped_quality_does_not_sort(config, quality):
+    assert app_config.video_sort_order(quality) is None
+
+
+def test_max_does_not_constrain_the_codec_to_h264(config):
+    """It sorts toward avc1 instead — a constraint would cap it at 1080p."""
+    assert "vcodec*=avc1" not in app_config.video_format_selector("max")
+
+
+def test_max_sorts_resolution_above_codec(config):
+    """Resolution first is what lets 4K win; codec only breaks the tie."""
+    order = app_config.video_sort_order("max")
+    assert order.index("res") < order.index("vcodec")
+
+
+def test_max_breaks_a_resolution_tie_toward_h264(config):
+    """At 1080p both codecs exist, and picking avc1 is what avoids a
+    pointless transcode of a stream Cinema could already play."""
+    assert "vcodec:avc1" in app_config.video_sort_order("max")
+
+
+def test_max_caps_4k_to_30fps_and_everything_else_to_1440p(config):
+    """Not a quality judgement — an H.264 level 5.1 limit. 4K60 transcodes to
+    5.2, past what Media Foundation decodes. See test_cinema_video_quality.py
+    for the arithmetic and the end-to-end selection."""
+    rungs = app_config.video_format_selector("max").split("/")
+    assert rungs[0].startswith("bestvideo[vcodec!*=av01][height<=2160][fps<=30]")
+    assert all("height<=1440" in rung for rung in rungs[1:])
+
+
+@pytest.mark.parametrize("quality", app_config.VIDEO_QUALITIES)
+def test_every_first_rung_pairs_with_mp4_audio(config, quality):
+    """An avc1 video merged with an Opus track lands in .mkv and gets
+    re-encoded despite the video having been H.264 the whole time."""
+    first = app_config.video_format_selector(quality).split("/")[0]
+    assert "bestaudio[acodec*=mp4]" in first
+
+
+def test_the_selector_follows_the_stored_quality(config):
+    app_config.set_video_quality("1080")
+    assert app_config.video_format_selector() == app_config.video_format_selector("1080")
+
+
+# ── Download arguments ───────────────────────────────────────────────────────
+
+
+def test_the_default_download_args_are_just_a_format(config):
+    assert app_config.video_download_args("720") == [
+        "-f", "bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4]"
+    ]
+
+
+def test_max_download_args_carry_the_sort(config):
+    args = app_config.video_download_args("max")
+    assert args[0] == "-f"
+    assert args[2] == "-S"
+    assert args[3] == app_config.video_sort_order("max")
+
+
+def test_download_args_follow_the_stored_quality(config):
+    app_config.set_video_quality("max")
+    assert app_config.video_download_args() == app_config.video_download_args("max")
