@@ -18,6 +18,8 @@ re-encodes rather than remuxes, but skips outright when the file is already
 
 from __future__ import annotations
 
+import shutil
+
 import pytest
 
 from libraries import app_config
@@ -225,3 +227,86 @@ def test_an_h264_pick_never_gets_dragged_into_mkv_by_its_audio(quality):
     video, container = _select(quality, TOPS_OUT_AT_1080)
     assert "avc1" in video["vcodec"]
     assert not _reencodes(container)
+
+
+# ── Recode settings reaching ffmpeg ──────────────────────────────────────────
+
+
+def _convertor_command(quality, monkeypatch, tmp_path):
+    """The ffmpeg command line yt-dlp's convertor step would actually run.
+
+    ``--postprocessor-args`` is easy to get subtly wrong — an unrecognised
+    postprocessor name is not an error, the arguments are just silently
+    dropped and the transcode quietly falls back to ffmpeg's defaults.
+    Asserting on the string we pass in cannot catch that.
+
+    So this goes all the way down to the process boundary. yt-dlp splices
+    postprocessor args in inside ``real_run_ffmpeg`` — below ``run_ffmpeg``,
+    which is why intercepting higher up would miss them entirely — and the
+    assembled argv is what finally proves they landed.
+    """
+    from yt_dlp.postprocessor.ffmpeg import FFmpegVideoConvertorPP
+    from yt_dlp.utils import Popen
+
+    args = app_config.video_download_args(quality)
+    opts = {"quiet": True, "no_warnings": True}
+    if "--postprocessor-args" in args:
+        name, _, values = args[args.index("--postprocessor-args") + 1].partition(":")
+        opts["postprocessor_args"] = {name.lower(): values.split()}
+
+    source = tmp_path / "merged.mkv"
+    source.write_bytes(b"not really a video")
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = [str(c) for c in cmd]
+        return "", "", 0
+
+    # Build the postprocessor *before* faking Popen: yt-dlp probes ffmpeg's
+    # version through the very same call, so patching first makes it conclude
+    # ffmpeg isn't installed. Real detection, faked execution.
+    pp = FFmpegVideoConvertorPP(yt_dlp.YoutubeDL(opts), preferedformat="mp4")
+    if not pp.available:  # resolves lazily, and probes ffmpeg to do it
+        pytest.skip("ffmpeg not found by yt-dlp")
+    monkeypatch.setattr(Popen, "run", staticmethod(fake_run))
+    pp.run({"filepath": str(source), "ext": "mkv", "id": "t", "title": "t"})
+    return captured.get("cmd", [])
+
+
+_needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None,
+                                   reason="ffmpeg not installed")
+
+
+@_needs_ffmpeg
+def test_max_really_hands_the_crf_to_ffmpeg(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_config, "config_path", lambda: tmp_path / "c.json")
+    assert app_config.set_transcode_crf(14)
+    cmd = _convertor_command("max", monkeypatch, tmp_path)
+    assert "-crf" in cmd, cmd
+    assert cmd[cmd.index("-crf") + 1] == "14", cmd
+
+
+@_needs_ffmpeg
+def test_max_really_tells_ffmpeg_to_copy_the_audio(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_config, "config_path", lambda: tmp_path / "c.json")
+    cmd = _convertor_command("max", monkeypatch, tmp_path)
+    assert "-c:a" in cmd, cmd
+    assert cmd[cmd.index("-c:a") + 1] == "copy", cmd
+
+
+@_needs_ffmpeg
+def test_the_crf_lands_after_the_output_not_the_input(monkeypatch, tmp_path):
+    """An encoder setting before -i applies to decoding and is ignored. It
+    has to sit on the output side to mean anything."""
+    monkeypatch.setattr(app_config, "config_path", lambda: tmp_path / "c.json")
+    cmd = _convertor_command("max", monkeypatch, tmp_path)
+    assert cmd.index("-crf") > cmd.index("-i"), cmd
+
+
+@_needs_ffmpeg
+@pytest.mark.parametrize("quality", ["720", "1080"])
+def test_a_capped_quality_adds_no_ffmpeg_arguments(quality, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_config, "config_path", lambda: tmp_path / "c.json")
+    cmd = _convertor_command(quality, monkeypatch, tmp_path)
+    assert "-crf" not in cmd
+    assert "-c:a" not in cmd

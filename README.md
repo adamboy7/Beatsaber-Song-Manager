@@ -349,7 +349,6 @@ The offset editor (Shift+right-click → **Cinema Offset…**) opens automatical
 
 4K60 is capped on purpose. H.264's level is set by macroblocks *per second*, so 4K at 30fps lands in level 5.1 while 4K at 60fps needs 5.2 — and the Media Foundation decoder Cinema ends up on [documents support only up to 5.1](https://learn.microsoft.com/en-us/windows/win32/medfound/h-264-video-decoder). 1440p60 is the most resolution that still fits. (4K30 fits by 1.2%.)
 
-The re-encode is why this isn't the default. It's a full ffmpeg pass over the video — minutes rather than seconds for a 4K stream, and lossy — so the status bar shows **Converting** while it runs. The files are large, too: a 7-minute 4K video lands around 450 MB in the song folder. And Microsoft only guarantees hardware-accelerated decoding up to 1920×1088; above that it uses the GPU if it can and falls back to software if it can't, which is not something you want happening on a VR frame budget.
 
 The conversion is needed because Cinema plays video through Unity's `VideoPlayer`, which decodes H.264, H.265 and VP8 — [not VP9 or AV1](https://docs.unity3d.com/6000.3/Documentation/Manual/video-encoding-compatibility.html). That's why the mod's own downloader hardcodes `vcodec*=avc1`, and why its in-game quality setting stops at 1080p with 1440p and 2160p commented out of the source. Left as VP9 or AV1, a 4K download would play fine in the Visualizer and show a black screen behind the map.
 

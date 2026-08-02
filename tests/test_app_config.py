@@ -336,17 +336,85 @@ def test_the_selector_follows_the_stored_quality(config):
 # ── Download arguments ───────────────────────────────────────────────────────
 
 
+# ── Transcode quality ────────────────────────────────────────────────────────
+
+
+def test_transcode_crf_defaults_to_16(config):
+    assert app_config.get_transcode_crf() == 16
+
+
+def test_transcode_crf_round_trips(config):
+    assert app_config.set_transcode_crf(12)
+    assert app_config.get_transcode_crf() == 12
+
+
+def test_crf_zero_is_refused_because_it_would_not_play(config):
+    """x264 crf 0 is lossless mode, which emits High 4:4:4 Predictive — a
+    profile Media Foundation cannot decode. It is the one value in x264's
+    range that reliably produces an unplayable file."""
+    assert not app_config.set_transcode_crf(0)
+    config[app_config.TRANSCODE_CRF_KEY] = 0
+    assert app_config.get_transcode_crf() == app_config.DEFAULT_TRANSCODE_CRF
+
+
+def test_crf_one_is_allowed_as_the_quality_ceiling(config):
+    """1 is the best quality that still lands in a decodable profile."""
+    assert app_config.set_transcode_crf(1)
+    assert app_config.get_transcode_crf() == 1
+
+
+@pytest.mark.parametrize("stored", [-5, 52, 100, "high", None, [], True, False])
+def test_a_junk_crf_falls_back_to_the_default(config, stored):
+    config[app_config.TRANSCODE_CRF_KEY] = stored
+    assert app_config.get_transcode_crf() == app_config.DEFAULT_TRANSCODE_CRF
+
+
+def test_a_quoted_crf_is_read_as_the_number_meant(config):
+    config[app_config.TRANSCODE_CRF_KEY] = "18"
+    assert app_config.get_transcode_crf() == 18
+
+
+def test_the_crf_key_is_seeded_so_it_can_be_discovered(config, tmp_path):
+    app_config.set_custom_levels(tmp_path)
+    assert config[app_config.TRANSCODE_CRF_KEY] == app_config.DEFAULT_TRANSCODE_CRF
+
+
+# ── Postprocessor arguments ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("quality", ["720", "1080"])
+def test_a_capped_quality_passes_no_postprocessor_args(config, quality):
+    """Nothing recodes there, so there is nothing to configure."""
+    assert app_config.video_postprocessor_args(quality) is None
+
+
+def test_max_sets_the_crf_on_the_convertor_step(config):
+    app_config.set_transcode_crf(14)
+    args = app_config.video_postprocessor_args("max")
+    assert args.startswith("VideoConvertor:")
+    assert "-crf 14" in args
+
+
+def test_max_copies_the_audio_rather_than_re_encoding_it(config):
+    """YouTube's m4a is already AAC and AAC is legal in mp4, so a re-encode
+    is pure generation loss. The offset editor's split-stereo sync uses this
+    track, so it is kept rather than dropped."""
+    assert "-c:a copy" in app_config.video_postprocessor_args("max")
+
+
 def test_the_default_download_args_are_just_a_format(config):
     assert app_config.video_download_args("720") == [
         "-f", "bestvideo[height<=720][vcodec*=avc1]+bestaudio[acodec*=mp4]"
     ]
 
 
-def test_max_download_args_carry_the_sort(config):
+def test_max_download_args_carry_the_sort_and_the_recode_settings(config):
     args = app_config.video_download_args("max")
     assert args[0] == "-f"
     assert args[2] == "-S"
     assert args[3] == app_config.video_sort_order("max")
+    assert args[4] == "--postprocessor-args"
+    assert args[5] == app_config.video_postprocessor_args("max")
 
 
 def test_download_args_follow_the_stored_quality(config):
