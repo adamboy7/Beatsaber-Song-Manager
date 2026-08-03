@@ -270,6 +270,9 @@ class BrowserPlaylistsMixin:
         return None
 
     def _toggle_favorites_only(self):
+        if self._hide_favorites and self._favorites_only_var.get():
+            self._hide_favorites = False
+            self._hide_favorites_var.set(False)
         self._favorites_only = self._favorites_only_var.get()
         self._do_search()
 
