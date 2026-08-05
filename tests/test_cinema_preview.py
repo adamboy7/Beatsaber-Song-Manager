@@ -719,6 +719,11 @@ def engines(monkeypatch):
         return _E
 
     def _install(single_fails: bool):
+        # These tests model a machine where libmpv is present — the factory's
+        # audio-only ffplay degradation must not trigger, so the loader is
+        # stubbed truthy. The no-libmpv path has tests of its own below.
+        monkeypatch.setattr("libraries.cinema_preview.load_mpv",
+                            lambda: object())
         monkeypatch.setattr("libraries.cinema_preview.SinglePlayerPreview",
                             _fake("single", fail=single_fails))
         monkeypatch.setattr("libraries.cinema_preview.TwoInstancePreview",
@@ -788,6 +793,9 @@ def test_both_engines_failing_raises_rather_than_returning_nothing(monkeypatch, 
         def start(self, *a, **k):
             raise PreviewError("nope")
 
+    # libmpv "present" (see the engines fixture): with it absent this would
+    # rightly degrade to the audio-only ffplay engine instead of raising.
+    monkeypatch.setattr(cinema_preview, "load_mpv", lambda: object())
     monkeypatch.setattr(cinema_preview, "SinglePlayerPreview", _Dead)
     monkeypatch.setattr(cinema_preview, "TwoInstancePreview", _Dead)
     monkeypatch.setattr(cinema_preview.PcmSource, "decode",
@@ -1290,3 +1298,198 @@ def test_the_window_no_longer_drives_players_itself():
     for gone in ("_check_video_drift", "_set_video_speed", "_seek_video",
                  "_resync_preview_video", "_apply_stereo_split", "_teardown_players"):
         assert not hasattr(w.CinemaOffsetWindow, gone), gone
+
+
+# ── The audio-only ffplay engine ──────────────────────────────────────────────
+#
+# The last resort in the chain: no libmpv at all, so no picture — but the
+# split-stereo mix is baked in this module, not in any player, so the part of
+# the preview that judges an offset survives. Driven here with a fake Popen:
+# what matters is engine selection, the master-timeline launch arithmetic, and
+# the relaunch-based transport (hold the song moment, never misreport EOF).
+
+
+class _FakeFfplay:
+    def __init__(self):
+        self.pid = 4242
+        self.returncode = None
+        self.terminated = False
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+
+def _no_mpv(monkeypatch, launches, *, have_ffplay=True):
+    from libraries import cinema_preview as cp
+
+    monkeypatch.setattr(cp, "load_mpv", lambda: None)
+    monkeypatch.setattr(cp, "load_error", lambda: None)
+    monkeypatch.setattr(cp, "find_ffplay",
+                        lambda: "ffplay" if have_ffplay else None)
+
+    def fake_popen(cmd, **_kw):
+        proc = _FakeFfplay()
+        launches.append((list(cmd), proc))
+        return proc
+
+    monkeypatch.setattr(cp.subprocess, "Popen", fake_popen)
+    return cp
+
+
+def _wait_until(predicate, timeout=3.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
+def _stub_pcm_ms(ms: int, value: int = 1000) -> bytes:
+    from libraries.cinema_preview import BYTES_PER_MS
+    frame = value.to_bytes(2, "little", signed=True) * 2
+    return frame * (ms * BYTES_PER_MS // len(frame))
+
+
+def test_start_preview_degrades_to_audio_only_without_libmpv(monkeypatch, tmp_path):
+    from libraries.cinema_preview import FfplayAudioPreview, PcmSource
+
+    launches = []
+    cp = _no_mpv(monkeypatch, launches)
+    monkeypatch.setattr(
+        cp.PcmSource, "decode",
+        classmethod(lambda cls, path, **_kw: PcmSource(_stub_pcm_ms(500), path)),
+    )
+
+    engine, note = cp.start_preview(tmp_path / "song.egg", tmp_path / "video.mp4",
+                                    0.0, 0, volume=60)
+    try:
+        assert isinstance(engine, FfplayAudioPreview)
+        assert "audio" in note.lower()  # the user is told the picture is gone
+        assert engine.is_running
+        cmd, _proc = launches[0]
+        assert "-nodisp" in cmd and "-autoexit" in cmd
+        assert cmd[cmd.index("-volume") + 1] == "60"
+    finally:
+        engine.stop()
+    assert launches[0][1].terminated
+
+
+def test_start_preview_raises_when_no_engine_exists(monkeypatch, tmp_path):
+    from libraries.cinema_preview import PreviewError
+
+    cp = _no_mpv(monkeypatch, [], have_ffplay=False)
+    with pytest.raises(PreviewError):
+        cp.start_preview(tmp_path / "song.egg", tmp_path / "video.mp4", 0.0, 0)
+
+
+def test_audio_only_engine_launches_on_the_master_timeline(monkeypatch):
+    """A +2000 ms offset means song t=10 is master t=12 — the same
+    master_from_song every other engine uses, visible in ffplay's -ss."""
+    from libraries.cinema_preview import FfplayAudioPreview, PcmSource
+
+    launches = []
+    _no_mpv(monkeypatch, launches)
+    engine = FfplayAudioPreview(PcmSource(_stub_pcm_ms(20_000), pathlib.Path("s")))
+    try:
+        engine.start(10.0, 2000)
+        cmd, _ = launches[0]
+        assert cmd[cmd.index("-ss") + 1] == "12.000"
+        pos = engine.song_position_s()
+        assert pos == pytest.approx(10.0, abs=0.5)
+    finally:
+        engine.stop()
+
+
+def test_audio_only_engine_clamps_a_negative_master_start(monkeypatch):
+    """Song t=0 with a −5 s offset sits before the video exists; the launch
+    clamps to master 0 rather than asking ffplay to seek backwards."""
+    from libraries.cinema_preview import FfplayAudioPreview, PcmSource
+
+    launches = []
+    _no_mpv(monkeypatch, launches)
+    engine = FfplayAudioPreview(PcmSource(_stub_pcm_ms(20_000), pathlib.Path("s")))
+    try:
+        engine.start(0.0, -5000)
+        cmd, _ = launches[0]
+        assert "-ss" not in cmd
+    finally:
+        engine.stop()
+
+
+def test_audio_only_nudge_relaunches_holding_the_song_moment(monkeypatch):
+    from libraries.cinema_preview import FfplayAudioPreview, PcmSource, song_from_master
+
+    launches = []
+    _no_mpv(monkeypatch, launches)
+    engine = FfplayAudioPreview(PcmSource(_stub_pcm_ms(30_000), pathlib.Path("s")))
+    try:
+        engine.start(10.0, 2000)
+
+        # Mid-drag: nothing relaunches (every application is an audible skip).
+        engine.set_offset_ms(3000, settling=True)
+        assert len(launches) == 1
+
+        song_before = engine.song_position_s()
+        engine.set_offset_ms(3000)
+        assert _wait_until(lambda: len(launches) == 2)
+        assert _wait_until(lambda: engine._baked == (3000, False))
+
+        old_cmd, old_proc = launches[0]
+        new_cmd, _ = launches[1]
+        assert old_proc.terminated
+        # Relaunched at master = song + 3.0: the song moment stayed put while
+        # the video timeline moved underneath it.
+        new_master = float(new_cmd[new_cmd.index("-ss") + 1])
+        assert song_from_master(new_master, 3000) == pytest.approx(
+            song_before, abs=0.5)
+        # And the deliberate teardown must not read as the preview ending.
+        engine.poll()
+        assert not engine.ended
+        assert engine.is_running
+    finally:
+        engine.stop()
+
+
+def test_audio_only_split_needs_the_videos_audio_track(monkeypatch):
+    from libraries.cinema_preview import FfplayAudioPreview, PcmSource
+
+    launches = []
+    _no_mpv(monkeypatch, launches)
+    engine = FfplayAudioPreview(PcmSource(_stub_pcm_ms(5_000), pathlib.Path("s")),
+                                video_pcm=None)
+    try:
+        engine.start(0.0, 0)
+        engine.set_split(True)
+        assert "no audio track" in engine.status
+        assert len(launches) == 1  # nothing to rebake toward
+    finally:
+        engine.stop()
+
+
+def test_audio_only_autoexit_reads_as_the_end(monkeypatch):
+    from libraries.cinema_preview import FfplayAudioPreview, PcmSource
+
+    launches = []
+    _no_mpv(monkeypatch, launches)
+    engine = FfplayAudioPreview(PcmSource(_stub_pcm_ms(5_000), pathlib.Path("s")))
+    try:
+        engine.start(0.0, 0)
+        engine.poll()
+        assert not engine.ended
+        launches[0][1].returncode = 0
+        engine.poll()
+        assert engine.ended
+    finally:
+        engine.stop()

@@ -66,6 +66,7 @@ from PIL import Image, ImageTk
 from libraries import app_config, cinema_video, dialogs, timeline, waveform
 from libraries.audio_utils import (
     OnsetError,
+    find_ffplay,
     find_ffmpeg,
     first_sound_offset_s,
     get_audio_duration,
@@ -1116,11 +1117,11 @@ class CinemaOffsetWindow(tk.Toplevel):
         """
         if self._preview_starting:
             return
-        if load_mpv() is None:
+        if load_mpv() is None and find_ffplay() is None:
             dialogs.show_info(
                 "Preview unavailable",
-                "libmpv isn't available, so the offset can't be previewed "
-                "here. The waveforms and Save still work.",
+                "Neither libmpv nor ffplay is available, so the offset can't "
+                "be previewed here. The waveforms and Save still work.",
                 parent=self,
             )
             return

@@ -1,4 +1,5 @@
-"""Cinema offset preview engines — one clock (default) and two (fallback).
+"""Cinema offset preview engines — one clock (default), two (fallback), and
+an audio-only ffplay engine (last resort, no libmpv at all).
 
 The offset editor previews a Cinema offset by playing the song and the video
 together and letting the user judge the result, optionally in split stereo
@@ -99,8 +100,8 @@ import time
 import wave
 from pathlib import Path
 
-from libraries.audio_utils import find_ffmpeg
-from libraries.mpv_backend import load_mpv
+from libraries.audio_utils import find_ffmpeg, find_ffplay
+from libraries.mpv_backend import load_error, load_mpv
 
 # ── PCM format ───────────────────────────────────────────────────────────────
 # Fixed rather than inherited from the source file so the shift arithmetic is
@@ -200,6 +201,25 @@ def pan_filter(left_gain: float, right_gain: float) -> str:
 
 class PreviewError(RuntimeError):
     """The preview could not be prepared or started."""
+
+
+def terminate_proc(proc: "subprocess.Popen | None") -> None:
+    """Best-effort terminate/wait/kill for a preview ffplay subprocess."""
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    pass
+    except Exception:
+        pass
 
 
 # ── mpv property access ──────────────────────────────────────────────────────
@@ -1413,6 +1433,317 @@ class TwoInstancePreview:
             pass
 
 
+class FfplayAudioPreview:
+    """Audio-only fallback: the baked mix through an ffplay subprocess.
+
+    For when libmpv is unavailable. The picture is genuinely gone — ffplay
+    can't be embedded (that's why it was retired as the video backend) — but
+    the part of the preview that *judges* an offset never depended on video:
+    split stereo is mixed into the baked WAV by this module, and ffplay plays
+    that WAV exactly as libmpv would. What's lost beyond the picture is live
+    transport, so this engine is relaunch-based like MediaPlayer's ffplay
+    fallback: position is a wall-clock estimate anchored at launch, and an
+    offset or split change kills the process and starts a new one on the
+    fresh bake (an audible skip where the mpv engines are seamless).
+
+    The wall clock runs on the *master* (video) timeline like every other
+    engine here, so ``song_position_s`` is the same ``song_from_master``
+    conversion — the playhead arithmetic upstream doesn't know which engine
+    is driving.
+    """
+
+    def __init__(self, pcm: PcmSource, *, video_pcm: bytes | None = None,
+                 volume: int | None = None):
+        self._pcm = pcm
+        self._video_pcm = video_pcm
+        self._volume = volume
+
+        self._proc: subprocess.Popen | None = None
+        self._job = None  # kill-on-close Job, created on first launch
+        self._offset_ms = 0
+        self._split = False
+        self._baked = None  # (shift_ms, split) of the WAV now playing
+        self._status = ""
+        self._ended = False
+        self._running = False
+
+        # position = _start_master + (now - _started_wall), in master time.
+        self._start_master = 0.0
+        self._started_wall: float | None = None
+
+        self._tmpdir: Path | None = None
+        self._bake_parity = 0
+        self._bake_lock = threading.Lock()
+        self._baking = False
+        self._bake_gen = 0
+
+    # ── Lifecycle ────────────────────────────────────────────────────────────
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
+    def status(self) -> str:
+        return self._status
+
+    @property
+    def _can_split(self) -> bool:
+        return bool(self._video_pcm)
+
+    def start(self, at_song_s: float, offset_ms: int, *, split: bool = False) -> None:
+        """Bake the mix and begin playing from ``at_song_s``.
+
+        Blocking (it writes a WAV of the whole song); call on a worker thread.
+        Raises ``PreviewError`` if ffplay is missing or the offset leaves
+        nothing to play.
+        """
+        if find_ffplay() is None:
+            raise PreviewError("ffplay is not available")
+
+        self.stop()
+        self._offset_ms = int(offset_ms)
+        self._split = bool(split)
+        self._ended = False
+        self._tmpdir = Path(tempfile.mkdtemp(prefix="bssm-cinema-preview-"))
+        if self._split and not self._can_split:
+            self._status = ("The video has no audio track, so split stereo "
+                            "is unavailable.")
+
+        key = (int(self._offset_ms), self._split and self._can_split)
+        wav = self._write_bake(*key)
+        if wav.stat().st_size <= _WAV_HEADER_BYTES:
+            self._cleanup_tmp()
+            raise PreviewError(
+                f"an offset of {self._offset_ms:+d} ms moves the whole song "
+                "outside the video's timeline"
+            )
+
+        master = max(0.0, master_from_song(at_song_s, self._offset_ms))
+        if not self._launch(wav, master):
+            self._cleanup_tmp()
+            raise PreviewError("ffplay could not be started for the preview")
+        self._baked = key
+        self._running = True
+
+    def _launch(self, wav: Path, master_at: float) -> bool:
+        """Start ffplay on ``wav`` at ``master_at`` and re-anchor the clock."""
+        ffplay = find_ffplay()
+        if ffplay is None:
+            return False
+        cmd = [ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet"]
+        if self._volume is not None:
+            cmd += ["-volume", str(max(0, min(100, int(self._volume))))]
+        if master_at > 0.05:
+            cmd += ["-ss", f"{master_at:.3f}"]
+        cmd += ["-i", str(wav)]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            return False
+        self._tie_to_job(proc.pid)
+        self._start_master = master_at
+        self._started_wall = time.time()
+        self._proc = proc
+        return True
+
+    def _tie_to_job(self, pid: int) -> None:
+        """Tie the subprocess to a kill-on-close Job so it dies with the app.
+
+        Imported lazily: media_player transitively imports tkinter (via
+        dialogs), and this module promises not to at import time. Best-effort
+        and a no-op off Windows, like the Job machinery itself.
+        """
+        try:
+            from libraries.media_player import (
+                _create_kill_on_close_job, assign_process_to_job,
+            )
+            if self._job is None:
+                self._job = _create_kill_on_close_job()
+            assign_process_to_job(self._job, pid)
+        except Exception:
+            pass
+
+    def _stop_proc(self) -> None:
+        proc, self._proc = self._proc, None
+        self._started_wall = None
+        terminate_proc(proc)
+
+    def stop(self) -> None:
+        with self._bake_lock:
+            self._bake_gen += 1
+        self._running = False
+        self._stop_proc()
+        self._cleanup_tmp()
+        self._baked = None
+        self._status = ""
+
+    def poll(self) -> None:
+        """Notice ``-autoexit``: the process exiting is the only EOF signal.
+
+        A rebake swap nulls the reference before killing the old process, so
+        a deliberate teardown is never read as the preview finishing.
+        """
+        proc = self._proc
+        if proc is not None and proc.poll() is not None:
+            self._ended = True
+
+    @property
+    def ended(self) -> bool:
+        return self._ended
+
+    # ── Offset / split ───────────────────────────────────────────────────────
+
+    def set_offset_ms(self, offset_ms: int, *, settling: bool = False) -> None:
+        """Apply a new offset — a rebake plus relaunch on this engine.
+
+        ``settling`` defers exactly as on the mpv engines, and matters more
+        here: there is no ``audio-delay`` to ride mid-drag, and every
+        application is an audible restart. The last alignment keeps playing
+        until the drag ends.
+        """
+        self._offset_ms = int(offset_ms)
+        if not self._running or settling:
+            return
+        self._request_bake()
+
+    def set_split(self, split: bool) -> None:
+        split = bool(split)
+        if split == self._split:
+            return
+        self._split = split
+        if split and not self._can_split:
+            self._status = ("The video has no audio track, so split stereo "
+                            "is unavailable.")
+            return
+        self._status = ""
+        if self._running:
+            self._request_bake()
+
+    def _target_key(self) -> tuple[int, bool]:
+        return int(self._offset_ms), self._split and self._can_split
+
+    def _request_bake(self) -> None:
+        """Queue a bake for the current state, coalescing with any in flight."""
+        with self._bake_lock:
+            if self._target_key() == self._baked:
+                return
+            if self._baking:
+                return  # the running worker re-reads the target when it loops
+            self._baking = True
+            gen = self._bake_gen
+        threading.Thread(target=self._bake_worker, args=(gen,), daemon=True).start()
+
+    def _bake_worker(self, gen: int) -> None:
+        try:
+            while True:
+                with self._bake_lock:
+                    target = self._target_key()
+                    if gen != self._bake_gen or target == self._baked:
+                        return
+                try:
+                    wav = self._write_bake(*target)
+                except Exception as exc:
+                    self._status = f"Could not rebuild the shifted audio: {exc}"
+                    return
+                if wav.stat().st_size <= _WAV_HEADER_BYTES:
+                    self._status = (f"an offset of {target[0]:+d} ms moves the "
+                                    "whole song outside the video's timeline")
+                    return
+                if not self._swap_in(wav, target, gen):
+                    return
+        finally:
+            with self._bake_lock:
+                self._baking = False
+
+    def _swap_in(self, wav: Path, key: tuple[int, bool], gen: int) -> bool:
+        """Relaunch on ``wav``, holding the *song* moment being listened to.
+
+        The song position is read before the old process dies, then converted
+        back to master time under the new offset — the same "the song moment
+        must stay put while the video timeline moves underneath it" rule as
+        ``SinglePlayerPreview._swap_in``, done with a relaunch instead of a
+        track swap. The reference is nulled before the kill so ``poll`` can't
+        misread the teardown as EOF, and a ``stop`` that lands mid-launch is
+        honored by tearing the fresh process down again.
+        """
+        with self._bake_lock:
+            if gen != self._bake_gen:
+                return False
+        song_pos = self.song_position_s()
+        old, self._proc = self._proc, None
+        terminate_proc(old)
+        master = (max(0.0, master_from_song(song_pos, key[0]))
+                  if song_pos is not None else 0.0)
+        if not self._launch(wav, master):
+            self._status = "ffplay could not be relaunched for the new offset"
+            return False
+        with self._bake_lock:
+            if gen != self._bake_gen:
+                self._stop_proc()  # stop() superseded us mid-launch
+                return False
+            self._baked = key
+        return True
+
+    def _write_bake(self, shift_ms: int, split: bool) -> Path:
+        with self._bake_lock:
+            self._bake_parity ^= 1
+            out = self._tmpdir / f"song-{self._bake_parity}.wav"
+        return self._pcm.write_shifted_wav(
+            out, shift_ms, video_pcm=self._video_pcm, split=split,
+        )
+
+    # ── Position / misc engine surface ───────────────────────────────────────
+
+    def song_position_s(self) -> float | None:
+        """Song moment currently audible, from the wall-clock estimate."""
+        if self._started_wall is None:
+            return None
+        master = self._start_master + (time.time() - self._started_wall)
+        return song_from_master(master, self._offset_ms)
+
+    def seek_song(self, song_time_s: float) -> None:
+        """Jump so ``song_time_s`` is audible — a relaunch, like everything."""
+        if not self._running or self._baked is None:
+            return
+        wav = self._tmpdir / f"song-{self._bake_parity}.wav" if self._tmpdir else None
+        if wav is None or not wav.exists():
+            return
+        old, self._proc = self._proc, None
+        terminate_proc(old)
+        master = max(0.0, master_from_song(song_time_s, self._offset_ms))
+        if not self._launch(wav, master):
+            self._status = "ffplay could not be relaunched for the seek"
+
+    def set_volume(self, level: int) -> None:
+        """Stored, and applied by the next relaunch — ffplay has no live volume."""
+        self._volume = int(level)
+
+    def measured_drift_s(self) -> float | None:
+        """No video, so there is nothing to drift against."""
+        return None
+
+    def diagnostics(self) -> str:
+        baked = self._baked or (0, False)
+        return "  ".join((
+            "engine ffplay(audio-only)",
+            f"baked {baked[0]:+d}ms",
+            f"split {'on' if baked[1] else 'off'}",
+            f"anchor master={self._start_master:.3f}s",
+        ))
+
+    def _cleanup_tmp(self) -> None:
+        tmp, self._tmpdir = self._tmpdir, None
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ── Engine selection ─────────────────────────────────────────────────────────
 
 
@@ -1429,18 +1760,36 @@ def start_preview(audio_path: Path, video_path: Path, at_song_s: float,
     Blocking: decoding the song and waiting for libmpv to demux the video both
     take long enough to freeze a UI thread. Call it on a worker.
 
-    The fallback exists because the single-instance engine asks more of libmpv
-    than the older one does (decoding both sources up front, and attaching an
-    external audio track), and a build that will not do those things should
-    degrade to a working preview rather than to none — the same shape as
+    The fallback chain exists because each engine asks more of the machine
+    than the next: the single-instance engine asks more of libmpv than the
+    two-instance one (decoding both sources up front, attaching an external
+    audio track), and both need libmpv at all. Without libmpv the preview
+    degrades to ``FfplayAudioPreview`` — no picture, but the split-stereo
+    mix that actually judges an offset survives intact, since it's baked
+    here rather than in any player. The same shape as
     ``VisualizerWindow._start_stream`` dropping from video to spectrum.
 
-    Raises ``PreviewError`` only if *both* engines fail, since at that point
+    Raises ``PreviewError`` only if every engine fails, since at that point
     there is nothing to degrade to.
     """
     from libraries import app_config
 
     audio_path, video_path = Path(audio_path), Path(video_path)
+
+    if load_mpv() is None:
+        if find_ffplay() is None:
+            raise PreviewError(load_error() or "no playback engine is "
+                               "available (libmpv and ffplay are both missing)")
+        pcm = PcmSource.decode(audio_path)
+        try:
+            video_pcm = PcmSource.decode(video_path).pcm
+        except PreviewError:
+            video_pcm = None
+        engine = FfplayAudioPreview(pcm, video_pcm=video_pcm, volume=volume)
+        engine.start(at_song_s, offset_ms, split=split)  # PreviewError propagates
+        return engine, ("libmpv is unavailable — previewing the audio "
+                        "alignment only, without the picture.")
+
     prefer = prefer or app_config.get_preview_engine()
 
     if prefer == "single":

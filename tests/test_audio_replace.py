@@ -672,3 +672,164 @@ def test_the_preview_mix_is_playable_stereo(tmp_path):
     # 2 s of original against 2 s of replacement pushed 250 ms later.
     assert _duration(out) == pytest.approx(2.25, abs=0.05)
     assert any(data)  # not silence
+
+
+# ── AbPreview ffplay fallback ─────────────────────────────────────────────────
+#
+# When libmpv is unavailable the preview engine plays the same baked WAV
+# through an ffplay subprocess — MediaPlayer's engine order. These tests drive
+# the fallback with a fake Popen: what matters is which engine is chosen, what
+# ffplay is asked to do, and that the relaunch-based transport (the only
+# transport ffplay has) tracks position and rebakes without misreporting EOF.
+
+
+class _FakeProc:
+    def __init__(self):
+        self.pid = 4242
+        self.returncode = None
+        self.terminated = False
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+
+def _fallback_engine(monkeypatch, tmp_path, launches, *, have_ffplay=True):
+    """An AbPreview wired to the fallback: no mpv, a fake ffplay, stub PCM."""
+    import types
+
+    from libraries import audio_ab_preview as ab
+
+    monkeypatch.setattr(ab, "load_mpv", lambda: None)
+    monkeypatch.setattr(ab, "load_error", lambda: None)
+    monkeypatch.setattr(ab, "find_ffplay",
+                        lambda: "ffplay" if have_ffplay else None)
+    monkeypatch.setattr(ab, "_create_kill_on_close_job", lambda: None)
+    monkeypatch.setattr(ab, "assign_process_to_job", lambda job, pid: None)
+
+    def fake_popen(cmd, **_kw):
+        proc = _FakeProc()
+        launches.append((list(cmd), proc))
+        return proc
+
+    monkeypatch.setattr(ab.subprocess, "Popen", fake_popen)
+
+    engine = ab.AbPreview(tmp_path / "a.egg", tmp_path / "b.mp3", volume=40)
+    engine._original = types.SimpleNamespace(pcm=_pcm(200, 1000), duration_s=0.2)
+    engine._new = types.SimpleNamespace(pcm=_pcm(200, 2000), duration_s=0.2)
+    return ab, engine
+
+
+def _wait_for(predicate, timeout=3.0):
+    import time as _time
+    deadline = _time.time() + timeout
+    while _time.time() < deadline:
+        if predicate():
+            return True
+        _time.sleep(0.01)
+    return predicate()
+
+
+def test_ab_preview_falls_back_to_ffplay(monkeypatch, tmp_path):
+    from libraries.audio_ab_preview import MODE_BOTH
+
+    launches = []
+    ab, engine = _fallback_engine(monkeypatch, tmp_path, launches)
+    try:
+        engine.start(0.5, 0, MODE_BOTH)
+        assert engine.is_running
+        assert len(launches) == 1
+        cmd, proc = launches[0]
+        assert "-nodisp" in cmd and "-autoexit" in cmd
+        assert cmd[cmd.index("-volume") + 1] == "40"
+        assert cmd[cmd.index("-ss") + 1] == "0.500"
+        assert cmd[-1].endswith(".wav")  # the baked mix, not either source
+    finally:
+        engine.stop()
+    assert not engine.is_running
+    assert launches[0][1].terminated
+
+
+def test_ab_preview_errors_when_no_engine_exists(monkeypatch, tmp_path):
+    from libraries.audio_ab_preview import MODE_BOTH
+    from libraries.cinema_preview import PreviewError
+
+    launches = []
+    _ab, engine = _fallback_engine(monkeypatch, tmp_path, launches,
+                                   have_ffplay=False)
+    with pytest.raises(PreviewError):
+        engine.start(0.0, 0, MODE_BOTH)
+    assert not launches and not engine.is_running
+
+
+def test_ab_preview_ffplay_position_is_a_wall_clock_estimate(monkeypatch, tmp_path):
+    import time as _time
+
+    from libraries.audio_ab_preview import MODE_BOTH
+
+    launches = []
+    _ab, engine = _fallback_engine(monkeypatch, tmp_path, launches)
+    try:
+        engine.start(1.0, 0, MODE_BOTH)
+        pos0 = engine.song_position_s()
+        assert pos0 is not None and pos0 >= 1.0
+        _time.sleep(0.1)
+        pos1 = engine.song_position_s()
+        assert pos1 > pos0
+    finally:
+        engine.stop()
+
+
+def test_ab_preview_poll_reads_autoexit_as_the_end(monkeypatch, tmp_path):
+    from libraries.audio_ab_preview import MODE_BOTH
+
+    launches = []
+    _ab, engine = _fallback_engine(monkeypatch, tmp_path, launches)
+    try:
+        engine.start(0.0, 0, MODE_BOTH)
+        engine.poll()
+        assert not engine.ended
+        launches[0][1].returncode = 0  # ffplay hit EOF and exited
+        engine.poll()
+        assert engine.ended
+    finally:
+        engine.stop()
+
+
+def test_ab_preview_ffplay_rebake_relaunches_and_keeps_position(monkeypatch, tmp_path):
+    from libraries.audio_ab_preview import MODE_BOTH, bake_key
+
+    launches = []
+    _ab, engine = _fallback_engine(monkeypatch, tmp_path, launches)
+    try:
+        engine.start(0.0, 0, MODE_BOTH)
+
+        # A drag in progress must not relaunch (settling=True defers the bake).
+        engine.set_offset_ms(80, settling=True)
+        assert len(launches) == 1
+
+        engine.set_offset_ms(80)
+        assert _wait_for(lambda: len(launches) == 2)
+        assert _wait_for(lambda: engine._baked_key == bake_key(80, MODE_BOTH))
+
+        old_cmd, old_proc = launches[0]
+        new_cmd, _new_proc = launches[1]
+        assert old_proc.terminated  # the stale mix is gone
+        assert new_cmd[-1] != old_cmd[-1]  # parity-flipped fresh bake
+        # The swap must never surface as EOF: the old process was torn down
+        # deliberately, and poll() should be looking at the replacement.
+        engine.poll()
+        assert not engine.ended
+        assert engine.is_running
+    finally:
+        engine.stop()

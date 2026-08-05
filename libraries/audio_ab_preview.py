@@ -28,11 +28,14 @@ prepended silence, a negative one a trimmed head — so mpv's reported position
 from __future__ import annotations
 
 import shutil
+import subprocess
 import tempfile
 import threading
+import time
 import wave
 from pathlib import Path
 
+from libraries.audio_utils import find_ffplay
 from libraries.cinema_preview import (
     CHANNELS,
     EAR_BLEED,
@@ -44,9 +47,11 @@ from libraries.cinema_preview import (
     pan_ears,
     prop_get,
     prop_set,
+    terminate_proc,
     wav_bytes_for_shift,
 )
-from libraries.mpv_backend import load_mpv
+from libraries.media_player import _create_kill_on_close_job, assign_process_to_job
+from libraries.mpv_backend import load_error, load_mpv
 
 MODE_BOTH = "both"
 MODE_ORIGINAL = "original"
@@ -54,6 +59,8 @@ MODE_NEW = "new"
 MODES = (MODE_BOTH, MODE_ORIGINAL, MODE_NEW)
 
 _WAV_HEADER_BYTES = 44
+
+_terminate_proc = terminate_proc
 
 
 def mix_ab(original_pcm: bytes, new_pcm: bytes, offset_ms: int, mode: str, *,
@@ -95,7 +102,8 @@ def bake_key(offset_ms: int, mode: str) -> tuple[str, int]:
 
 
 class AbPreview:
-    """One libmpv instance playing a mix of the original and the replacement."""
+    """One playback engine (libmpv, or ffplay as fallback) playing a mix of
+    the original and the replacement."""
 
     def __init__(self, original_path: Path, new_path: Path, *,
                  volume: int | None = None):
@@ -107,6 +115,12 @@ class AbPreview:
         self._new: PcmSource | None = None
 
         self._player = None
+        self._backend: str | None = None
+        self._ffplay_proc: subprocess.Popen | None = None
+        self._ffplay_job = None  # kill-on-close Job, created on first launch
+        self._ffplay_start_pos: float = 0.0
+        self._ffplay_started_wall: float | None = None
+
         self._offset_ms = 0
         self._mode = MODE_BOTH
         self._baked_key: tuple[str, int] | None = None
@@ -122,7 +136,7 @@ class AbPreview:
 
     @property
     def is_running(self) -> bool:
-        return self._player is not None
+        return self._backend is not None
 
     @property
     def ended(self) -> bool:
@@ -151,12 +165,15 @@ class AbPreview:
         """Bake the mix and begin playing from ``at_song_s``.
 
         Blocking (it writes a WAV of the whole song); safe on a worker thread.
-        Raises ``PreviewError`` if libmpv is unavailable or the offset leaves
-        nothing to play.
+        Prefers libmpv; falls back to an ffplay subprocess when it's
+        unavailable — MediaPlayer's engine order. Raises ``PreviewError`` if
+        neither engine exists or the offset leaves nothing to play.
         """
         mpv_mod = load_mpv()
-        if mpv_mod is None:
-            raise PreviewError("libmpv is not available")
+        ffplay = find_ffplay() if mpv_mod is None else None
+        if mpv_mod is None and ffplay is None:
+            raise PreviewError(load_error() or "no playback engine is available "
+                               "(libmpv and ffplay are both missing)")
         self.decode()
 
         self.stop()
@@ -173,6 +190,17 @@ class AbPreview:
                 "entirely outside the song"
             )
 
+        if mpv_mod is not None:
+            self._start_mpv(mpv_mod, wav, at_song_s)
+            self._backend = "mpv"
+        else:
+            if not self._launch_ffplay(wav, max(0.0, at_song_s)):
+                self._cleanup_tmp()
+                raise PreviewError("ffplay could not be started for the preview")
+            self._backend = "ffplay"
+        self._baked_key = bake_key(self._offset_ms, self._mode)
+
+    def _start_mpv(self, mpv_mod, wav: Path, at_song_s: float) -> None:
         try:
             player = mpv_mod.MPV(
                 idle="yes", keep_open="yes", osd_level=0, vid="no",
@@ -205,7 +233,46 @@ class AbPreview:
             raise PreviewError(f"could not load the preview: {exc}")
 
         self._player = player
-        self._baked_key = bake_key(self._offset_ms, self._mode)
+
+    def _launch_ffplay(self, wav: Path, at: float) -> bool:
+        """Start an ffplay subprocess on ``wav`` seeked to ``at`` song-seconds.
+
+        Headless and self-terminating (``-nodisp -autoexit``), tied to a
+        kill-on-close Job so it can't outlive the app — the same shape as
+        MediaPlayer's fallback. Also (re)anchors the wall-clock position
+        estimate, since launching is the only transport this backend has.
+        """
+        ffplay = find_ffplay()
+        if ffplay is None:
+            return False
+        cmd = [ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet"]
+        if self._volume is not None:
+            cmd += ["-volume", str(max(0, min(100, int(self._volume))))]
+        if at > 0.05:
+            cmd += ["-ss", f"{at:.3f}"]
+        cmd += ["-i", str(wav)]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            return False
+        if self._ffplay_job is None:
+            self._ffplay_job = _create_kill_on_close_job()
+        assign_process_to_job(self._ffplay_job, proc.pid)
+        self._ffplay_start_pos = at
+        self._ffplay_started_wall = time.time()
+        self._ffplay_proc = proc
+        return True
+
+    def _stop_ffplay(self) -> None:
+        proc, self._ffplay_proc = self._ffplay_proc, None
+        self._ffplay_started_wall = None
+        _terminate_proc(proc)
 
     def stop(self) -> None:
         with self._bake_lock:
@@ -216,18 +283,36 @@ class AbPreview:
                 player.terminate()
             except Exception:
                 pass
+        self._stop_ffplay()
+        self._backend = None
         self._cleanup_tmp()
         self._baked_key = None
 
     def poll(self) -> None:
-        """Nothing to service; present so callers can treat engines alike."""
+        """Service the ffplay fallback: its only end-of-file signal is the
+        process exiting (``-autoexit``). A no-op on the mpv backend, where the
+        eof-reached observer does this job. During a rebake swap the reference
+        is nulled before the old process is killed, so a deliberate teardown is
+        never mistaken for the preview finishing."""
+        proc = self._ffplay_proc
+        if proc is not None and proc.poll() is not None:
+            self._ended = True
 
     def _on_eof(self, _name, value) -> None:
         if value:
             self._ended = True
 
     def song_position_s(self) -> float | None:
-        """Where playback is, in song time, or None while it is still loading."""
+        """Where playback is, in song time, or None while it is still loading.
+
+        mpv reports its real position. ffplay reports nothing, so the fallback
+        estimates from the wall clock anchored at launch — the same trick
+        MediaPlayer's fallback uses, and plenty for a playhead redrawn at 10Hz.
+        """
+        if self._backend == "ffplay":
+            if self._ffplay_started_wall is None:
+                return None
+            return self._ffplay_start_pos + (time.time() - self._ffplay_started_wall)
         if self._player is None:
             return None
         pos = prop_get(self._player, "time-pos")
@@ -253,7 +338,7 @@ class AbPreview:
         isn't a moving target.
         """
         self._offset_ms = int(offset_ms)
-        if self._player is None or settling:
+        if not self.is_running or settling:
             return
         self._request_bake()
 
@@ -261,7 +346,7 @@ class AbPreview:
         if mode not in MODES or mode == self._mode:
             return
         self._mode = mode
-        if self._player is not None:
+        if self.is_running:
             self._request_bake()
 
     @property
@@ -313,7 +398,9 @@ class AbPreview:
                 self._baking = False
 
     def _swap_in(self, wav: Path, gen: int, key: tuple[str, int]) -> bool:
-        """Reload the player onto ``wav`` at the position it had. False if torn down."""
+        """Reload the engine onto ``wav`` at the position it had. False if torn down."""
+        if self._backend == "ffplay":
+            return self._swap_in_ffplay(wav, gen, key)
         player = self._player
         with self._bake_lock:
             if player is None or gen != self._bake_gen:
@@ -328,6 +415,31 @@ class AbPreview:
             prop_set(player, "pause", True)
         with self._bake_lock:
             if gen != self._bake_gen:
+                return False
+            self._baked_key = key
+        return True
+
+    def _swap_in_ffplay(self, wav: Path, gen: int, key: tuple[str, int]) -> bool:
+        """ffplay's version of the swap: relaunch at the estimated position.
+
+        No live transport, so the old process is killed and a new one starts
+        on the fresh WAV — an audible skip, but the alignment lands. The
+        reference is nulled *before* the kill so ``poll`` on the UI thread
+        doesn't read the corpse's exit code as the preview finishing; and if
+        ``stop`` bumped the generation while the new process was launching,
+        the fresh process is torn down again rather than left playing.
+        """
+        with self._bake_lock:
+            if gen != self._bake_gen:
+                return False
+        at = self.song_position_s() or 0.0
+        old, self._ffplay_proc = self._ffplay_proc, None
+        _terminate_proc(old)
+        if not self._launch_ffplay(wav, max(0.0, at)):
+            return False
+        with self._bake_lock:
+            if gen != self._bake_gen:
+                self._stop_ffplay()  # stop() superseded us mid-launch
                 return False
             self._baked_key = key
         return True
