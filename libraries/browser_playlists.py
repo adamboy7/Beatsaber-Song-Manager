@@ -83,8 +83,12 @@ class BrowserPlaylistsMixin:
         gen = self._load_gen
 
         def worker():
-            songs = load_songs(self.custom_levels)
-            hashes = load_song_hashes(self.custom_levels)
+            try:
+                songs = load_songs(self.custom_levels)
+                hashes = load_song_hashes(self.custom_levels)
+            except Exception as exc:  # noqa: BLE001
+                self._dispatcher.dispatch(lambda e=exc: self._on_load_failed(gen, e))
+                return
             for song in songs:
                 song.song_hash = hashes.get(song.folder.name, "")
             self._dispatcher.dispatch(lambda: self._maybe_apply_loaded(gen, songs))
@@ -96,8 +100,64 @@ class BrowserPlaylistsMixin:
             return  # superseded by a newer load; drop the stale result
         self._on_loaded(songs)
 
+    def _on_load_failed(self, gen: int, exc: Exception) -> None:
+        """Scan died in the worker. Report it and release deferred work.
+
+        ``_library_loaded`` stays False on purpose — the library is still
+        unknown, so the next playlist drop should defer again rather than diff
+        against a list we never managed to fill.
+        """
+        if gen != self._load_gen:
+            return
+        self.status_bar.config(text=f"Could not scan the song library: {exc}")
+        pending, self._pending_library_actions = self._pending_library_actions, []
+        if pending:
+            self.status_bar.config(
+                text=f"Could not scan the song library: {exc} — "
+                     f"{len(pending)} pending playlist action(s) cancelled."
+            )
+
+    # ── Deferral until the library is known ───────────────────────────────────
+
+    def _defer_until_library_loaded(self, action, message: str) -> bool:
+        """Hold ``action`` until the first library scan lands.
+
+        Every playlist path decides what to download by diffing the playlist
+        against ``self.songs``. That list is empty until the background scan
+        finishes, and an empty library makes ``match_library`` report *every*
+        entry as missing — so a playlist dropped during startup would send the
+        whole thing to the installer and re-download songs already on disk.
+
+        Only the *initial* scan gates: a refresh or post-install reload replaces
+        a library that is already populated, so ``self.songs`` stays meaningful
+        throughout and there is nothing to wait for.
+
+        Returns True when the action was deferred (the caller should return).
+        """
+        if getattr(self, "_library_loaded", True):
+            return False
+        self._pending_library_actions.append(action)
+        self.status_bar.config(text=message)
+        return True
+
+    def _run_deferred_library_actions(self) -> None:
+        """Drain work parked by ``_defer_until_library_loaded``.
+
+        The list is swapped out before iterating so an action that somehow
+        defers again lands in a fresh list instead of extending the one being
+        walked. Failures are reported rather than raised — this runs inside
+        ``_on_loaded``, which still has a song list to finish rendering.
+        """
+        actions, self._pending_library_actions = self._pending_library_actions, []
+        for action in actions:
+            try:
+                action()
+            except Exception as exc:  # noqa: BLE001
+                self.status_bar.config(text=f"Deferred playlist load failed: {exc}")
+
     def _on_loaded(self, songs: list[SongInfo]):
         self.songs = songs
+        self._library_loaded = True
         self._selected_folders.clear()
         self.selected_indices.clear()
         self.selected_index = None
@@ -153,6 +213,8 @@ class BrowserPlaylistsMixin:
             if self._queue:
                 self._play_audio(self._queue[0])
                 self._notify_queue_window()
+
+        self._run_deferred_library_actions()
 
         self._open_startup_windows()
 
@@ -538,7 +600,18 @@ class BrowserPlaylistsMixin:
         self._install_next_playlist_song()
 
     def _load_playlist_to_queue(self, path: str, anchor: tk.Misc | None = None) -> None:
-        """Entry point for Queue-window DnD drops. Prompts when queue is non-empty."""
+        """Entry point for Queue-window DnD drops. Prompts when queue is non-empty.
+
+        The single funnel for every user-initiated playlist open (drag-and-drop
+        on either window, File→Open, Ctrl-O), which is why the library gate sits
+        here rather than in each caller.
+        """
+        if self._defer_until_library_loaded(
+            lambda: self._load_playlist_to_queue(path, anchor=anchor),
+            f"Still scanning the song library — '{Path(path).name}' will open "
+            f"once that finishes…",
+        ):
+            return
         if not self._queue:
             self._load_playlist_from_path(path)
             return
@@ -627,6 +700,11 @@ class BrowserPlaylistsMixin:
 
     def _on_playlist_url_downloaded(self, tmp_path: Path) -> None:
         """Validate the downloaded .bplist and download its songs from BeatSaver."""
+        if self._defer_until_library_loaded(
+            lambda: self._on_playlist_url_downloaded(tmp_path),
+            "Playlist downloaded — waiting for the song library scan to finish…",
+        ):
+            return
         try:
             data = read_playlist(tmp_path)
         except Exception as e:

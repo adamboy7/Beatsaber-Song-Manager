@@ -109,6 +109,8 @@ class SongBrowser(
         self._row_frames: list[tk.Frame] = []
         self._render_gen: int = 0   # bumped on each _render_list; guards stale async thumbnail swap-ins
         self._load_gen: int = 0   # bumped on reload; guards stale _load_async/_on_install_complete_reload results
+        self._library_loaded: bool = False
+        self._pending_library_actions: list = []
         self._thumb_executor = ThreadPoolExecutor(max_workers=2)
         self._pending_install_id: str | None = None
         self._pending_playlist_url: str | None = None
