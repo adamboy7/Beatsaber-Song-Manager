@@ -45,13 +45,13 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          python3 -m PyInstaller Browser.linux.spec --noconfirm --noupx
+          python3 -m PyInstaller Browser.linux.spec --noconfirm --upx-dir /nonexistent
           chmod +x dist/BeatSaberSongManager
           file dist/BeatSaberSongManager
 
       - name: Assert the binary is not UPX-packed
         run: |
-          if grep -qa UPX dist/BeatSaberSongManager; then
+          if grep -qa 'UPX!' dist/BeatSaberSongManager; then
             echo "::error::Binary appears UPX-packed; it will segfault on SteamOS/Arch."
             exit 1
           fi
